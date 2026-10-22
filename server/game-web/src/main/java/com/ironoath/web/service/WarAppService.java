@@ -31,6 +31,7 @@ import com.ironoath.web.dto.generated.WarPhase;
 import com.ironoath.web.dto.generated.WarStatusResp;
 import com.ironoath.web.nation.NationMembership;
 import com.ironoath.web.rank.RankBoardService;
+import com.ironoath.web.season.CapitalWarWindow;
 import com.ironoath.web.nation.NationStore;
 import com.ironoath.web.nation.WarRulesAssembler;
 import com.ironoath.web.nation.WarStore;
@@ -68,6 +69,7 @@ public class WarAppService {
     private final WarStore wars;
     private final NationStore nations;
     private final WarRulesAssembler assembler;
+    private final CapitalWarWindow capitalWarWindow;
     private final TimeService timeService;
     /** 下面这几件是<b>写侧</b>（宣战）才需要的；读侧只用上面四件。 */
     private final NationMembership membership;
@@ -85,6 +87,7 @@ public class WarAppService {
     private final RewardService rewardService;
 
     public WarAppService(WarStore wars, NationStore nations, WarRulesAssembler assembler,
+                         CapitalWarWindow capitalWarWindow,
                          TimeService timeService, NationMembership membership,
                          SocialRulesAssembler socialRules, PlayerLock playerLock,
                          IdempotencyStore idempotency, ConfigRegistry configs,
@@ -92,6 +95,7 @@ public class WarAppService {
         this.wars = wars;
         this.nations = nations;
         this.assembler = assembler;
+        this.capitalWarWindow = capitalWarWindow;
         this.timeService = timeService;
         this.membership = membership;
         this.socialRules = socialRules;
@@ -113,6 +117,7 @@ public class WarAppService {
         long now = timeService.serverNow();
         WarScoreBoard.Rules rules = assembler.rules();
         long durationSec = rules.durationMillis() / 1_000L;
+        boolean windowOpen = capitalWarWindow.openAt(now);
         // 读这一句顺带把时间推进一格：到点的那一场在这里结算并落盘（服务端禁常驻定时器）。
         // 用 settleIfExpired 而不是 findLatest —— 后者只看不动，一场打满 90 分钟的仗会永远停在 SIEGE，
         // 而"什么时候算打完"这个问题没有别的执行者。
@@ -127,11 +132,14 @@ public class WarAppService {
                     null, null, List.of(), 0L, rules.serverGoalKills(), false,
                     0L, rules.fatigueMax(), true, now,
                     // 没有仗就没有可领的：我的领取位恒 false（不填 0 冒充，宁可说清"没有"）
-                    false);
+                    false, false, windowOpen);
         }
         WarStore.Settlement progressedOne = progressed.get();
         WarScoreBoard board = progressedOne.board();
-        if (progressedOne.settledNow()) {
+        if (progressedOne.settledNow() && progressedOne.abandonedNow()) {
+            LOG.info("王城战筹备逾窗口作废 战事主键={} 不发赛季分/胜者奖励",
+                    WarStore.documentIdOf(board));
+        } else if (progressedOne.settledNow()) {
             // 挂在"这一句把它结掉了"，不挂在"它现在是 SETTLED"上 —— 后者每一读都成立，
             // 而 SeasonBoardStore.accumulate 是累加语义，那样会变成每读一次发一遍赛季分。
             // 这一跳是本类唯一的经济写入，所以留一行审计（金额与人数都能从这里回查）。
@@ -159,7 +167,7 @@ public class WarAppService {
                 board.fatigueOf(playerId), rules.fatigueMax(), board.canMarch(playerId), now,
                 // 本人领过没有：面板要区分"可以领/已经领过"，否则那颗键点了就被拒（验收 10 的形状）。
                 // 注意它是**最后一个组件**（生成器按 schema 的 properties 顺序排，我在属性表里追加在末尾）
-                board.goalClaimedBy(playerId));
+                board.goalClaimedBy(playerId), board.abandonedWithoutSiege(), windowOpen);
     }
 
     /**
@@ -221,8 +229,10 @@ public class WarAppService {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 requireNationOf(playerId);
                 long gold = configs.longParam("WAR_SERVER_GOAL_GOLD");
-                WarStore.GoalClaimResult result = wars.claimServerGoal(playerId);
+                WarStore.GoalClaimResult result = wars.claimServerGoal(playerId, now);
                 switch (result) {
+                    case ABANDONED -> throw new BizException(ErrorCode.WAR_GOAL_WINDOW_CLOSED,
+                            "本季王城战窗口已结束，筹备战事已作废");
                     case NO_WAR, NOT_REACHED -> throw new BizException(ErrorCode.WAR_GOAL_NOT_REACHED,
                             "全服目标还没有达成：现在是 " + wars.findLatest()
                                     .map(b -> b.totalKills() + " / " + b.rules().serverGoalKills())
@@ -282,6 +292,7 @@ public class WarAppService {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Nation attacker = requireNationOf(playerId);
                 requirePermission(attacker, playerId, "DECLARE_WAR");
+                Long preparationExpiresAt = capitalWarWindow.currentEndAt(now);
                 String targetId = req.targetNationId();
                 if (targetId == null || targetId.isBlank()) {
                     throw new BizException(ErrorCode.PARAM_INVALID, "targetNationId 不得为空");
@@ -329,7 +340,8 @@ public class WarAppService {
                 // "谁先动的手"，而 WAR_SEASON_INITIATOR_BONUS 是 V18 那节的主钩子。
                 // 顺序仍然是 attacker 先 target 后 —— 内核 settle() 的平分判定按登记顺序遍历，
                 // 但发奖读的是显式的 initiatorNationId，不是行序（见 WarScoreBoard 那一段注释）。
-                WarScoreBoard board = new WarScoreBoard(assembler.rules(), now, attacker.id());
+                WarScoreBoard board = new WarScoreBoard(assembler.rules(), now, attacker.id(),
+                        preparationExpiresAt == null ? Long.MAX_VALUE : preparationExpiresAt);
                 board.registerNation(attacker.id());
                 board.registerNation(target.id());
                 if (!wars.insertIfNoneActive(board)) {

@@ -30,6 +30,8 @@ public record WarStatusResp(
         long fatigueMax,   // 疲劳上限（`global.WAR_FATIGUE_MAX`）。同样是「上下界必须下发」那一条：面板要写「12 / 100」。
         boolean canMarch,   // 本人还能不能行军（B13 验收 7）。**由服务端一处判定**（内核 `WarScoreBoard.canMarch`），客户端不许按 `myFatigue < fatigueMax` 再算一遍 —— 那两个式子今天等价，但行军闸门后面还要接外交、窗口、集结等条件，届时自己算的那份会留在原地。
         long serverNow,   // 服务端时间戳（铁律 5：客户端不许自己读本地时钟算剩余时间，否则改手机时间就能把仗打完）。
-        boolean myGoalClaimed)   // **请求者本人**领过这一场的全服奖励没有（`X-Player-Id` 那位）。`hasWar=false` 时为 false。 **为什么必须下发这一位**：面板要能区分三种状态 —— 还没达成 / 可以领 / 已经领过了。只有 `serverGoalReached` 与「已领人数」两个读数时第三种画不出来，玩家会对着一个点了就被拒的键反复点，而那正是验收 10「每人只领一次」想避免的形状。 **判定在服务端**：领取名单在战事档里（`goalClaimed`），客户端本地记一个「我刚领过」在换设备/重登之后就假了。
+        boolean myGoalClaimed,   // **请求者本人**领过这一场的全服奖励没有（`X-Player-Id` 那位）。`hasWar=false` 时为 false。 **为什么必须下发这一位**：面板要能区分三种状态 —— 还没达成 / 可以领 / 已经领过了。只有 `serverGoalReached` 与「已领人数」两个读数时第三种画不出来，玩家会对着一个点了就被拒的键反复点，而那正是验收 10「每人只领一次」想避免的形状。 **判定在服务端**：领取名单在战事档里（`goalClaimed`），客户端本地记一个「我刚领过」在换设备/重登之后就假了。
+        boolean preparationAbandoned,   // 筹备未取得围城资格并在当前 CAPITAL_WAR 窗口终点作废。`hasWar=false` 与正常围城结算均为 false；true 时 phase=SETTLED，但没有胜者或赛季分发放。客户端用它解释为何本场结束，不从零剩余秒数猜原因。
+        boolean capitalWarWindowOpen)   // 当前服务端赛季时间轴是否允许新宣战。未启用赛季的 dev/test 为 true；启用赛季时只在 CAPITAL_WAR 阶段为 true。与 hasWar 和 phase 分开：历史已结束战事仍可看，不等于当前窗口还开着。
 {
 }

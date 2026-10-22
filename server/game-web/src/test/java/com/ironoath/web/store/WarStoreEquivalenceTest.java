@@ -314,6 +314,41 @@ class WarStoreEquivalenceTest {
     }
 
     @Test
+    @DisplayName("两套存储到本季王城窗口终点作废筹备且只推进一次，不产生胜者结果并释放名额")
+    void preparationWindowExpiryAbandonsWithoutRewardsOnBothStores() {
+        long windowEnd = T0 + 14L * 24L * 60L * MINUTE;
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            WarScoreBoard board = new WarScoreBoard(rules.rules(), T0, "n1", windowEnd);
+            board.registerNation("n1");
+            board.registerNation("n2");
+            board.recordKill("n1", "P1", rules.rules().serverGoalKills());
+            store.insertIfNoneActive(board);
+
+            assertThat(store.settleIfExpired(windowEnd - 1L).orElseThrow().settledNow())
+                    .as("%s 窗口关前不能提前作废", label).isFalse();
+            assertThat(store.recordKills("n1", "P1", 1L, windowEnd))
+                    .as("%s 窗口关时不再接新战绩", label).isEqualTo(WarStore.KillResult.EXPIRED);
+            assertThat(store.claimServerGoal("P3", windowEnd))
+                    .as("%s 尚未有人读面板推进作废，也不得在窗口终点偷领", label)
+                    .isEqualTo(WarStore.GoalClaimResult.ABANDONED);
+            WarStore.Settlement expired = store.settleIfExpired(windowEnd).orElseThrow();
+            assertThat(expired.settledNow()).isTrue();
+            assertThat(expired.abandonedNow()).isTrue();
+            assertThat(expired.result()).isNull();
+            assertThat(expired.board().abandonedWithoutSiege()).isTrue();
+            assertThat(expired.board().serverGoalReached()).isTrue();
+            assertThat(store.claimServerGoal("P3", windowEnd))
+                    .as("%s 作废前虽已达全服目标，作废后不得新发奖励", label)
+                    .isEqualTo(WarStore.GoalClaimResult.ABANDONED);
+            assertThat(store.settleIfExpired(windowEnd + 1L).orElseThrow().settledNow())
+                    .as("%s 第二次读不得再次作废/发奖", label).isFalse();
+            assertThat(store.insertIfNoneActive(pair(windowEnd + 1L, "n1", "n3")))
+                    .as("%s 作废后释放全服单场名额", label).isTrue();
+        }
+    }
+
+    @Test
     @DisplayName("旧 Mongo 围城存档缺 siegeStartedAt 时沿原宣战锚点读，不在发布时延长老战事")
     void legacyMongoSiegeWithoutNewClockKeepsOldDeadline() {
         requireMongo();
@@ -328,13 +363,42 @@ class WarStoreEquivalenceTest {
                 org.springframework.data.mongodb.core.query.Query.query(
                         org.springframework.data.mongodb.core.query.Criteria.where("_id")
                                 .is(WarStore.documentIdOf(board))),
-                new org.springframework.data.mongodb.core.query.Update().unset("state.siegeStartedAt"),
+                new org.springframework.data.mongodb.core.query.Update()
+                        .unset("state.siegeStartedAt")
+                        .unset("state.preparationExpiresAt")
+                        .unset("state.abandonedWithoutSiege"),
                 com.ironoath.web.store.mongo.WarDocument.COLLECTION);
 
         WarScoreBoard restored = store.findLatest().orElseThrow();
         assertThat(restored.siegeStartedAt()).isNull();
+        assertThat(restored.preparationExpiresAt()).isNull();
+        assertThat(restored.abandonedWithoutSiege()).isFalse();
         assertThat(restored.remainingSeconds(T0 + MINUTE))
                 .isEqualTo((board.rules().durationMillis() - MINUTE) / 1_000L);
+    }
+
+    @Test
+    @DisplayName("旧 Mongo 筹备档缺窗口终点时沿旧90分钟关闭并释放单场名额")
+    void legacyMongoPreparationWithoutWindowCannotOccupySlotForever() {
+        requireMongo();
+        WarStore store = newMongoStore();
+        WarScoreBoard old = pair(T0, "n1", "n2");
+        store.insertIfNoneActive(old);
+        db.template().updateFirst(
+                org.springframework.data.mongodb.core.query.Query.query(
+                        org.springframework.data.mongodb.core.query.Criteria.where("_id")
+                                .is(WarStore.documentIdOf(old))),
+                new org.springframework.data.mongodb.core.query.Update()
+                        .unset("state.preparationExpiresAt")
+                        .unset("state.abandonedWithoutSiege"),
+                com.ironoath.web.store.mongo.WarDocument.COLLECTION);
+
+        WarScoreBoard restored = store.findLatest().orElseThrow();
+        assertThat(restored.preparationExpiresAt()).isNull();
+        assertThat(store.settleIfExpired(T0 + old.rules().durationMillis()).orElseThrow().abandonedNow())
+                .isTrue();
+        assertThat(store.insertIfNoneActive(pair(T0 + old.rules().durationMillis() + 1L, "n1", "n3")))
+                .isTrue();
     }
 
     /**
@@ -1043,7 +1107,7 @@ class WarStoreEquivalenceTest {
             assertThatThrownBy(() -> store.save(stale)).isInstanceOf(IllegalStateException.class);
             store.recordKills("n1", "P3", 7L, T0 + 2L);
             store.addFatigue("n1", "P3", 0L, 2L);
-            assertThat(store.claimServerGoal("P3")).isEqualTo(WarStore.GoalClaimResult.CLAIMED);
+            assertThat(store.claimServerGoal("P3", T0 + 1L)).isEqualTo(WarStore.GoalClaimResult.CLAIMED);
             store.settleIfExpired(T0 + rules.rules().durationMillis());
             WarScoreBoard board = store.findLatest().orElseThrow();
             assertThat(board.marchFatigueReceipt("m1"))
@@ -1141,7 +1205,7 @@ class WarStoreEquivalenceTest {
                                 .isEqualTo(WarStore.KillResult.APPLIED);
                         case 1 -> assertThat(contender.addFatigue("n1", "P3", 0L, 2L))
                                 .isEqualTo(WarStore.FatigueResult.APPLIED);
-                        case 2 -> assertThat(contender.claimServerGoal("P3"))
+                        case 2 -> assertThat(contender.claimServerGoal("P3", T0 + 1L))
                                 .isEqualTo(WarStore.GoalClaimResult.CLAIMED);
                         case 3 -> assertThat(contender.settleIfExpired(
                                 T0 + rules.rules().durationMillis()).orElseThrow().settledNow()).isTrue();

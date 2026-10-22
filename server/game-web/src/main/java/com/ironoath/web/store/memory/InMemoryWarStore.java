@@ -150,13 +150,13 @@ public final class InMemoryWarStore implements WarStore {
      * 更常见 —— 结算把 phase 定格，但那份全服进度与领取名单仍然有效。
      */
     @Override
-    public synchronized WarStore.GoalClaimResult claimServerGoal(String playerId) {
+    public synchronized WarStore.GoalClaimResult claimServerGoal(String playerId, long now) {
         WarScoreBoard.Snapshot stored = latestSnapshot().orElse(null);
         if (stored == null) {
             return WarStore.GoalClaimResult.NO_WAR;
         }
         WarScoreBoard board = toDomain(stored);
-        WarStore.GoalClaimResult result = WarStore.applyGoalClaim(board, playerId);
+        WarStore.GoalClaimResult result = WarStore.applyGoalClaim(board, playerId, now);
         if (result == WarStore.GoalClaimResult.CLAIMED) {
             // 名单在板子上：标了不写回，下一次读还是"没领过"，于是这份奖励可以反复领
             writeBound(board);
@@ -196,6 +196,11 @@ public final class InMemoryWarStore implements WarStore {
         boolean settledNow = WarStore.dueToSettle(board, now);
         WarScoreBoard.Result result = null;
         if (settledNow) {
+            if (board.phase() == WarScoreBoard.Phase.PREPARATION) {
+                board.expirePreparation(now);
+                writeBound(board);
+                return Optional.of(WarStore.Settlement.abandoned(board));
+            }
             result = board.settle(now);
             // 主键按 startedAt 推导，settle 不动它 ⇒ 写回必然落在同一档上（历史不会被"挪个位置"）
             writeBound(board);

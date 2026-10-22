@@ -618,7 +618,8 @@ function warResp(overrides: Partial<WarStatusResp> = {}): WarStatusResp {
     hasWar: true, phase: 'SIEGE', startedAt: NOW, remainingSec: 600, durationSec: 5_400,
     gateCount: 4, capitalHolder: null, capitalHolderName: null,
     scores: [warScore()], totalKills: 0, serverGoalKills: 500, serverGoalReached: false,
-    myFatigue: 0, fatigueMax: 100, canMarch: true, serverNow: NOW, myGoalClaimed: false, ...overrides,
+    myFatigue: 0, fatigueMax: 100, canMarch: true, serverNow: NOW,
+    myGoalClaimed: false, preparationAbandoned: false, capitalWarWindowOpen: true, ...overrides,
   }
 }
 
@@ -765,5 +766,29 @@ test('国战那一页：休战期不画剩余时间、平分时同名次（与�
     '加一段阶段时必须在这里登记一次，不许静默落到某一句上')
   assert.equal(durationText(-5), '0 分', '负数夹到 0：服务端已 clamp，界面也不许印出负时间')
   assert.equal(durationText(90), '1 分', '不足一分钟按分钟取整，不显示秒（秒位会让面板每帧都在变）')
+})
+
+test('筹备在王城窗口终点作废时说明原因，即使击杀达标也不再给领取入口', () => {
+  const view = buildWarSection(warResp({
+    phase: 'SETTLED', preparationAbandoned: true, capitalWarWindowOpen: false,
+    totalKills: 500, serverGoalKills: 500, serverGoalReached: true,
+  }))
+
+  assert.match(view.phaseText ?? '', /筹备作废.*窗口已关闭/)
+  assert.equal(view.goalClaim.claimable, false)
+  assert.equal(view.activeWar, false, '历史作废战事不再占用全服单场名额')
+  assert.equal(view.windowOpen, false, '刚结束的窗口不应给可点宣战入口')
+  assert.match(view.goalClaim.note ?? '', /作废.*不再开放/)
+  assert.equal(view.remainingText, null)
+})
+
+test('历史已结束战事仍可看，下一王城窗口开放时宣战入口不再被 hasWar 永久锁死', () => {
+  const view = buildWarSection(warResp({
+    phase: 'SETTLED', preparationAbandoned: true, capitalWarWindowOpen: true,
+  }))
+  assert.equal(view.hasWar, true)
+  assert.equal(view.activeWar, false)
+  assert.equal(view.windowOpen, true)
+  assert.equal(buildWarSection(null).windowOpen, null)
 })
 

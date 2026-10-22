@@ -115,12 +115,12 @@ public final class MongoWarStore implements WarStore {
     }
 
     @Override
-    public WarStore.GoalClaimResult claimServerGoal(String playerId) {
+    public WarStore.GoalClaimResult claimServerGoal(String playerId, long now) {
         synchronized (activeLock) {
             for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
                 WarDocument doc = latestDocument();
                 WarScoreBoard board = doc == null || doc.state() == null ? null : toDomain(doc);
-                WarStore.GoalClaimResult result = WarStore.applyGoalClaim(board, playerId);
+                WarStore.GoalClaimResult result = WarStore.applyGoalClaim(board, playerId, now);
                 if (result != WarStore.GoalClaimResult.CLAIMED || replace(doc, board)) {
                     return result;
                 }
@@ -160,6 +160,13 @@ public final class MongoWarStore implements WarStore {
                 WarScoreBoard board = toDomain(doc);
                 if (!WarStore.dueToSettle(board, now)) {
                     return Optional.of(WarStore.Settlement.notSettled(board));
+                }
+                if (board.phase() == WarScoreBoard.Phase.PREPARATION) {
+                    board.expirePreparation(now);
+                    if (replace(doc, board)) {
+                        return Optional.of(WarStore.Settlement.abandoned(board));
+                    }
+                    continue;
                 }
                 WarScoreBoard.Result result = board.settle(now);
                 if (replace(doc, board)) {

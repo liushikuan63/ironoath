@@ -199,6 +199,7 @@ class RankEndpointTest {
                 timeService.serverNow());
         board.registerNation("n1");
         board.registerNation("n2");
+        startBalancedSiege(board, "n1", "n2", timeService.serverNow());
         board.recordKill("n1", hunter, points.minKills() + 40L);   // 打够门槛
         board.recordKill("n2", idler, points.minKills() - 1L);     // 差一个，不该建行
         // 3b-2 起这个入口要的是内核那一次 settle() 的返回值（胜负与参战方都只从它拿），
@@ -758,6 +759,18 @@ class RankEndpointTest {
                        String winnerKiller, String winnerMate, long winnerKills) {
     }
 
+    /** 双方各经过四关归属，建筑分相等；榜用例仍只比较各自击杀与身份加成。 */
+    private static void startBalancedSiege(com.ironoath.core.nation.WarScoreBoard board,
+                                           String attackerNation, String defenderNation, long now) {
+        for (int i = 1; i <= board.rules().gateCount(); i++) {
+            board.captureGate(attackerNation, "gate_" + i);
+        }
+        board.beginSiege(now);
+        for (int i = 1; i <= board.rules().gateCount(); i++) {
+            board.captureGate(defenderNation, "gate_" + i);
+        }
+    }
+
     private War warWithTwoNations(long attackerKills, long defenderKills) throws Exception {
         String attackerLeader = newPlayer(16);
         String attackerMate = newPlayer(16);
@@ -777,6 +790,7 @@ class RankEndpointTest {
                 new com.ironoath.core.nation.WarScoreBoard(rules, timeService.serverNow(), attackerNation);
         board.registerNation(attackerNation);
         board.registerNation(defenderNation);
+        startBalancedSiege(board, attackerNation, defenderNation, timeService.serverNow());
         board.recordKill(attackerNation, attackerLeader, attackerKills);
         board.recordKill(defenderNation, defenderLeader, defenderKills);
         return new War(board, board.settle(timeService.serverNow()),

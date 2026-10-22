@@ -290,7 +290,11 @@ export function capitalTextOf(name: string | null): string {
 
 /** 国战那一页的展示数据（引擎无关，可脱离 Cocos 跑单测）。 */
 export interface WarSection {
+  /** 历史战事仍可看；它与「正在占用单场名额」是两个事实。 */
   readonly hasWar: boolean
+  readonly activeWar: boolean
+  /** null=窗口状态未读到；true/false 只消费服务端判定。 */
+  readonly windowOpen: boolean | null
   /** 有仗时的一行状态；无仗时为 null（`emptyText` 顶上）。 */
   readonly headline: string | null
   readonly phaseText: string | null
@@ -390,15 +394,19 @@ export function buildWarSection(resp: WarStatusResp | null,
   const goalClaim: WarGoalClaimView = resp === null
     ? { claimable: false, claimed: false, note: null }
     : {
-      claimable: resp.serverGoalReached && !resp.myGoalClaimed,
+      claimable: resp.serverGoalReached && !resp.myGoalClaimed && resp.preparationAbandoned !== true,
       claimed: resp.myGoalClaimed,
       note: resp.myGoalClaimed
         ? '这一场的全服奖励你已经领过了（每人每场只领一次）'
-        : (resp.serverGoalReached ? null : '全服击杀还没到目标，到了之后这里会亮起来'),
+        : (resp.preparationAbandoned === true
+          ? '筹备期已作废，本场不再开放奖励领取'
+          : (resp.serverGoalReached ? null : '全服击杀还没到目标，到了之后这里会亮起来')),
     }
   if (resp === null) {
     return {
       hasWar: false,
+      activeWar: false,
+      windowOpen: null,
       headline: null,
       phaseText: null,
       remainingText: null,
@@ -415,6 +423,8 @@ export function buildWarSection(resp: WarStatusResp | null,
   if (!resp.hasWar) {
     return {
       hasWar: false,
+      activeWar: false,
+      windowOpen: resp.capitalWarWindowOpen === true,
       headline: null,
       phaseText: null,
       remainingText: null,
@@ -436,8 +446,12 @@ export function buildWarSection(resp: WarStatusResp | null,
   const ranked = rankWarSides(resp.scores)
   return {
     hasWar: true,
+    activeWar: resp.phase !== 'SETTLED',
+    windowOpen: resp.capitalWarWindowOpen === true,
     headline: `本场开战于：${new Date(resp.startedAt ?? 0).toISOString().slice(0, 10)}（UTC）`,
-    phaseText: resp.phase === null ? null : warPhaseLabel(resp.phase),
+    phaseText: resp.preparationAbandoned === true
+      ? '筹备作废：未占齐关卡，王城窗口已关闭'
+      : (resp.phase === null ? null : warPhaseLabel(resp.phase)),
     remainingText: resp.phase === 'SIEGE' ? `王城战剩余：${durationText(resp.remainingSec)}` : null,
     capitalText: capitalTextOf(resp.capitalHolderName ?? null),
     rows: ranked.map((entry): WarSideRowView => ({

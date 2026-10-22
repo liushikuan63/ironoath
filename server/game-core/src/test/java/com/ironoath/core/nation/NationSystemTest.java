@@ -687,6 +687,34 @@ class NationSystemTest {
     }
 
     @Test
+    @DisplayName("筹备未占齐四关到王城窗口终点作废，不能再入围城或产胜者结果")
+    void preparationExpiresAtCapitalWarWindowEnd() {
+        long windowEnd = 10L * DAY;
+        WarScoreBoard board = new WarScoreBoard(warRules(), 0L, "n1", windowEnd);
+        board.registerNation("n1");
+        board.registerNation("n2");
+        assertThatThrownBy(() -> board.expirePreparation(windowEnd - 1L))
+                .isInstanceOf(IllegalStateException.class);
+        WarScoreBoard qualifiedTooLate = new WarScoreBoard(warRules(), 0L, "n1", windowEnd);
+        qualifiedTooLate.registerNation("n1");
+        qualifiedTooLate.registerNation("n2");
+        captureAllGates(qualifiedTooLate, "n1");
+        assertThatThrownBy(() -> qualifiedTooLate.beginSiege(windowEnd))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("窗口已结束");
+
+        board.expirePreparation(windowEnd);
+
+        assertThat(board.phase()).isEqualTo(WarScoreBoard.Phase.SETTLED);
+        assertThat(board.abandonedWithoutSiege()).isTrue();
+        assertThat(board.siegeStartedAt()).isNull();
+        assertThatThrownBy(() -> board.beginSiege(windowEnd + 1L))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(WarScoreBoard.fromSnapshot(board.toSnapshot(), board.rules()).abandonedWithoutSiege())
+                .isTrue();
+    }
+
+    @Test
     @DisplayName("已参战但未持有关卡的国家不能占王城，取得资格后同一动作才可成功")
     void unqualifiedNationCannotCaptureCapital() {
         WarScoreBoard board = newWar(0L);

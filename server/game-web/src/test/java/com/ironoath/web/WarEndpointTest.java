@@ -6,6 +6,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -47,13 +49,17 @@ import com.ironoath.web.dto.generated.NationDisbandReq;
 import com.ironoath.web.dto.generated.NationFoundReq;
 import com.ironoath.web.dto.generated.PlayerInitReq;
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.model.GlobalCfg;
+import com.ironoath.common.time.DayKey;
 import com.ironoath.web.dto.generated.WarDeclareReq;
 import com.ironoath.web.dto.generated.WarGoalClaimReq;
 import com.ironoath.web.dto.generated.WarPhase;
+import com.ironoath.web.dto.generated.RankType;
 import com.ironoath.web.nation.NationRulesAssembler;
 import com.ironoath.web.nation.NationStore;
 import com.ironoath.web.nation.WarRulesAssembler;
 import com.ironoath.web.nation.WarStore;
+import com.ironoath.web.rank.RankBoardService;
 import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.social.SocialStore;
 import com.ironoath.web.store.memory.InMemoryPlayerStore;
@@ -96,6 +102,7 @@ class WarEndpointTest {
     @Autowired private NationRulesAssembler nationRules;
     @Autowired private TimeService timeService;
     @Autowired private ConfigRegistry configs;
+    @Autowired private RankBoardService ranks;
     /** 所有战斗的唯一漏斗（打野/关卡/攻城/拦截都汇到这里）—— 击杀归属就挂在这一句上，所以要真的走它。 */
     @Autowired private com.ironoath.web.battle.BattleReportService battleReports;
 
@@ -124,6 +131,8 @@ class WarEndpointTest {
         assertThat(data.get("hasWar").asBoolean())
                 .as("本切片没有开战路径，恒空是**已知的未做**，不是这一格交付的功能")
                 .isFalse();
+        assertThat(data.get("capitalWarWindowOpen").asBoolean())
+                .as("未启用赛季的 dev/test 保持本地宣战入口可测").isTrue();
         // 无战事时那三项没有真值可给：填 0 会被读成「1970 年开过一场仗」，所以必须是 null
         assertThat(data.get("phase").isNull()).as("phase 没有真值，不许拿 SETTLED 凑").isTrue();
         assertThat(data.get("startedAt").isNull()).isTrue();
@@ -155,6 +164,89 @@ class WarEndpointTest {
     }
 
     // ---------- 真读了存储 ----------
+
+    @Test
+    @DisplayName("筹备到王城窗口终点作废：端点下发原因且不再开放全服奖励领取")
+    void expiredPreparationReportsAbandonmentWithoutClaim() throws Exception {
+        Kingdom claimant = kingdom("窗口参与国");
+        String playerId = claimant.king;
+        long now = timeService.serverNow();
+        WarScoreBoard board = new WarScoreBoard(warRules.rules(), now - 2 * MINUTE,
+                claimant.nationId, now - MINUTE);
+        board.registerNation(claimant.nationId);
+        board.registerNation("n2");
+        board.recordKill(claimant.nationId, playerId, warRules.rules().serverGoalKills());
+        wars.insertIfAbsent(board);
+
+        JsonNode data = get200("/nation/war", playerId);
+
+        assertThat(data.get("phase").asText()).isEqualTo("SETTLED");
+        assertThat(data.get("preparationAbandoned").asBoolean()).isTrue();
+        assertThat(data.get("serverGoalReached").asBoolean()).isTrue();
+        assertThat(ranks.list(playerId, RankType.WAR, 1, 0).entries().stream()
+                .noneMatch(row -> row.id().equals(playerId)))
+                .as("作废时即使个人击杀过门槛也不能发赛季分").isTrue();
+        assertThat(wars.claimServerGoal(playerId, now)).isEqualTo(WarStore.GoalClaimResult.ABANDONED);
+        assertThat(postRaw("/nation/war/goal/claim", playerId,
+                new WarGoalClaimReq(newRequestId())).get("code").asInt())
+                .isEqualTo(ErrorCode.WAR_GOAL_WINDOW_CLOSED.code());
+        assertThat(get200("/nation/war", playerId).get("preparationAbandoned").asBoolean())
+                .as("第二次读仍保留作废原因，不重复发分").isTrue();
+    }
+
+    @Test
+    @DisplayName("真宣战只在当前 CAPITAL_WAR 窗口开放，且把本窗口终点存进战事")
+    void declarationPersistsCurrentCapitalWindowEndAndRejectsOtherPhases() throws Exception {
+        Path configDir = locateConfigDir();
+        String originalGlobal = Files.readString(configDir.resolve("global.json"));
+        long now = timeService.serverNow();
+        long openAnchor = DayKey.startOfDayPlusDays(now, -30L);
+        try {
+            configs.reload("global", GlobalCfg.class, withSeasonStart(originalGlobal, openAnchor));
+            Kingdom a = kingdom("王城窗口发起国");
+            Kingdom b = kingdom("王城窗口目标国");
+            assertThat(post200("/nation/war/declare", a.king,
+                    new WarDeclareReq(newRequestId(), b.nationId)).get("phase").asText())
+                    .isEqualTo("PREPARATION");
+            assertThat(wars.findLatest().orElseThrow().preparationExpiresAt())
+                    .isEqualTo(DayKey.startOfDayPlusDays(openAnchor, 42L));
+
+            configs.reload("global", GlobalCfg.class,
+                    withSeasonStart(originalGlobal, DayKey.startOfDayPlusDays(now, -10L)));
+            assertThat(get200("/nation/war", a.king).get("capitalWarWindowOpen").asBoolean())
+                    .as("窗口关时历史战事仍可看，但宣战入口必须知道当前窗口已关").isFalse();
+            assertThat(postRaw("/nation/war/declare", a.king,
+                    new WarDeclareReq(newRequestId(), b.nationId)).get("code").asInt())
+                    .isEqualTo(ErrorCode.WAR_CAPITAL_WINDOW_CLOSED.code());
+        } finally {
+            configs.reload("global", GlobalCfg.class, originalGlobal);
+        }
+    }
+
+    private static String withSeasonStart(String globalJson, long startAt) throws Exception {
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        com.fasterxml.jackson.databind.node.ObjectNode table =
+                (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(globalJson);
+        com.fasterxml.jackson.databind.node.ObjectNode row = mapper.createObjectNode();
+        row.put("id", "SEASON_START_AT");
+        row.put("valueType", "LONG");
+        row.put("value", startAt);
+        row.put("unit", "毫秒时间戳");
+        row.put("source", "B14 §一 测试注入");
+        row.put("why", "只在本条端点测试启用赛季窗口");
+        ((com.fasterxml.jackson.databind.node.ArrayNode) table.get("rows")).add(row);
+        return mapper.writeValueAsString(table);
+    }
+
+    private static Path locateConfigDir() {
+        Path dir = Path.of("").toAbsolutePath();
+        while (dir != null) {
+            Path candidate = dir.resolve("contract/config");
+            if (Files.isRegularFile(candidate.resolve("global.json"))) return candidate;
+            dir = dir.getParent();
+        }
+        throw new IllegalStateException("找不到 contract/config 目录");
+    }
 
     @Test
     @DisplayName("视图逐项等于存进去的那块板：阶段、三类积分、占领者、击杀、全服目标、剩余时间")

@@ -139,22 +139,28 @@ public interface WarStore {
      * 挂在后者上等于每一读都重新发一遍赛季分，而 {@code SeasonBoardStore.accumulate} 是<b>累加</b>语义，
      * 它会照单全收。这也是 {@code #753} 那条"结算返回的 `Result` 至今无消费者"里被接走的第一半。
      *
-     * <p><b>{@code result} 与 {@code settledNow} 是同一件事的两面，所以构造时互验</b>：
+     * <p><b>正常围城结算的 {@code result} 与 {@code settledNow} 必须成对</b>：
      * 内核 {@link WarScoreBoard#settle(long)} <b>只有一次机会</b>给出终局（第二次调它直接抛，
      * 而积分定格后也无法再重算），那份 {@link WarScoreBoard.Result} 里带着 {@code winnerId} —— 3b-2 的
      * {@code WAR_SEASON_POINT_WINNER} 只能从它拿。<b>如果这里只带板子不带结果</b>，发奖那一侧就只有两条路：
      * 要么再调一次 {@code settle}（撞内核护栏、挂在读端点上就是 500），要么自己在 Java 侧比一遍积分
      * —— 那是把"平分不给胜者"这条判定搬到第二个家，而搬过去的那一份早晚和内核漂开（内核那条是按
-     * 参战方登记顺序遍历的）。所以这一格把它原样带出来，代价是记录多一个字段。
+     * 参战方登记顺序遍历的）。筹备窗口作废是另一种终局：{@code abandonedNow=true}、结果为空，
+     * 调用方不得把它交给赛季分发奖口。
      *
      * @param board      推进之后（或本来就好好的）那一场
      * @param settledNow 这一次读是否正好是把它结算掉的那一次
-     * @param result     {@link WarScoreBoard#settle(long)} 的返回值；<b>仅当 {@code settledNow} 为真时非空</b>
+     * @param result     真围城结算的唯一胜负结果；筹备作废时为空，且 abandonedNow 为真
      */
-    record Settlement(WarScoreBoard board, boolean settledNow, WarScoreBoard.Result result) {
+    record Settlement(WarScoreBoard board, boolean settledNow, WarScoreBoard.Result result,
+                      boolean abandonedNow) {
+
+        public Settlement(WarScoreBoard board, boolean settledNow, WarScoreBoard.Result result) {
+            this(board, settledNow, result, false);
+        }
 
         public Settlement {
-            if (settledNow && result == null) {
+            if (settledNow && result == null && !abandonedNow) {
                 throw new IllegalArgumentException(
                         "settledNow=true 却不带结算结果：这一场的胜者已经没有第二次机会被算出来了，"
                                 + "发奖那一侧只能把 WINNER 那一档静默跳过");
@@ -164,11 +170,18 @@ public interface WarStore {
                         "settledNow=false 却带了结算结果：那会造出「没结掉这一场但手里有终局」这种"
                                 + "谁也无法解释的状态，而发奖判断读的正是 settledNow");
             }
+            if (abandonedNow && (!settledNow || result != null || !board.abandonedWithoutSiege())) {
+                throw new IllegalArgumentException("筹备作废必须只带作废板子，不能混入胜者结果");
+            }
         }
 
         /** 没结掉那一次的便捷构造（两套实现的"未到点"分支共用，免得各写一份 null 的形状）。 */
         public static Settlement notSettled(WarScoreBoard board) {
             return new Settlement(board, false, null);
+        }
+
+        public static Settlement abandoned(WarScoreBoard board) {
+            return new Settlement(board, true, null, true);
         }
     }
 
@@ -270,7 +283,7 @@ public interface WarStore {
      * 「这一场该结算了」的<b>唯一一份</b>判据，两套实现共用（与 {@link #applyKills} 同一条理由：
      * 放在任何一份实现里，另一份早晚漂掉）。
      *
-     * <p>两个条件各挡一种误判，缺一个都不是"少一条保险"而是少一条正确性：
+     * <p>阶段与其对应截止时刻各挡一种误判，缺一个都不是"少一条保险"而是少一条正确性：
      * <ul>
      *   <li>{@code phase != SETTLED} —— 已是历史的档必须直接放过。不写这一条，第二次读会撞内核
      *       {@link WarScoreBoard#settle(long)} 那条「重复结算会让积分被算两遍」的护栏并抛到端点上。
@@ -278,14 +291,18 @@ public interface WarStore {
      *       而这里先判是为了让<b>正常路径</b>不去敲它。</li>
      *   <li>{@code now >= siegeClockStartedAt + durationMillis} —— 围城未到期不许结算。写宽（比如用 {@code >} 配
      *       分钟取整）会让最后不足一分钟的那段占领分被提前定格，而占领分正是防偷家的全部机制。</li>
+     *   <li>PREPARATION 只看当季王城窗口终点；旧档缺字段沿历史宣战截止，开发档的显式无截止标记
+     *       不会误用 90 分钟。窗口到点走作废，无赢家与赛季分。</li>
      * </ul>
      *
      * <p>用 {@code >=} 而不是 {@code >}：时长是配置里的整数分钟，"刚好到点"那一次读必须算到期，
      * 否则玩家看到的面板会停在 {@code remainingSec=0} 而 {@code phase=SIEGE} —— 一个自相矛盾的读数。
      */
     static boolean dueToSettle(WarScoreBoard board, long now) {
-        return board.phase() == WarScoreBoard.Phase.SIEGE
-                && now >= board.siegeClockStartedAt() + board.rules().durationMillis();
+        return (board.phase() == WarScoreBoard.Phase.SIEGE
+                    && now >= board.siegeClockStartedAt() + board.rules().durationMillis())
+                || (board.phase() == WarScoreBoard.Phase.PREPARATION
+                    && now >= board.preparationDeadlineAt());
     }
 
     /**
@@ -348,6 +365,8 @@ public interface WarStore {
             return FatigueResult.APPLIED;
         }
         if (board.phase() == WarScoreBoard.Phase.SETTLED || receipt.departedAt() < board.startedAt()
+                || (board.phase() == WarScoreBoard.Phase.PREPARATION
+                    && receipt.departedAt() >= board.preparationDeadlineAt())
                 || (board.phase() == WarScoreBoard.Phase.SIEGE
                     && receipt.departedAt() - board.siegeClockStartedAt() >= board.rules().durationMillis())) {
             return FatigueResult.NO_ACTIVE_WAR;
@@ -386,6 +405,8 @@ public interface WarStore {
         NO_WAR,
         /** 有板子但目标还没达成。 */
         NOT_REACHED,
+        /** 筹备窗口已关且未入围城，战事作废后不能再领取。 */
+        ABANDONED,
         /** 目标达成了，但这个人这一场已经领过（验收 10：每人每场只领一次）。 */
         ALREADY_CLAIMED,
         /** 这一次真的领到了 —— <b>调用方随后负责发钱</b>，且必须把它写回（名单在板子上）。 */
@@ -407,16 +428,21 @@ public interface WarStore {
      * @param playerId 领取人
      * @return 四种结果之一；只有 {@link GoalClaimResult#CLAIMED} 时调用方才该发钱
      */
-    GoalClaimResult claimServerGoal(String playerId);
+    GoalClaimResult claimServerGoal(String playerId, long now);
 
     /**
      * 两种存储共用的判定与标记（放在端口而不是任何一份实现里，与 {@link #applyKills} 同一条理由）。
      *
      * <p><b>它只改传入的那块板子，不落盘</b> —— 写回是调用方（存储层临界区内）的责任。
      */
-    static GoalClaimResult applyGoalClaim(WarScoreBoard board, String playerId) {
+    static GoalClaimResult applyGoalClaim(WarScoreBoard board, String playerId, long now) {
         if (board == null) {
             return GoalClaimResult.NO_WAR;
+        }
+        if (board.abandonedWithoutSiege()
+                || (board.phase() == WarScoreBoard.Phase.PREPARATION
+                    && now >= board.preparationDeadlineAt())) {
+            return GoalClaimResult.ABANDONED;
         }
         if (!board.serverGoalReached()) {
             return GoalClaimResult.NOT_REACHED;

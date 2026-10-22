@@ -573,7 +573,8 @@ export class NationPanelView extends Component {
     // 客户端「任命官职」vs 表「任命国家官职」）⇒ 客户端是在写自己的产品文案，不是抄表的值。
     // ⇒ 而客户端的文案**更短更像按钮**（表里那串是描述口气）⇒ 把它换成表里的会把产品文案改掉。
     this.button('WarDeclare', this.warArmed ? '确认宣战' : '宣战', left + 60, y, 120,
-      section.declareGate.enabled && selected !== null && !section.hasWar,
+      section.declareGate.enabled && selected !== null && !section.activeWar
+        && section.windowOpen === true,
       () => {
         if (selected === null) {
           return
@@ -589,12 +590,21 @@ export class NationPanelView extends Component {
       })
     y -= 24
     // 灰掉的原因逐条写清（与国库那三颗键同一条纪律）
-    const warReason = !section.declareGate.enabled
-      ? section.declareGate.reason
-      : (section.hasWar ? '已经有一场没打完的仗 —— 等它结束再宣下一场'
-        : (selected === null
-          ? '先在上面选一个国家'
-          : (selected.cooldownText === null ? null : `${selected.cooldownText}：这一对刚交过手，冷却期内不能再宣`)))
+    let warReason: string | null
+    if (!section.declareGate.enabled) {
+      warReason = section.declareGate.reason
+    } else if (section.windowOpen === null) {
+      warReason = '王城战窗口状态尚未读到，请重进这一页'
+    } else if (!section.windowOpen) {
+      warReason = '当前不在王城战开放窗口'
+    } else if (section.activeWar) {
+      warReason = '已经有一场没打完的仗 —— 等它结束再宣下一场'
+    } else if (selected === null) {
+      warReason = '先在上面选一个国家'
+    } else {
+      warReason = selected.cooldownText === null
+        ? null : `${selected.cooldownText}：这一对刚交过手，冷却期内不能再宣`
+    }
     if (warReason !== null) {
       this.label(warReason, COLOR_DIM, 13, left, y, 'left')
       y -= 22

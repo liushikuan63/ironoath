@@ -103,8 +103,12 @@ public final class WarScoreBoard {
 
     private final Rules rules;
     private final long startedAt;
+    /** 当前 CAPITAL_WAR 窗口终点；旧档缺字段为 null，开发档显式用 MAX_VALUE 无截止。 */
+    private final Long preparationExpiresAt;
     /** 进入围城的服务端时刻；旧 SIEGE 快照缺它时沿用旧宣战锚点，避免发布时平白延长老战事。 */
     private Long siegeStartedAt;
+    /** 窗口结束前未进入围城而作废；与正常围城结算分开，不能发赛季分。 */
+    private boolean abandonedWithoutSiege;
     /** 仓储读副本的版本，不进业务快照；旧副本不能覆盖后来写入的行军回执。 */
     private long repositoryVersion = -1L;
 
@@ -176,11 +180,21 @@ public final class WarScoreBoard {
      *                        构造顺序反过来就会在这里抛，而那是夹具顺序问题不是数据问题。
      */
     public WarScoreBoard(Rules rules, long startedAt, String initiatorNationId) {
+        this(rules, startedAt, initiatorNationId, Long.MAX_VALUE);
+    }
+
+    /** 新宣战档带当前王城窗口终点；Long.MAX_VALUE 是未启用赛季的开发档，null 只给旧存档。 */
+    public WarScoreBoard(Rules rules, long startedAt, String initiatorNationId,
+                         Long preparationExpiresAt) {
         if (rules == null) {
             throw new IllegalArgumentException("rules 不得为 null");
         }
+        if (preparationExpiresAt != null && preparationExpiresAt <= startedAt) {
+            throw new IllegalArgumentException("筹备窗口终点必须晚于宣战时刻");
+        }
         this.rules = rules;
         this.startedAt = startedAt;
+        this.preparationExpiresAt = preparationExpiresAt;
         this.initiatorNationId = initiatorNationId == null || initiatorNationId.isBlank()
                 ? null : initiatorNationId;
     }
@@ -199,6 +213,9 @@ public final class WarScoreBoard {
         if (phase != Phase.PREPARATION) {
             throw new IllegalStateException("当前阶段不允许开始王城战：" + phase);
         }
+        if (now >= preparationDeadlineAt()) {
+            throw new IllegalStateException("本季王城战窗口已结束，筹备不能再进入围城");
+        }
         boolean qualified = false;
         for (String nationId : gates.keySet()) {
             if (isQualified(nationId)) {
@@ -213,6 +230,15 @@ public final class WarScoreBoard {
         phase = Phase.SIEGE;
         siegeStartedAt = now;
         capitalHeldSince = now;
+    }
+
+    /** 窗口终点仍未进入围城：只关闭战事，不产生赢家或任何赛季分结算结果。 */
+    public void expirePreparation(long now) {
+        if (phase != Phase.PREPARATION || now < preparationDeadlineAt()) {
+            throw new IllegalStateException("筹备尚未到本季王城战窗口终点，不能作废");
+        }
+        phase = Phase.SETTLED;
+        abandonedWithoutSiege = true;
     }
 
     /** 占领一座关卡（筹备阶段）。 */
@@ -429,6 +455,9 @@ public final class WarScoreBoard {
         if (phase == Phase.SETTLED) {
             throw new IllegalStateException("国战已经结算过了，重复结算会让积分被算两遍");
         }
+        if (phase != Phase.SIEGE) {
+            throw new IllegalStateException("尚未进入围城，不能按王城战结果结算");
+        }
         settleOccupation(now);
         phase = Phase.SETTLED;
 
@@ -464,6 +493,19 @@ public final class WarScoreBoard {
     /** 围城起点；PREPARATION 与旧 SIEGE 快照可为空。 */
     public Long siegeStartedAt() {
         return siegeStartedAt;
+    }
+
+    public Long preparationExpiresAt() {
+        return preparationExpiresAt;
+    }
+
+    /** 旧档无窗口字段沿历史宣战计时到点关闭，避免升级后永久占住全服单场名额。 */
+    public long preparationDeadlineAt() {
+        return preparationExpiresAt == null ? startedAt + rules.durationMillis() : preparationExpiresAt;
+    }
+
+    public boolean abandonedWithoutSiege() {
+        return abandonedWithoutSiege;
     }
 
     /** 新战事从入围城起算；旧存档缺字段时保留历史宣战锚点。仅在 SIEGE 时消费。 */
@@ -578,6 +620,8 @@ public final class WarScoreBoard {
      *   <li>少 {@code fatigue}：验收 7 的疲劳上限每次重启清零，「逼迫联盟调度」这条设计当场作废；</li>
      *   <li>少 {@code phase}：一场已结算的仗会被当成还在打，而 {@link #settle} 会再结算一次。</li>
      *   <li>少 {@code siegeStartedAt}：新围城会退回宣战锚点，筹备久了就变成零秒战。</li>
+     *   <li>少 {@code preparationExpiresAt}：新筹备会退回旧90分钟或永久占住单场名额；</li>
+     *   <li>少 {@code abandonedWithoutSiege}：作废战事会被误当正常结算并发赛季分。</li>
      * </ul>
      *
      * <p><b>{@code rules} 刻意不进快照</b>，与 {@code Nation.Snapshot} 同一条理由：规则来自配置表且会热更，
@@ -600,7 +644,18 @@ public final class WarScoreBoard {
                            String capitalHolder, long capitalHeldSince,
                            Map<String, Long> fatigue, Map<String, Long> playerKills,
                            List<String> goalClaimed, long totalKills,
-                           List<MarchFatigueReceipt> marchFatigueReceipts, Long siegeStartedAt) {
+                           List<MarchFatigueReceipt> marchFatigueReceipts, Long siegeStartedAt,
+                           Long preparationExpiresAt, Boolean abandonedWithoutSiege) {
+
+        public Snapshot(long startedAt, Phase phase, String initiatorNationId,
+                        List<NationRow> nations, String capitalHolder, long capitalHeldSince,
+                        Map<String, Long> fatigue, Map<String, Long> playerKills,
+                        List<String> goalClaimed, long totalKills,
+                        List<MarchFatigueReceipt> marchFatigueReceipts, Long siegeStartedAt) {
+            this(startedAt, phase, initiatorNationId, nations, capitalHolder, capitalHeldSince,
+                    fatigue, playerKills, goalClaimed, totalKills, marchFatigueReceipts,
+                    siegeStartedAt, null, false);
+        }
 
         /** 旧快照形状：缺围城起点时按原宣战计时兼容，不悄悄延长既有战事。 */
         public Snapshot(long startedAt, Phase phase, String initiatorNationId,
@@ -616,6 +671,7 @@ public final class WarScoreBoard {
             if (phase == null) {
                 throw new IllegalArgumentException("phase 不得为 null：没有 phase 就不知道该不该继续记分");
             }
+            abandonedWithoutSiege = Boolean.TRUE.equals(abandonedWithoutSiege);
             nations = List.copyOf(nations == null ? List.of() : nations);
             fatigue = Collections.unmodifiableMap(new LinkedHashMap<>(
                     fatigue == null ? Map.of() : fatigue));
@@ -658,7 +714,8 @@ public final class WarScoreBoard {
         }
         return new Snapshot(startedAt, phase, initiatorNationId, rows, capitalHolder, capitalHeldSince,
                 new LinkedHashMap<>(fatigue), new LinkedHashMap<>(playerKills),
-                List.copyOf(goalClaimed), totalKills, List.copyOf(marchFatigueReceipts.values()), siegeStartedAt);
+                List.copyOf(goalClaimed), totalKills, List.copyOf(marchFatigueReceipts.values()), siegeStartedAt,
+                preparationExpiresAt, abandonedWithoutSiege);
     }
 
     /**
@@ -683,8 +740,9 @@ public final class WarScoreBoard {
                 snapshot.initiatorNationId(), scoreMap, gateMap,
                 snapshot.capitalHolder(), snapshot.capitalHeldSince(), snapshot.fatigue(),
                 snapshot.playerKills(), new LinkedHashSet<>(snapshot.goalClaimed()),
-                snapshot.totalKills());
+                snapshot.totalKills(), snapshot.preparationExpiresAt());
         board.siegeStartedAt = snapshot.siegeStartedAt();
+        board.abandonedWithoutSiege = snapshot.abandonedWithoutSiege();
         for (MarchFatigueReceipt receipt : snapshot.marchFatigueReceipts()) {
             MarchFatigueReceipt previous = board.marchFatigueReceipts.putIfAbsent(receipt.marchId(), receipt);
             if (previous != null && !previous.equals(receipt)) {
@@ -701,7 +759,18 @@ public final class WarScoreBoard {
                                         String capitalHolder, long capitalHeldSince,
                                         Map<String, Long> fatigue, Map<String, Long> playerKills,
                                         Set<String> goalClaimed, long totalKills) {
-        WarScoreBoard board = new WarScoreBoard(rules, startedAt, initiatorNationId);
+        return restore(rules, startedAt, phase, initiatorNationId, scores, gates,
+                capitalHolder, capitalHeldSince, fatigue, playerKills, goalClaimed, totalKills, null);
+    }
+
+    private static WarScoreBoard restore(Rules rules, long startedAt, Phase phase,
+                                         String initiatorNationId,
+                                         Map<String, long[]> scores, Map<String, Set<String>> gates,
+                                         String capitalHolder, long capitalHeldSince,
+                                         Map<String, Long> fatigue, Map<String, Long> playerKills,
+                                         Set<String> goalClaimed, long totalKills,
+                                         Long preparationExpiresAt) {
+        WarScoreBoard board = new WarScoreBoard(rules, startedAt, initiatorNationId, preparationExpiresAt);
         board.phase = phase;
         // 逐份 clone 数组：传进来的那份 map 常常就是调用方手里的活对象，共享数组等于读返回别名
         for (Map.Entry<String, long[]> entry : scores.entrySet()) {
