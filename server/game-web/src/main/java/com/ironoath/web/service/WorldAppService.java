@@ -15,6 +15,7 @@ import com.ironoath.core.world.Coord;
 import com.ironoath.core.world.FogOfWar;
 import com.ironoath.core.world.WorldGenerator;
 import com.ironoath.core.world.WorldRepository;
+import com.ironoath.web.world.TargetOccupationStore;
 import com.ironoath.web.dto.generated.ChunkData;
 import com.ironoath.web.dto.generated.ChunkVersion;
 import com.ironoath.web.dto.generated.MarchStatus;
@@ -92,12 +93,14 @@ public class WorldAppService {
      * 所以这个数天然只含真人 —— 「在线真人数」不需要另算一份。
      */
     private final com.ironoath.web.ws.PushGateway pushGateway;
+    private final TargetOccupationStore occupations;
 
     public WorldAppService(ConfigRegistry configs, WorldRepository world,
                            PlayerRepository players, TimeService timeService,
                            PowerService powerService, PublicEnemyBroadcaster publicEnemies,
                            com.ironoath.web.bot.BotSpawnService botSpawn,
-                           com.ironoath.web.ws.PushGateway pushGateway) {
+                           com.ironoath.web.ws.PushGateway pushGateway,
+                           TargetOccupationStore occupations) {
         this.configs = configs;
         this.world = world;
         this.players = players;
@@ -106,6 +109,13 @@ public class WorldAppService {
         this.publicEnemies = publicEnemies;
         this.botSpawn = botSpawn;
         this.pushGateway = pushGateway;
+        this.occupations = occupations;
+        var initialTargets=WorldTargets.from(configs);
+        validateOccupationCatalog(initialTargets,occupations.findAll(initialTargets.targets().size()+1));
+        configs.addReloadGuard("world_target",candidate -> {
+            var targets=WorldTargets.from(candidate);
+            validateOccupationCatalog(targets,occupations.findAll(targets.targets().size()+1));
+        });
     }
 
     // ---------- 家坐标 ----------
@@ -291,9 +301,11 @@ public class WorldAppService {
         java.util.Collections.sort(keys);
         java.util.List<WorldEntity> out = new java.util.ArrayList<>();
         Map<Coord, String> cityIndex = cityIndex();
+        var targets = WorldTargets.from(configs);
+        var owners = occupationSnapshot(targets);
         for (String key : keys) {
             if (fog.chunks().contains(key)) {
-                out.addAll(entitiesOf(key, rules, cityIndex));
+                out.addAll(entitiesOf(key, rules, cityIndex,targets,owners));
             }
         }
         return out;
@@ -401,9 +413,16 @@ public class WorldAppService {
         // 静态图层变化也必须让旧地形缓存失效；只读请求不为此写世界版本。
         // 发布坐标/名称变动时 world_target.version 必须递增，回滚须刷新客户端缓存。
         long targetLayerVersion = configs.rawTable("world_target").version();
+        var targets = WorldTargets.from(configs);
+        var owners = occupationSnapshot(targets);
 
         for (String key : wanted) {
             long serverVersion = Math.addExact(world.chunkVersion(key), targetLayerVersion);
+            for(var owner:owners.values()) {
+                if(Coord.of(owner.x(),owner.y()).chunkKey(rules.chunkSize()).equals(key)) {
+                    serverVersion=Math.addExact(serverVersion,owner.version());
+                }
+            }
             boolean isExplored = fog.chunks().contains(key);
             if (isExplored) {
                 explored.add(key);
@@ -424,7 +443,7 @@ public class WorldAppService {
                 if (cityIndex == null) {
                     cityIndex = cityIndex();
                 }
-                entities = entitiesOf(key, rules, cityIndex);
+                entities = entitiesOf(key, rules, cityIndex,targets,owners);
             } else {
                 // 迷雾块不下发实体：下发了就等于把迷雾做成纯客户端遮罩，改客户端即可透视全图。
                 // 唯一的例外是 B08 §4 的第一档 —— 强横档起的坐标「不再受迷雾保护」，
@@ -512,7 +531,8 @@ public class WorldAppService {
 
     /** 组装一个 chunk 内的全部实体：玩家城 + 野怪 + 资源点 + 行军。 */
     private List<WorldEntity> entitiesOf(String chunkKey, WorldGenerator.Rules rules,
-                                         Map<Coord, String> cityIndex) {
+                                         Map<Coord, String> cityIndex,WorldTargets targets,
+                                         Map<String,TargetOccupationStore.Snapshot> owners) {
         // 消耗表按块读（{@code consumedInChunk}），不逐格问 {@code isConsumed}（Mongo 版是一次查询，
         // 一个 32×32 的块逐格问就是 1024 次）。城表索引由调用方一趟读一次（{@link #cityIndex()}）——
         // 与 exposedCities 的注释同一条理由：「按城表筛块，而不是逐格查 cityAt」。
@@ -536,7 +556,6 @@ public class WorldAppService {
                     MarchStatus.valueOf(march.status().name()), null, march.load(), null));
         }
         WorldGenerator.Catalog catalog = catalog();
-        WorldTargets targets = WorldTargets.from(configs);
         Map<String, PlayerBrief> cityBriefs = cityBriefsOf(origin, rules, cityIndex);
         for (int dy = 0; dy < rules.chunkSize(); dy++) {
             for (int dx = 0; dx < rules.chunkSize(); dx++) {
@@ -544,7 +563,7 @@ public class WorldAppService {
                 if (!coord.withinWorld(rules.worldSize())) {
                     continue;
                 }
-                WorldEntity entity = entityAt(coord, cityIndex, consumed, catalog, cityBriefs, targets);
+                WorldEntity entity = entityAt(coord, cityIndex, consumed, catalog, cityBriefs, targets,owners);
                 if (entity != null) {
                     out.add(entity);
                 }
@@ -603,7 +622,7 @@ public class WorldAppService {
      */
     private WorldEntity entityAt(Coord coord, Map<Coord, String> ownerByCoord, Set<Coord> consumed,
                                  WorldGenerator.Catalog catalog, Map<String, PlayerBrief> cityBriefs,
-                                 WorldTargets targets) {
+                                 WorldTargets targets, Map<String,TargetOccupationStore.Snapshot> owners) {
         String owner = ownerByCoord.get(coord);
         if (owner != null) {
             PlayerBrief brief = cityBriefs.get(owner);
@@ -614,9 +633,11 @@ public class WorldAppService {
         // 旧城仍优先；旧野怪/资源消耗标记不能把新固定目标挖掉。这里不写任何占领状态。
         var target = targets.at(coord);
         if (target != null) {
+            var occupation = owners.get(target.definition().id());
             return new WorldEntity(target.definition().id(),
                     WorldEntityType.valueOf(target.definition().kind().name()), coord.x(), coord.y(),
-                    Math.toIntExact(target.defender().level()), null, null, null, null, null,
+                    Math.toIntExact(target.defender().level()), occupation==null?null:occupation.nationName(),
+                    null, null, null, null,
                     target.definition().name());
         }
         if (consumed.contains(coord)) {
@@ -641,6 +662,24 @@ public class WorldAppService {
      */
     private static String stableId(String kind, Coord coord) {
         return kind + "_" + coord.x() + "_" + coord.y();
+    }
+
+    /** 一次视野用同一份版本/归属快照，避免版本已变而下发旧拥有者。 */
+    private Map<String,TargetOccupationStore.Snapshot> occupationSnapshot(WorldTargets targets) {
+        var owners=occupations.findByTargetIds(targets.targets().stream().map(t->t.definition().id()).toList());
+        validateOccupationCatalog(targets,owners);
+        return owners;
+    }
+
+    private static void validateOccupationCatalog(WorldTargets targets,
+            Map<String,TargetOccupationStore.Snapshot> owners) {
+        for(var owner:owners.values()) {
+            var target=targets.at(Coord.of(owner.x(),owner.y()));
+            if(target==null || !target.definition().id().equals(owner.targetId())
+                    || !target.definition().kind().name().equals(owner.kind().name())) {
+                throw new IllegalStateException("已占战略目标被移位、改类型或移除，须先制定迁移："+owner.targetId());
+            }
+        }
     }
 
     // ---------- 侦查报告 ----------

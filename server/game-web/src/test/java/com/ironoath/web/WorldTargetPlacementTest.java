@@ -22,8 +22,10 @@ import static org.mockito.Mockito.*;
 class WorldTargetPlacementTest {
     private final ConfigRegistry configs = ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
     private final WorldRepository store = mock(WorldRepository.class);
+    private final com.ironoath.web.world.TargetOccupationStore occupations =
+            new com.ironoath.web.store.memory.InMemoryTargetOccupationStore();
     private final WorldAppService service = new WorldAppService(configs, store,
-            mock(PlayerRepository.class), null, null, null, null, null);
+            mock(PlayerRepository.class), null, null, null, null, null,occupations);
     private static final List<Coord> RESERVED = List.of(Coord.of(256,256),
             Coord.of(256,216), Coord.of(296,256), Coord.of(256,296), Coord.of(216,256),
             Coord.of(320,192), Coord.of(352,224), Coord.of(192,192), Coord.of(160,224),
@@ -177,6 +179,66 @@ class WorldTargetPlacementTest {
         when(store.cityOf("viewer")).thenReturn(Optional.of(Coord.of(255,255)));
         when(store.fogOf("viewer")).thenReturn(new com.ironoath.core.world.FogOfWar());
         assertThat(service.visibleEntitiesOf("viewer")).isEmpty();
+    }
+
+    @Test void ownershipAndChunkVersionComeFromOneReadSnapshot() {
+        var time=mock(com.ironoath.common.time.TimeService.class);
+        var app=new WorldAppService(configs,store,mock(PlayerRepository.class),time,
+                mock(com.ironoath.web.service.PowerService.class),
+                mock(com.ironoath.web.service.PublicEnemyBroadcaster.class),
+                mock(com.ironoath.web.bot.BotSpawnService.class),mock(com.ironoath.web.ws.PushGateway.class),occupations);
+        when(store.cityOf("viewer")).thenReturn(Optional.of(Coord.of(255,216)));
+        var fog=new com.ironoath.core.world.FogOfWar();fog.explore(Coord.of(256,216),32);
+        when(store.fogOf("viewer")).thenReturn(fog);
+        var neutral=app.viewport("viewer",new com.ironoath.web.dto.generated.ViewportReq(256,216,1,List.of()));
+        var before=neutral.chunks().stream().filter(c->c.key().equals("8:6")).findFirst().orElseThrow();
+        var owner=new com.ironoath.web.world.TargetOccupationStore.Snapshot("gate_north",
+                WorldGenerator.EntityType.GATE,256,216,"N-owned","验收国",100,"owned-battle-1",1);
+        assertThat(occupations.compareAndSet(owner,0)).isTrue();
+        var versions=neutral.chunks().stream().map(c->new com.ironoath.web.dto.generated.ChunkVersion(c.key(),c.version())).toList();
+        var changed=app.viewport("viewer",new com.ironoath.web.dto.generated.ViewportReq(256,216,1,versions));
+        assertThat(changed.chunks()).hasSize(1);
+        assertThat(changed.chunks().get(0).version()).isEqualTo(before.version()+1);
+        assertThat(changed.chunks().get(0).entities()).anySatisfy(e->{
+            assertThat(e.id()).isEqualTo("gate_north");assertThat(e.ownerName()).isEqualTo("验收国");
+            assertThat(e.displayName()).isEqualTo("北境关卡");
+        });
+    }
+
+    @Test void incompatibleOwnedAnchorFailsBeforeMapReadOrConfigurationSwitch() {
+        var wrong=new com.ironoath.web.world.TargetOccupationStore.Snapshot("gate_north",
+                WorldGenerator.EntityType.GATE,257,216,"N-owned","验收国",100,"owned-wrong-anchor",1);
+        assertThat(occupations.compareAndSet(wrong,0)).isTrue();
+        when(store.cityOf("viewer")).thenReturn(Optional.of(Coord.of(255,216)));
+        when(store.fogOf("viewer")).thenReturn(new com.ironoath.core.world.FogOfWar());
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->service.visibleEntitiesOf("viewer"))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("迁移");
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->new WorldAppService(configs,store,
+                mock(PlayerRepository.class),null,null,null,null,null,occupations))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("迁移");
+    }
+
+    @Test void configurationMoveOfOwnedTargetIsRejectedAndOldTableIsRetained() throws Exception {
+        var owner=new com.ironoath.web.world.TargetOccupationStore.Snapshot("gate_north",
+                WorldGenerator.EntityType.GATE,256,216,"N-owned","验收国",100,"owned-valid-anchor",1);
+        assertThat(occupations.compareAndSet(owner,0)).isTrue();
+        Path root=Path.of("").toAbsolutePath();
+        for(int i=0;i<6 && root!=null && !java.nio.file.Files.exists(root.resolve("contract/config/world_target.json"));i++) {
+            root=root.getParent();
+        }
+        assertThat(root).isNotNull();
+        var json=(com.fasterxml.jackson.databind.node.ObjectNode)new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree(java.nio.file.Files.readString(root.resolve("contract/config/world_target.json")));
+        json.put("version",json.get("version").asInt()+1);
+        for(var row:json.withArray("rows")) {
+            if(row.get("id").asText().equals("gate_north"))
+                ((com.fasterxml.jackson.databind.node.ObjectNode)row).put("x",257);
+        }
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->configs.reload("world_target",
+                com.ironoath.config.cfg.WorldTargetCfg.class,json.toString()))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("迁移");
+        assertThat(WorldTargets.from(configs).at(Coord.of(256,216)).definition().id()).isEqualTo("gate_north");
+        assertThat(WorldTargets.from(configs).at(Coord.of(257,216))).isNull();
     }
 
 }

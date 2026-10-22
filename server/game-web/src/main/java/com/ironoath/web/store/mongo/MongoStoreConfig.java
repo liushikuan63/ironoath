@@ -29,6 +29,10 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 @Configuration
 @ConditionalOnProperty(name = "ironoath.storage", havingValue = GameProperties.STORAGE_MONGO)
 public class MongoStoreConfig {
+    @Bean
+    public com.ironoath.web.world.TargetOccupationStore targetOccupationStore(MongoTemplate mongo) {
+        return new MongoTargetOccupationStore(mongo);
+    }
 
     @Bean
     public com.ironoath.web.activity.ActivityRuleHistoryStore activityRuleHistoryStore(MongoTemplate mongo) {

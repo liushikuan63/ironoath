@@ -66,6 +66,7 @@ public class MongoStorageGuard implements SmartInitializingSingleton, Environmen
             com.ironoath.core.march.MarchRepository.class,
             com.ironoath.core.march.MarchDueQueue.class,
             com.ironoath.core.world.WorldRepository.class,
+            com.ironoath.web.world.TargetOccupationStore.class,
             com.ironoath.core.stage.StageProgressRepository.class,
             com.ironoath.core.pay.PayOrderStore.class,
             com.ironoath.web.season.SeasonLedgerStore.class,

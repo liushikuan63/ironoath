@@ -11,7 +11,7 @@ public record WorldEntity(
         int x,
         int y,
         Integer level,   // 野怪等级 / 主城等级；空地与资源点为 null
-        String ownerName,   // 玩家城的拥有者昵称；野怪与资源点为 null
+        String ownerName,   // 拥有者显示名：玩家城为昵称，固定战略目标为已占国家名；中立目标、野怪和资源点为 null。目标名称另在 displayName
         String allianceTag,   // 联盟标签（B10 落地前恒为 null，字段先留位以免届时改协议）
         MarchStatus marchStatus,
         String resourceType,   // 资源点产出的资源 id；其余为 null

@@ -30,6 +30,12 @@ import org.springframework.context.annotation.Configuration;
  */
 @Configuration
 public class WorldBeansConfig {
+    @Bean
+    @ConditionalOnProperty(name = "ironoath.storage", havingValue = GameProperties.STORAGE_MEMORY,
+            matchIfMissing = true)
+    public com.ironoath.web.world.TargetOccupationStore targetOccupationStore() {
+        return new com.ironoath.web.store.memory.InMemoryTargetOccupationStore();
+    }
 
     private static final Logger LOG = LoggerFactory.getLogger(WorldBeansConfig.class);
 
