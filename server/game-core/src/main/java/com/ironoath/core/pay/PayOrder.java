@@ -76,19 +76,31 @@ public final class PayOrder {
     public static final List<String> CONFIRMED_STATUS_NAMES =
             List.copyOf(CONFIRMED_STATUSES).stream().map(Enum::name).toList();
 
+    /** 创建订单时锁定的渠道参数；数量由本订单的 long 分金额重建，不复制第二份金额。 */
+    public record Quote(String mode, String offerId, String env, String currencyType, String signature) {
+        public Quote {
+            if (mode == null || mode.isBlank() || offerId == null || offerId.isBlank()
+                    || env == null || env.isBlank() || currencyType == null || currencyType.isBlank()) {
+                throw new IllegalArgumentException("支付报价的渠道字段不得为空");
+            }
+        }
+    }
+
     /**
-     * @param productId       商品 id（shop 表的行 id）
-     * @param count           购买数量
-     * @param unitPriceCents  单价（分）。**来自服务端下发的价格表**，不写死在客户端（§2）
-     * @param createdAt       下单时刻
-     * @param heroChoice      「三选一」的所选武将（仅首充这类带候选的商品有值，其余为 null）。
-     *                        <b>它必须随订单落库</b>：发货可能在几分钟后由补单重做，
-     *                        那时客户端早就断开，而"替玩家挑一个"是不允许的（B19 §五②e）
+     * 一笔支付的商品与锁价。
+     * @param productId 商品 id（shop 表的行 id）
+     * @param unitPriceCents 单价（分），只由服务端配置确定
+     * @param heroChoice 玩家自己选择的武将；发货可延迟，故必须随单保存
+     * @param quote 创建时的渠道参数；旧订单快照可为 null
      */
     public record Line(String productId, int count, long unitPriceCents, long createdAt,
-                       String heroChoice, MonthlyCardTerms cardTerms) {
+                       String heroChoice, MonthlyCardTerms cardTerms, Quote quote) {
+        public Line(String productId, int count, long unitPriceCents, long createdAt,
+                    String heroChoice, MonthlyCardTerms cardTerms) {
+            this(productId, count, unitPriceCents, createdAt, heroChoice, cardTerms, null);
+        }
         public Line(String productId, int count, long unitPriceCents, long createdAt, String heroChoice) {
-            this(productId, count, unitPriceCents, createdAt, heroChoice, null);
+            this(productId, count, unitPriceCents, createdAt, heroChoice, null, null);
         }
         public Line {
             if (productId == null || productId.isBlank()) {
@@ -439,20 +451,30 @@ public final class PayOrder {
     public record Snapshot(String orderId, String playerId, String productId, int count,
                            long unitPriceCents, long createdAt, Status status, String transactionId,
                            int callbackCount, int fulfillAttempts, long paidAt, long fulfilledAt,
-                           String failureReason, String heroChoice, List<RewardRow> rewards, MonthlyCardTerms cardTerms) {
+                           String failureReason, String heroChoice, List<RewardRow> rewards,
+                           MonthlyCardTerms cardTerms, Quote quote) {
+        public Snapshot(String orderId, String playerId, String productId, int count,
+                        long unitPriceCents, long createdAt, Status status, String transactionId,
+                        int callbackCount, int fulfillAttempts, long paidAt, long fulfilledAt,
+                        String failureReason, String heroChoice, List<RewardRow> rewards, MonthlyCardTerms cardTerms) {
+            this(orderId, playerId, productId, count, unitPriceCents, createdAt, status, transactionId,
+                    callbackCount, fulfillAttempts, paidAt, fulfilledAt, failureReason, heroChoice, rewards,
+                    cardTerms, null);
+        }
         public Snapshot(String orderId, String playerId, String productId, int count,
                         long unitPriceCents, long createdAt, Status status, String transactionId,
                         int callbackCount, int fulfillAttempts, long paidAt, long fulfilledAt,
                         String failureReason, String heroChoice, List<RewardRow> rewards) {
             this(orderId, playerId, productId, count, unitPriceCents, createdAt, status, transactionId,
-                    callbackCount, fulfillAttempts, paidAt, fulfilledAt, failureReason, heroChoice, rewards, null);
+                    callbackCount, fulfillAttempts, paidAt, fulfilledAt, failureReason, heroChoice, rewards, null, null);
         }
     }
 
     public Snapshot snapshot() {
         return new Snapshot(orderId, playerId, line.productId(), line.count(),
                 line.unitPriceCents(), line.createdAt(), status, transactionId, callbackCount,
-                fulfillAttempts, paidAt, fulfilledAt, failureReason, line.heroChoice(), rewards, line.cardTerms());
+                fulfillAttempts, paidAt, fulfilledAt, failureReason, line.heroChoice(), rewards,
+                line.cardTerms(), line.quote());
     }
 
     /**
@@ -472,7 +494,8 @@ public final class PayOrder {
             throw new IllegalArgumentException("orderId 不得为空：它是回调幂等的唯一键");
         }
         PayOrder order = new PayOrder(s.orderId(), s.playerId(),
-                new Line(s.productId(), s.count(), s.unitPriceCents(), s.createdAt(), s.heroChoice(), s.cardTerms()));
+                new Line(s.productId(), s.count(), s.unitPriceCents(), s.createdAt(),
+                        s.heroChoice(), s.cardTerms(), s.quote()));
         order.status = s.status() == null ? Status.PENDING : s.status();
         order.transactionId = s.transactionId();
         order.callbackCount = s.callbackCount();

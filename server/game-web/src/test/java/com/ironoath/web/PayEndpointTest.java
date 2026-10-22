@@ -1,6 +1,7 @@
 package com.ironoath.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -394,8 +395,12 @@ class PayEndpointTest {
      * 所以另建一个被测实例，只让它读可控时钟 —— 与 SeasonSettlementTest 同一做法。
      */
     private PayAppService payWithClock(java.util.concurrent.atomic.AtomicLong clock) {
+        return payWithClock(clock, environment);
+    }
+
+    private PayAppService payWithClock(java.util.concurrent.atomic.AtomicLong clock, Environment payEnvironment) {
         return new PayAppService(orders, verifier, fulfiller, configs, playerLock, idempotency,
-                new TimeService(clock::get), environment,
+                new TimeService(clock::get), payEnvironment,
                 // 2026-09-11 由另一条工作线补：构造器多了这两个注入物，而本用例测的是订单 TTL。
                 // 值与生产装配同源（PayBeansConfig），不是为测试编的一套数
                 new com.ironoath.core.pay.PopupThrottle(new com.ironoath.core.pay.PopupThrottle.Rules(
@@ -405,6 +410,97 @@ class PayEndpointTest {
                 // UNKNOWN 就是生产默认 bean：年龄未知 ⇒ 限额不拦，本用例的下单路径不会碰到 throttle
                 com.ironoath.web.pay.MinorPaymentPolicy.UNKNOWN,
                 new com.ironoath.web.pay.PaidProducts(configs, battlePass), players);
+    }
+
+    @Test
+    @DisplayName("下单同请求号跨时刻重放返回原待付订单与原支付参数")
+    void sameRequestIdReplaysOriginalPendingOrder() {
+        long base = 1_700_000_000_000L;
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(base);
+        PayAppService pay = payWithClock(clock);
+        String playerId = newPlayer();
+        CreateOrderReq req = new CreateOrderReq("req-replay-" + UUID.randomUUID(),
+                "monthly_gold_card", 1, null);
+        var first = pay.createOrder(playerId, req);
+
+        clock.set(base + MINUTE);
+        var replay = pay.createOrder(playerId, req);
+
+        assertThat(replay.orderId()).isEqualTo(first.orderId());
+        assertThat(replay.payParams()).isEqualTo(first.payParams());
+        assertThat(orders.get(first.orderId()).status()).isEqualTo(PayOrder.Status.PENDING);
+    }
+
+    @Test
+    @DisplayName("部署 offerId 切换后同键回放仍给首次创建时锁定的渠道参数")
+    void replayUsesOriginalQuoteAfterEnvironmentChanges() {
+        java.util.concurrent.atomic.AtomicLong clock =
+                new java.util.concurrent.atomic.AtomicLong(1_700_000_000_000L);
+        String playerId = newPlayer();
+        CreateOrderReq req = new CreateOrderReq("req-quote-" + UUID.randomUUID(),
+                "monthly_gold_card", 1, null);
+        var original = payWithClock(clock, new org.springframework.mock.env.MockEnvironment()
+                .withProperty("ironoath.pay.offer-id", "offer-original")).createOrder(playerId, req);
+
+        clock.addAndGet(MINUTE);
+        var replay = payWithClock(clock, new org.springframework.mock.env.MockEnvironment()
+                .withProperty("ironoath.pay.offer-id", "offer-new")).createOrder(playerId, req);
+
+        assertThat(replay.orderId()).isEqualTo(original.orderId());
+        assertThat(replay.payParams()).isEqualTo(original.payParams());
+        assertThat(replay.payParams().offerId()).isEqualTo("offer-original");
+    }
+
+    @Test
+    @DisplayName("旧 Java hashCode 碰撞的两个请求号也必须有不同订单号")
+    void hashCodeCollisionDoesNotMergeDifferentOrders() {
+        String playerId = newPlayer();
+        PayAppService pay = payWithClock(new java.util.concurrent.atomic.AtomicLong(1_700_000_000_000L));
+        String firstRequest = "req-Aa-" + playerId;
+        String secondRequest = "req-BB-" + playerId;
+        assertThat(firstRequest.hashCode()).isEqualTo(secondRequest.hashCode());
+
+        String firstId = pay.createOrder(playerId,
+                new CreateOrderReq(firstRequest, "monthly_gold_card", 1, null)).orderId();
+        String secondId = pay.createOrder(playerId,
+                new CreateOrderReq(secondRequest, "monthly_gold_card", 1, null)).orderId();
+
+        assertThat(secondId).isNotEqualTo(firstId);
+        assertThat(orders.get(firstId).status()).isEqualTo(PayOrder.Status.PENDING);
+        assertThat(orders.get(secondId).status()).isEqualTo(PayOrder.Status.PENDING);
+    }
+
+    @Test
+    @DisplayName("同请求号换购买内容不能借原单报价付款")
+    void sameRequestIdWithDifferentContentsIsRejected() {
+        PayAppService pay = payWithClock(new java.util.concurrent.atomic.AtomicLong(1_700_000_000_000L));
+        String playerId = newPlayer();
+        String requestId = "req-mismatch-" + UUID.randomUUID();
+        pay.createOrder(playerId, new CreateOrderReq(requestId, "monthly_gold_card", 1, null));
+
+        assertThatThrownBy(() -> pay.createOrder(playerId,
+                new CreateOrderReq(requestId, "monthly_gold_card", 2, null)))
+                .isInstanceOf(com.ironoath.common.BizException.class)
+                .satisfies(e -> assertThat(((com.ironoath.common.BizException) e).errorCode())
+                        .isEqualTo(ErrorCode.REQUEST_DUPLICATED));
+    }
+
+    @Test
+    @DisplayName("已过期的同请求号不能换时间再造第二笔")
+    void expiredRequestIdCannotCreateAnotherOrder() {
+        long base = 1_700_000_000_000L;
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(base);
+        PayAppService pay = payWithClock(clock);
+        String playerId = newPlayer();
+        CreateOrderReq req = new CreateOrderReq("req-expired-" + UUID.randomUUID(),
+                "monthly_gold_card", 1, null);
+        String orderId = pay.createOrder(playerId, req).orderId();
+
+        clock.set(base + configs.longParam("PAY_ORDER_TTL_HOURS") * 3_600_000L + MINUTE);
+        assertThat(pay.status(playerId, orderId).status()).isEqualTo(OrderStatus.FAILED);
+        assertThatThrownBy(() -> pay.createOrder(playerId, req))
+                .isInstanceOf(com.ironoath.common.BizException.class);
+        assertThat(orders.get(orderId).status()).isEqualTo(PayOrder.Status.CANCELLED);
     }
 
     @Test

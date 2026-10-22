@@ -1,7 +1,12 @@
 package com.ironoath.web.service;
 
 import java.util.ArrayList;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -223,32 +228,41 @@ public class PayAppService {
 
     /** 下单：生成订单号与调起支付所需的参数。<b>价格由服务端查表，客户端传的一律忽略</b>。 */
     public CreateOrderResp createOrder(String playerId, CreateOrderReq req) {
+        if (req == null || isBlank(req.requestId())) {
+            throw new BizException(ErrorCode.REQUEST_ID_MISSING, "支付域的写操作必须带 requestId");
+        }
         long now = timeService.serverNow();
-        acquire(req == null ? null : req.requestId(), now);
-        try {
-            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
-                // 先扫过期再造新单：下单是唯一会让订单表变大的入口，
-                // 不在这里扫，「下了单没付」的记录就只增不减（PAY_ORDER_TTL_HOURS 的 why 就是这条）
-                expireUnpaidOrders(now);
+        return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+            // 新订单号由玩家与请求号稳定推导。重放要先读原单；在这里先占幂等键会拒掉回放。
+            // 旧订单号仍原样留在存储中，回调/查单继续用其下发的原 ID。
+            String orderId = orderIdFor(playerId, req.requestId());
+            expireUnpaidOrders(now);
+            PayOrder existing = orders.get(orderId);
+            if (existing != null) {
+                PayOrder.Line original = existing.line();
+                if (!existing.playerId().equals(playerId)
+                        || !original.productId().equals(req.productId())
+                        || original.count() != req.count()
+                        || !Objects.equals(original.heroChoice(), req.heroChoice())) {
+                    throw new BizException(ErrorCode.REQUEST_DUPLICATED,
+                            "这笔订单的购买内容与首次下单不一致，请重新选择商品");
+                }
+                if (existing.status() != PayOrder.Status.PENDING || original.quote() == null) {
+                    throw new BizException(ErrorCode.PAY_ORDER_DUPLICATE,
+                            "本次订单已结束，请重新下单");
+                }
+                return new CreateOrderResp(orderId, null, payParams(original));
+            }
+            acquire(req.requestId(), now);
+            try {
                 Buyable buyable = requireBuyable(playerId, req);
                 PayProductCfg product = buyable.product();
                 // 礼包的两道闸在**下单时**判（工单 6.1 S3-iii）：拦在发货就晚了 —— 玩家已经付过钱，
                 // 而"已付不退"是一条绝对纪律（§四 禁止项）。
                 requireGiftSellable(playerId, product, now, buyable.save());
                 long cents = catalog.priceCents(product);
-                String orderId = "order_" + playerId + "_" + now + "_"
-                        + Long.toHexString(req.requestId().hashCode());
                 PayOrder.Line line = new PayOrder.Line(product.id(), Math.max(1, req.count()),
-                        cents, now, req.heroChoice(), catalog.cardTerms(product));
-                PayOrder existing = orders.get(orderId);
-                if (existing != null) {
-                    // 幂等：同一个 requestId 重放时返回同一个订单，而不是造出第二笔。
-                    // 造两笔的后果是玩家只付其中一笔的钱，另一笔永久停在 PENDING，
-                    // 最后在补单队列里变成一条谁也说不清的记录
-                    // 幂等重放：**不重算提示**（null）。玩家已经拿到过那一句，重放多半是网络重试；
-                    // 重复一句只会变成噪音，还会多打一行日志。
-                    return new CreateOrderResp(orderId, null, payParams(line));
-                }
+                        cents, now, req.heroChoice(), catalog.cardTerms(product), paymentQuote());
                 PayOrder order = PayOrder.create(orderId, playerId, line);
                 // 未成年额度是**提示不是闸门**（B15 §3 禁止项 + 裁决 #489）：先算好那句提示，
                 // 再照常落库 —— 提示随 CreateOrderResp 的 minorNotice 那一列下发。
@@ -259,11 +273,11 @@ public class PayAppService {
                         orderId, playerId, line.productId(), line.count(), line.totalCents(),
                         line.heroChoice());
                 return new CreateOrderResp(orderId, minorNotice, payParams(line));
-            });
-        } catch (RuntimeException e) {
-            idempotency.release(req.requestId());
-            throw e;
-        }
+            } catch (RuntimeException e) {
+                idempotency.release(req.requestId());
+                throw e;
+            }
+        });
     }
 
     /**
@@ -685,19 +699,37 @@ public class PayAppService {
      * 玩家看到的是「点了没反应」。当场报错虽然难看，但它指向的是配置缺失这个真问题。
      */
     private PayParams payParams(PayOrder.Line line) {
+        PayOrder.Quote quote = line.quote() == null ? paymentQuote() : line.quote();
+        return new PayParams(quote.mode(), quote.offerId(), String.valueOf(line.totalCents()),
+                quote.env(), quote.currencyType(), quote.signature());
+    }
+
+    /** 首次下单时冻结渠道参数；回放不得改用此刻的部署环境或热加载币种。 */
+    private PayOrder.Quote paymentQuote() {
         String offerId = environment.getProperty("ironoath.pay.offer-id", "");
         if (offerId.isBlank()) {
             throw new BizException(ErrorCode.PAY_PRODUCT_OFFLINE,
                     "支付未配置：缺少部署参数 ironoath.pay.offer-id（米大师应用 id）。"
                             + "这是部署凭据，只能来自环境变量，不在配置表里");
         }
-        return new PayParams(
+        return new PayOrder.Quote(
                 environment.getProperty("ironoath.pay.mode", "game"),
                 offerId,
-                String.valueOf(line.totalCents()),
                 environment.getProperty("ironoath.pay.env", "1"),
                 currency(),
                 null);
+    }
+
+    /** 只给新单用；旧 ID 不改，已有回调和查单仍按原单号工作。 */
+    private static String orderIdFor(String playerId, String requestId) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] key = ("pay:create\0" + playerId + "\0" + requestId)
+                    .getBytes(StandardCharsets.UTF_8);
+            return "order_" + HexFormat.of().formatHex(digest.digest(key));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("JDK 缺少 SHA-256，无法生成稳定支付订单号", e);
+        }
     }
 
     private String currency() {

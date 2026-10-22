@@ -75,6 +75,27 @@ class GiftPurchaseLimitTest {
     }
 
     @Test
+    @DisplayName("礼包同请求号回放原单只占一次当日限购；新请求仍被 15011 挡住")
+    void sameRequestIdReplayDoesNotConsumeSecondGiftQuota() {
+        String playerId = newPlayer();
+        long now = System.currentTimeMillis();
+        trigger(playerId, GiftCfg.Trigger.STUCK_STAGE, now);
+        CreateOrderReq req = new CreateOrderReq("req-gift-replay-" + UUID.randomUUID(),
+                GIFT_PRODUCT, 1, null);
+        var first = pay.createOrder(playerId, req);
+        var replay = pay.createOrder(playerId, req);
+
+        assertThat(replay.orderId()).isEqualTo(first.orderId());
+        PlayerSave saved = players.findByPlayerId(playerId).orElseThrow();
+        assertThat(saved.giftPopup().purchasedTodayOf("popup_stuck_supply", DayKey.of(now)))
+                .isEqualTo(1L);
+        assertThatThrownBy(() -> order(playerId))
+                .isInstanceOf(BizException.class)
+                .satisfies(e -> assertThat(((BizException) e).errorCode())
+                        .isEqualTo(ErrorCode.PAY_GIFT_DAILY_LIMIT));
+    }
+
+    @Test
     @DisplayName("跨天恢复可买：账本按自然日（UTC+8）清空，不是距上次 24 小时")
     void nextDayRestoresThePurchase() {
         String playerId = newPlayer();

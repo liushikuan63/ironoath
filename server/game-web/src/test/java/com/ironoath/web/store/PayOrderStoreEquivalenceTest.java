@@ -60,6 +60,38 @@ class PayOrderStoreEquivalenceTest {
     // ---------- 负债 ----------
 
     @Test
+    @DisplayName("创建时锁定的渠道参数在内存与 Mongo 重读后完全相同")
+    void paymentQuoteSurvivesBothStores() {
+        PayOrder.Quote quote = new PayOrder.Quote("game", "offer-original", "1", "CNY", null);
+        for (PayOrderStore store : bothStores()) {
+            PayOrder order = PayOrder.create("o-quote", "P-quote",
+                    new PayOrder.Line("pack_monthly", 1, 600L, T0, null, null, quote));
+            store.insert(order);
+            PayOrder reread = store.get("o-quote");
+            assertThat(reread.line().quote()).as(store.getClass().getSimpleName()).isEqualTo(quote);
+            assertThat(reread.snapshot().quote()).isEqualTo(quote);
+        }
+    }
+
+    @Test
+    @DisplayName("旧 Mongo 订单缺少新增 quote 字段仍可重建与查单")
+    void legacyOrderWithoutQuoteStillReads() {
+        requireMongo();
+        PayOrderStore store = newMongoStore();
+        store.insert(order("o-legacy-quote", "P-legacy-quote", "pack_monthly", 600L));
+        db.template().updateFirst(
+                org.springframework.data.mongodb.core.query.Query.query(
+                        org.springframework.data.mongodb.core.query.Criteria.where("_id").is("o-legacy-quote")),
+                new org.springframework.data.mongodb.core.query.Update().unset("state.quote"),
+                com.ironoath.web.store.mongo.PayOrderDocument.COLLECTION);
+
+        PayOrder reread = store.get("o-legacy-quote");
+        assertThat(reread).isNotNull();
+        assertThat(reread.line().quote()).isNull();
+        assertThat(reread.status()).isEqualTo(PayOrder.Status.PENDING);
+    }
+
+    @Test
     @DisplayName("确认收款后重新读一遍：两套实现都必须给出 PAID_UNFULFILLED 与交易号")
     void paidButUndeliveredLiabilitySurvivesTheWriteBack() {
         for (PayOrderStore store : bothStores()) {
