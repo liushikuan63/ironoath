@@ -161,6 +161,20 @@ test('浏览器/编辑器（拉不起支付）⇒ 明确说清是环境限制，
   assert.ok((view.detail ?? '').includes('微信小游戏'), `要指向正确环境，实际：${view.detail}`)
 })
 
+test('下单回执丢失时不声称请求没有发出；本次没有拉起支付', async () => {
+  const h = harness({
+    createOrder: { kind: 'network', message: 'response lost', queued: false, requestId: 'req-1' },
+  })
+
+  const view = await h.flow.buy('gift_stuck_supply')
+
+  assert.equal(view.phase, 'failed')
+  assert.match(view.detail ?? '', /下单结果|下单回执/)
+  assert.match(view.detail ?? '', /支付未拉起|未拉起支付/)
+  assert.doesNotMatch(view.detail ?? '', /没有发出去|没有扣款/)
+  assert.equal(h.orderStatusCalls.length, 0, '没有 orderId 不能调用按订单号查询')
+})
+
 test('下单被业务拒绝 ⇒ 原样用服务端的提示（15011 今天买过了 / 15012 报价过期都走这条）', async () => {
   const h = harness({
     createOrder: {

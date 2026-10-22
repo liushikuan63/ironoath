@@ -93,7 +93,8 @@ export class GiftPayFlow {
       return failed(order.msg, order.detail, null)
     }
     if (order.kind === 'network') {
-      return failed('网络不可用，请稍后再试', '下单请求没有发出去，没有扣款', null)
+      // 网络错误也可能是服务端已建单、回执却丢了；本次没有拿到支付参数，所以未拉起支付。
+      return failed('下单结果未确认', '下单回执未返回，支付未拉起；请稍后再试', null)
     }
 
     // 下单成功才有这一列：它说的是"本月还剩多少"，与后面的支付结果无关（超限也照常下单），
