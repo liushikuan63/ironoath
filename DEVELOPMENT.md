@@ -360,3 +360,5 @@ PVP 战损的兵力来源（#2369）：出征时 Army 已预扣，攻城攻方�
 战力/榜单行布局（#2371，接上段未做）：名称与数值分别锚定行的左右边缘，固定分列并复用 capWidth，不改变通用标签或标题/提示的居中。横向门量的是实际绘制 background 自身四角，不能用被布局器撑满全屏的宿主，也不能用包含子内容的联合包围盒；逐个可见文字槽检查边界和两列间隔。自动槽盒检查与正常/长文本截图观察配合，前者不能独自证明实际字号可读。RANK_LAYOUT_STRESS_FIXTURE=1 仅在当前浏览器替换 KILL 列表响应以验长名/大数，输出显式标 fixture，后端分数不变；真实对照另跑，正常批次显式为0。#2370记录的横向越界在本格以旧产物45过3失败反证后修正，新产物真实非空/空榜与展示压力场景分别留证。
 
 B13 多方争夺锁（#2372）：内部需要同时保护两支集结时，从 `SocialAppService.runRalliesDepartureLocked` 外层一次申报完整 ID 集合，不要在旧单集结/目标锁内追加另一方。锁顺序是国家 ID 排序去重、集结 ID 排序去重、最后目标；scope/group 改变只在释放全部旧锁后有限重试。原单方接口委托此边界并保留旧结清恢复。同 PlayerLock 身份的国家门面共享线程持有集，允许同集/子集重入而拒绝扩张；集合不能缺失或靠不存在的集结推定国家。此 API 未替代真实战斗计划、归属 CAS 或伤兵/退款幂等。
+
+B13成员战损（#2373）：`GarrisonLossAllocation.plan(currentMembers, actualLosses)` 接受当前兵权与已按unitId展开的真实损失；`withWounded` 接受同阶总损失中的伤兵，返回逐成员伤兵/阵亡，不负责医院。`March.applyLosses` 驻军路径复用计划的survivorsByPlayer；后续冻结战果须使用同一lossesByPlayer，不得按原出兵比例另算。输入过量/无效/溢出失败不改输入，空成员身份保留；全灭后的March移除、Army收容回执与战报仍须在目标操作链集成。测试：`mvn -f server/pom.xml -pl game-core -am -Dtest=GarrisonLossAllocationTest,StrategicGarrisonTest,TierSplitTest -Dsurefire.failIfNoSpecifiedTests=false test`（先按本仓env.sh使用JDK17）。

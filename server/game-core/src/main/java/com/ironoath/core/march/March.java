@@ -1,7 +1,7 @@
 package com.ironoath.core.march;
 
 import com.ironoath.core.world.Coord;
-import com.ironoath.core.army.TierSplit;
+import com.ironoath.core.army.GarrisonLossAllocation;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -597,20 +597,8 @@ public final class March {
 
     private static Map<String,Map<String,Long>> reduceOwners(Map<String,Map<String,Long>> owners,
                                                           Map<String,Long> losses) {
-        Map<String,Map<String,Long>> next=new LinkedHashMap<>();
-        owners.forEach((p,u)->next.put(p,new LinkedHashMap<>(u)));
-        for(var loss:losses.entrySet()) {
-            Map<String,Long> current=new LinkedHashMap<>();
-            next.forEach((p,u)->{long n=u.getOrDefault(loss.getKey(),0L);if(n>0L)current.put(p,n);});
-            var shares=TierSplit.splitProportionally(current,loss.getValue());
-            long assigned=shares.values().stream().mapToLong(Long::longValue).sum();
-            if(assigned!=loss.getValue())throw new IllegalStateException("驻军损失无法按当前兵权分完");
-            shares.forEach((p,n)->{
-                var troop=next.get(p);long left=troop.get(loss.getKey())-n;
-                if(left==0L)troop.remove(loss.getKey());else troop.put(loss.getKey(),left);
-            });
-        }
-        return freezeOwners(next);
+        // 医院/战报的冻结计划复用同一当前兵权分摊，不允许再按原承诺独立取整。
+        return GarrisonLossAllocation.plan(owners,losses).survivorsByPlayer();
     }
 
     /** 供仓储反序列化写回。业务代码不要用。 */

@@ -32,6 +32,7 @@ source scripts/tmp-work-dir.sh core-wiring
 ALLOWED="$TMP_DIR/allowed"; CLASSES="$TMP_DIR/classes"; WORDS="$TMP_DIR/words"
 cat > "$ALLOWED" <<'EOF'
 InMemoryRewardPorts	故意的测试替身：四个发放端口的内存实现。放在 game-core 而不是 web 的 test 目录，是「RewardGrantor 可脱离容器单测」这条铁律的证明（见该类 javadoc）。生产实现是另一族 Spring Bean。撤销条件：无（它本来就不该有生产引用）。
+GarrisonLossAllocation	驻军内部协作类，由core内March.reduceOwners实际委托，下面另验非注释plan调用；不是医院或战报接线。撤销负责人：B13冻结战果接线格执行者；外层真正消费计划后删除，或March不再委托即不得豁免。
 EOF
 
 if [ ! -d "$CORE_DIR" ]; then
@@ -65,6 +66,16 @@ printf '%s\n' "$CONSUMER_FILES" | tr -d '\r' | xargs -d '\n' cat 2>/dev/null \
 
 # 逐个类判定
 missing=0
+# #2373：只允许已由March生产扣损委托的内部规划器，注释/import不算调用。
+# 其他孤儿仍按原规则拒绝；外层接线后由原stale检查强制撤掉此条。
+if grep -Fxq GarrisonLossAllocation "$CLASSES" && ! grep -Fxq GarrisonLossAllocation "$WORDS"; then
+  march_source="$CORE_DIR/com/ironoath/core/march/March.java"
+  if [ ! -f "$march_source" ] || ! grep -vE '^[[:space:]]*(\*|//|/\*)' "$march_source" \
+      | grep -E 'return[[:space:]]+GarrisonLossAllocation[.]plan[[:space:]]*\(' > /dev/null; then
+    echo "[core-wiring][FAIL] GarrisonLossAllocation 内部豁免缺少March实际plan委托（注释/import无效）" >&2
+    missing=$((missing + 1))
+  fi
+fi
 while IFS= read -r cls; do
   [ -n "$cls" ] || continue
   if grep -Fxq "$cls" "$WORDS"; then continue; fi
