@@ -31,7 +31,7 @@ function entity(id: string, type: WorldEntityType, x: number, y: number): WorldE
   return {
     id, type, x, y,
     level: null, ownerName: null, allianceTag: null,
-    marchStatus: null, resourceType: null, load: null,
+    marchStatus: null, resourceType: null, load: null, displayName: null,
   }
 }
 
@@ -145,6 +145,32 @@ test('构造期校验布局：chunkSize 必须是 2 的幂，maxChunks 必须是
 
 // ---------- 增量拉取（验收 6） ----------
 
+test('stale补发在响应前只能有一份，跨块意图也等待这份回执', () => {
+  const model = newModel()
+  model.nextRequest()
+  model.markRequested()
+  model.applyViewport(viewportResp({staleChunks:['1:1'],exploredChunks:[...model.chunkKeys()]}))
+  assert.notEqual(model.nextRequest(), null)
+  model.markRequested()
+  assert.equal(model.nextRequest(), null, '等待stale补发时不能每帧再发一份')
+  model.setCenter({x:400,y:400})
+  assert.equal(model.nextRequest(), null, '不能覆盖在途请求的块键水位')
+  model.applyViewport(viewportResp({chunks:[chunkData('1:1',1,[])],exploredChunks:['1:1']}))
+  assert.equal(model.nextRequest()?.centerX,400)
+})
+
+test('20KB预算下逐块取得进展时，九块应能全部排空而非第三次后丢尾块', () => {
+  const model=newModel(), keys=[...model.chunkKeys()]
+  for(let i=0;i<keys.length;i++) {
+    assert.notEqual(model.nextRequest(),null,`第${i+1}块仍应请求`)
+    model.markRequested()
+    model.applyViewport(viewportResp({chunks:[chunkData(keys[i]!,1,[])],
+      staleChunks:keys.slice(i+1),exploredChunks:keys}))
+  }
+  assert.equal(model.nextRequest(),null)
+  assert.equal(model.chunkCount(),keys.length)
+})
+
 test('同一块内拖动不发请求；跨块才发，并带上手里各块的版本号', () => {
   const model = newModel()
   const first = model.nextRequest()
@@ -172,11 +198,13 @@ test('缩放档位变化会触发一次重新拉取（服务端可能按档位�
   const model = newModel()
   model.markRequested()
   assert.equal(model.nextRequest(), null)
+  model.applyViewport(viewportResp({}))
 
   model.setZoom(1)
   assert.notEqual(model.nextRequest(), null)
   model.markRequested()
   assert.equal(model.nextRequest(), null)
+  model.applyViewport(viewportResp({}))
 
   // 同档位重复设置不算变化：双指缩放时档位会在同一档里反复抖，每次都重拉就是白烧流量
   model.setZoom(1)

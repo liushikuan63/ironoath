@@ -37,7 +37,7 @@ export type TyrannyLevel =
   | 'PUBLIC_ENEMY'
 
 /**
- * 地图实体类型。与 game-core 的 WorldGenerator.EntityType 一致，另外多一个 MARCH —— 行军不是格子上的静态内容而是移动实体，所以生成器不产出它，只由 viewport 组装时按当前位置投影进来。BUILDING 预留给 B10 联盟建筑。
+ * 地图实体类型。与 game-core 的 WorldGenerator.EntityType 一致，另外多一个 MARCH —— 行军不是格子上的静态内容而是移动实体，所以生成器不产出它，只由 viewport 组装时按当前位置投影进来。BUILDING 预留给 B10 联盟建筑。 GATE/CAPITAL/FORTRESS为服务端world_target固定图层，显示不代表开放攻占。
  */
 export type WorldEntityType =
   | 'EMPTY'
@@ -46,6 +46,9 @@ export type WorldEntityType =
   | 'RESOURCE'
   | 'MARCH'
   | 'BUILDING'
+  | 'GATE'
+  | 'CAPITAL'
+  | 'FORTRESS'
 
 /**
  * 行军状态。与 game-core 的 March.Status 一致（由 ContractEnumParityTest 的 marchStatusMatchesDomainEnum 断言）。
@@ -157,6 +160,8 @@ export interface WorldEntity {
   resourceType: string | null
   /** 行军实体的当前负载 */
   load: number | null
+  /** 固定战略目标的服务端中文名；其他实体为null。缺失时客户端按类型显示通用中文名，不显示内部id。 */
+  displayName: string | null
 }
 
 /**

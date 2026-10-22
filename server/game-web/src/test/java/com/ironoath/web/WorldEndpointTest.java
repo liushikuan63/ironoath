@@ -115,6 +115,31 @@ class WorldEndpointTest {
 
     // ---------- 家坐标与落位 ----------
 
+    @Test void oldTerrainVersionMustRefreshFixedTargetLayer() {
+        String playerId = newPlayer();
+        worldAppService.homeOf(playerId);
+        var fog = world.fogOf(playerId);
+        fog.exploreChunk("8:8");
+        world.saveFog(playerId,fog,fog.version());
+        long oldTerrainVersion = world.chunkVersion("8:8");
+        var response = worldAppService.viewport(playerId,new ViewportReq(256,256,1,
+                List.of(new ChunkVersion("8:8",oldTerrainVersion))));
+        assertThat(response.chunks()).anySatisfy(chunk -> {
+            assertThat(chunk.key()).isEqualTo("8:8");
+            assertThat(chunk.entities()).anySatisfy(e -> assertThat(e.id()).isEqualTo("capital_center"));
+        });
+    }
+
+    @Test void strategicTargetsRejectPhysicalActionsBeforeTroopsAreDeducted() {
+        String playerId = newPlayer();
+        for (var action : MarchAction.values()) {
+            assertThatThrownBy(() -> marchAppService.send(playerId,new MarchReq(newRequestId(),256,256,
+                    List.of(new MarchUnit("unit_infantry_t1",1L)),List.of(),action)))
+                    .isInstanceOf(BizException.class).hasMessageContaining("尚未开放争夺");
+        }
+        assertThat(marches.findByPlayerId(playerId)).isEmpty();
+    }
+
     @Test
     @DisplayName("落位是确定性的：同一玩家反复查询得到同一坐标，两个玩家不会重叠")
     void homePlacementIsDeterministicAndNonOverlapping() {
@@ -153,10 +178,15 @@ class WorldEndpointTest {
     // ---------- 分块视野 ----------
 
     @Test
-    @DisplayName("验收6：二次请求带上版本号后，未变化的块不再下发实体（实体数为 0）")
+    @DisplayName("验收6：预算分批排空后带全版本号，未变化的块不再下发实体")
     void viewportIsIncrementalByVersion() {
         String playerId = newPlayer();
-        Coord home = worldAppService.homeOf(playerId);
+        // 固定到会跨块且两块合计超过20KB的量具坐标，避免随机出生让错误前提时红时绿。
+        // 隔离仓储直接准备落点，避免迁走随机旧城后残留旧迷雾影响首包；落城生产链另有专测。
+        Coord home = Coord.of(20,134);
+        assertThat(world.cityOf(playerId)).isEmpty();
+        assertThat(world.placeCity(playerId,home)).isTrue();
+        worldAppService.ensureHomeExplored(playerId);
         // 走一次行军让路径上的块被探索并推进版本号
         prepareArmy(playerId, 200L);
         marchAppService.send(playerId, marchReq(home, 40, MarchAction.STATION, 10L));
@@ -170,14 +200,25 @@ class WorldEndpointTest {
                 assertThat(c.entities()).anySatisfy(e ->
                         assertThat(e.type().name()).isEqualTo("CITY")));
 
-        // 二次请求：把首次拿到的版本号原样带回去
-        List<ChunkVersion> versions = new ArrayList<>();
-        for (ChunkData chunk : first.chunks()) {
-            versions.add(new ChunkVersion(chunk.key(), chunk.version()));
+        assertThat(first.staleChunks()).as("此量具必须覆盖20KB预算分批分支").isNotEmpty();
+        // 先把尚未发到的块排空，未收到的块不能冒充“客户端已经有全部版本”。
+        var known = new java.util.LinkedHashMap<String,Long>();
+        ViewportResp page = first;
+        int limit = Math.toIntExact(configs.longParam("VIEWPORT_CHUNK_COUNT"));
+        for (int round=0; round<limit; round++) {
+            for (ChunkData chunk : page.chunks()) known.put(chunk.key(),chunk.version());
+            if (page.staleChunks().isEmpty()) break;
+            page = worldAppService.viewport(playerId,new ViewportReq(home.x(),home.y(),0,
+                    known.entrySet().stream().map(e -> new ChunkVersion(e.getKey(),e.getValue())).toList()));
         }
+        assertThat(page.staleChunks()).as("有限分块必须能在预算内逐批发全").isEmpty();
+        for (ChunkData chunk : page.chunks()) known.put(chunk.key(),chunk.version());
+        List<ChunkVersion> versions = new ArrayList<>();
+        known.forEach((key,version) -> versions.add(new ChunkVersion(key,version)));
         // 版本号必须是最新的，否则服务端仍会认为客户端落后
         for (ChunkData chunk : first.chunks()) {
-            assertThat(world.chunkVersion(chunk.key())).isEqualTo(chunk.version());
+            assertThat(world.chunkVersion(chunk.key()) + configs.rawTable("world_target").version())
+                    .isEqualTo(chunk.version());
         }
         ViewportResp second = worldAppService.viewport(playerId,
                 new ViewportReq(home.x(), home.y(), 0, versions));

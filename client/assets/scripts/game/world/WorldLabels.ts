@@ -31,6 +31,12 @@ export function entityCaption(entity: WorldEntity): string {
       return entity.resourceType === null ? '' : resourceName(entity.resourceType)
     case 'BUILDING':
       return entity.allianceTag ?? level
+    case 'GATE':
+      return entity.displayName || '关卡'
+    case 'CAPITAL':
+      return entity.displayName || '王城'
+    case 'FORTRESS':
+      return entity.displayName || '要塞'
     case 'MARCH':
       return entity.load === null ? '' : `${entity.load}`
     case 'EMPTY':
@@ -88,6 +94,9 @@ const CAPTION_PRIORITY: Readonly<Record<WorldEntityType, number>> = {
   CITY: 0,
   RESOURCE: 1,
   BUILDING: 2,
+  GATE: 0,
+  CAPITAL: 0,
+  FORTRESS: 0,
   MONSTER: 3,
   MARCH: 4,
   EMPTY: 5,

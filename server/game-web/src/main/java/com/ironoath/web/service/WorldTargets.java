@@ -57,6 +57,10 @@ public final class WorldTargets {
         return byCoord.containsKey(coord);
     }
 
+    public Target at(Coord coord) {
+        return byCoord.get(coord);
+    }
+
     public List<Target> targets() {
         return byCoord.values().stream().sorted(java.util.Comparator.comparing(t -> t.definition().id())).toList();
     }

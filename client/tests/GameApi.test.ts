@@ -419,6 +419,45 @@ test('worldViewport 的响应喂进世界模型：块进缓存、迷雾与探索
   assert.equal(model?.frame(6_000).tiles.find((tile) => tile.key === '1:1')?.entities.length, 1)
 })
 
+test('视野失败释放在途槽并保留期间跨块意图，不自动重放旧补发', async () => {
+  const { api, http } = createHarness()
+  http.script = [envelope({ marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, ...LAYOUT, serverNow: 5_000 })]
+  await api.enterWorld()
+  const model = worldModel(); assert.ok(model)
+  const req=model.nextRequest(); assert.ok(req)
+  model.markRequested()
+  model.setCenter({x:400,y:400})
+  http.post=async()=>envelope(null,6_000,1002,'本次请求被拒')
+  const result=await api.worldViewport(req)
+  assert.notEqual(result.kind,'ok')
+  assert.equal(model.nextRequest()?.centerX,400)
+  model.markRequested()
+  model.requestFailed()
+  assert.equal(model.nextRequest(),null)
+})
+
+test('重入世界后旧viewport回执不写入新模型', async () => {
+  const { api, http } = createHarness()
+  http.script = [envelope({ marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, ...LAYOUT, serverNow: 5_000 })]
+  await api.enterWorld()
+  const old=worldModel(); assert.ok(old)
+  const req=old.nextRequest(); assert.ok(req)
+  old.markRequested()
+  let deliver!: (response: HttpResponse)=>void
+  http.post=()=>new Promise<HttpResponse>(resolve=>{deliver=resolve})
+  const pending=api.worldViewport(req)
+  api.leaveWorld()
+  await api.enterWorld()
+  const current=worldModel(); assert.ok(current)
+  assert.notEqual(current,old)
+  deliver(envelope({serverNow:6_000,chunks:[{key:'1:1',version:99,truncated:false,
+    entities:[{id:'old-session-target',type:'CAPITAL',x:48,y:48,level:45,displayName:'旧世界',
+      ownerName:null,allianceTag:null,marchStatus:null,resourceType:null,load:null}]}],
+    staleChunks:[],exploredChunks:['1:1'],fogChunks:[]}))
+  await pending
+  assert.equal(current.entityCount(),0)
+})
+
 test('marches 的响应喂进世界模型，行军出现在渲染帧里', async () => {
   const { api, http } = createHarness()
   http.script = [envelope({ marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, ...LAYOUT, serverNow: 5_000 })]

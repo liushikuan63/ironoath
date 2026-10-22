@@ -826,6 +826,7 @@ public class MarchAppService {
         March.TargetType targetType = rallyTargetType(rally.targetType());
         WorldGenerator.Cell cell = worldAppService.cellAt(target);
         String targetId = targetEntityId(cell, target);
+        requireStrategicTargetClosed(cell);
         requireTargetOutsideRally(rally, targetType, target, targetId);
 
         Map<String, Integer> speeds = new LinkedHashMap<>();
@@ -1415,6 +1416,7 @@ public class MarchAppService {
         if (world.cityAt(coord).isPresent()) {
             return March.TargetType.PLAYER_CITY;
         }
+        requireStrategicTargetClosed(cell);
         if (cell.entityType() == WorldGenerator.EntityType.MONSTER) {
             return March.TargetType.MONSTER;
         }
@@ -1422,6 +1424,13 @@ public class MarchAppService {
             return March.TargetType.RESOURCE;
         }
         return March.TargetType.EMPTY;
+    }
+
+    /** 目标图层先落地；攻占链未接通时拒绝出兵，避免当空地驻扎或冒充野怪发奖。 */
+    private static void requireStrategicTargetClosed(WorldGenerator.Cell cell) {
+        if (cell.entityType().isStrategic()) {
+            throw new BizException(ErrorCode.WORLD_TARGET_INVALID, "该战略目标尚未开放争夺");
+        }
     }
 
     /**

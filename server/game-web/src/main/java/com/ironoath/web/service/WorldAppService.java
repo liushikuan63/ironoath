@@ -237,7 +237,8 @@ public class WorldAppService {
     /**
      * 某格的最终内容 = 确定性生成结果 + 玩家造成的覆盖。
      *
-     * <p>覆盖只有两种：玩家城（优先于一切）与已消耗（资源点采空 / 野怪打掉后回到空地）。
+     * <p>覆盖顺序：玩家城、固定战略目标、已消耗，最后才是基础地形。旧城不被目标遮盖；
+     * 历史资源/野怪消耗标记也不能把固定目标抹掉。
      * <b>消耗过的格子不会重新生成</b> —— 否则玩家会发现「刚打掉的野怪又回来了」，
      * 而刷新应当是显式的运营行为（B14 赛季重置），不是查询的副作用。
      */
@@ -248,6 +249,11 @@ public class WorldAppService {
         if (world.cityAt(coord).isPresent()) {
             return new WorldGenerator.Cell(WorldGenerator.EntityType.CITY, null,
                     playerLevelOf(world.cityAt(coord).orElseThrow()));
+        }
+        var target = WorldTargets.from(configs).at(coord);
+        if (target != null) {
+            return new WorldGenerator.Cell(WorldGenerator.EntityType.valueOf(target.definition().kind().name()),
+                    target.definition().id(), Math.toIntExact(target.defender().level()));
         }
         if (world.isConsumed(coord)) {
             return WorldGenerator.Cell.empty();
@@ -392,9 +398,12 @@ public class WorldAppService {
         Map<String, Coord> allCities = null;
         // 城表索引（坐标 → 玩家）：与 allCities 同一条惰性策略，一趟请求只建一次
         Map<Coord, String> cityIndex = null;
+        // 静态图层变化也必须让旧地形缓存失效；只读请求不为此写世界版本。
+        // 发布坐标/名称变动时 world_target.version 必须递增，回滚须刷新客户端缓存。
+        long targetLayerVersion = configs.rawTable("world_target").version();
 
         for (String key : wanted) {
-            long serverVersion = world.chunkVersion(key);
+            long serverVersion = Math.addExact(world.chunkVersion(key), targetLayerVersion);
             boolean isExplored = fog.chunks().contains(key);
             if (isExplored) {
                 explored.add(key);
@@ -496,7 +505,7 @@ public class WorldAppService {
             }
             Coord coord = allCities.get(ownerId);
             out.add(new WorldEntity(ownerId, WorldEntityType.CITY, coord.x(), coord.y(),
-                    save.cityLevel(), save.nickName(), null, null, null, null));
+                    save.cityLevel(), save.nickName(), null, null, null, null, null));
         });
         return out;
     }
@@ -524,9 +533,10 @@ public class WorldAppService {
             }
             out.add(new WorldEntity(march.id(), WorldEntityType.MARCH, pos.x(), pos.y(),
                     null, null, null,
-                    MarchStatus.valueOf(march.status().name()), null, march.load()));
+                    MarchStatus.valueOf(march.status().name()), null, march.load(), null));
         }
         WorldGenerator.Catalog catalog = catalog();
+        WorldTargets targets = WorldTargets.from(configs);
         Map<String, PlayerBrief> cityBriefs = cityBriefsOf(origin, rules, cityIndex);
         for (int dy = 0; dy < rules.chunkSize(); dy++) {
             for (int dx = 0; dx < rules.chunkSize(); dx++) {
@@ -534,7 +544,7 @@ public class WorldAppService {
                 if (!coord.withinWorld(rules.worldSize())) {
                     continue;
                 }
-                WorldEntity entity = entityAt(coord, cityIndex, consumed, catalog, cityBriefs);
+                WorldEntity entity = entityAt(coord, cityIndex, consumed, catalog, cityBriefs, targets);
                 if (entity != null) {
                     out.add(entity);
                 }
@@ -592,13 +602,22 @@ public class WorldAppService {
      * {@code WorldCityQueryCountTest}。
      */
     private WorldEntity entityAt(Coord coord, Map<Coord, String> ownerByCoord, Set<Coord> consumed,
-                                 WorldGenerator.Catalog catalog, Map<String, PlayerBrief> cityBriefs) {
+                                 WorldGenerator.Catalog catalog, Map<String, PlayerBrief> cityBriefs,
+                                 WorldTargets targets) {
         String owner = ownerByCoord.get(coord);
         if (owner != null) {
             PlayerBrief brief = cityBriefs.get(owner);
             return new WorldEntity(owner, WorldEntityType.CITY, coord.x(), coord.y(),
                     brief == null ? 0 : brief.cityLevel(),
-                    brief == null ? null : brief.nickName(), null, null, null, null);
+                    brief == null ? null : brief.nickName(), null, null, null, null, null);
+        }
+        // 旧城仍优先；旧野怪/资源消耗标记不能把新固定目标挖掉。这里不写任何占领状态。
+        var target = targets.at(coord);
+        if (target != null) {
+            return new WorldEntity(target.definition().id(),
+                    WorldEntityType.valueOf(target.definition().kind().name()), coord.x(), coord.y(),
+                    Math.toIntExact(target.defender().level()), null, null, null, null, null,
+                    target.definition().name());
         }
         if (consumed.contains(coord)) {
             return null;
@@ -606,10 +625,10 @@ public class WorldAppService {
         WorldGenerator.Cell cell = WorldGenerator.generate(rules(), catalog, coord);
         return switch (cell.entityType()) {
             case MONSTER -> new WorldEntity(stableId("monster", coord), WorldEntityType.MONSTER,
-                    coord.x(), coord.y(), cell.level(), null, null, null, null, null);
+                    coord.x(), coord.y(), cell.level(), null, null, null, null, null, null);
             case RESOURCE -> new WorldEntity(stableId("resource", coord), WorldEntityType.RESOURCE,
-                    coord.x(), coord.y(), cell.level(), null, null, null, cell.entityId(), null);
-            case EMPTY, CITY, BUILDING -> null;
+                    coord.x(), coord.y(), cell.level(), null, null, null, cell.entityId(), null, null);
+            case EMPTY, CITY, BUILDING, GATE, CAPITAL, FORTRESS -> null;
         };
     }
 

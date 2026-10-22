@@ -63,7 +63,7 @@ test('地图采集：可见资源只编成，取消零发送，确认和再次�
   feedViewport({ serverNow: SERVER_NOW, staleChunks: [], exploredChunks: ['0:0'], fogChunks: [],
     chunks: [{ key: '0:0', version: 1, truncated: false, entities: [{
       id: 'resource-internal-17', type: 'RESOURCE', x: 17, y: 16, level: null,
-      ownerName: null, allianceTag: null, marchStatus: null, resourceType: 'STONE', load: null,
+      ownerName: null, allianceTag: null, marchStatus: null, resourceType: 'STONE', load: null, displayName: null,
     }] }] })
   const begin = () => h.root.beginResourceMarchCompose('RESOURCE:resource-internal-17')
   try {
@@ -102,10 +102,10 @@ test('地图采集：迷雾、错误类型和消失资源不能打开编成或�
   feedViewport({ serverNow: SERVER_NOW, staleChunks: [], exploredChunks: ['1:0'], fogChunks: ['0:0'],
     chunks: [{ key: '0:0', version: 1, truncated: false, entities: [{
       id: 'hidden-resource', type: 'RESOURCE', x: 17, y: 16, level: null,
-      ownerName: null, allianceTag: null, marchStatus: null, resourceType: 'STONE', load: null,
+      ownerName: null, allianceTag: null, marchStatus: null, resourceType: 'STONE', load: null, displayName: null,
     }] }, { key: '1:0', version: 1, truncated: false, entities: [{
       id: 'monster', type: 'MONSTER', x: 33, y: 16, level: 1,
-      ownerName: null, allianceTag: null, marchStatus: null, resourceType: null, load: null,
+      ownerName: null, allianceTag: null, marchStatus: null, resourceType: null, load: null, displayName: null,
     }] }] })
   try {
     for (const key of ['RESOURCE:hidden-resource', 'MONSTER:monster', 'RESOURCE:gone']) {
@@ -125,7 +125,7 @@ test('地图采集：缺少资源名时给安全回退，不把内部资源id印
   feedViewport({ serverNow: SERVER_NOW, staleChunks: [], exploredChunks: ['0:0'], fogChunks: [],
     chunks: [{ key: '0:0', version: 1, truncated: false, entities: [{
       id: 'resource-internal-no-name', type: 'RESOURCE', x: 17, y: 16, level: null,
-      ownerName: null, allianceTag: null, marchStatus: null, resourceType: null, load: null,
+      ownerName: null, allianceTag: null, marchStatus: null, resourceType: null, load: null, displayName: null,
     }] }] })
   try {
     h.root.beginResourceMarchCompose('RESOURCE:resource-internal-no-name')
@@ -143,7 +143,7 @@ test('原生首战：选中可见野怪只编成，取消不出征，确认才�
   feedViewport({ serverNow: SERVER_NOW, staleChunks: [], exploredChunks: ['0:0'], fogChunks: [],
     chunks: [{ key: '0:0', version: 1, truncated: false, entities: [{
       id: 'monster-internal-17', type: 'MONSTER', x: 17, y: 16, level: 1,
-      ownerName: null, allianceTag: null, marchStatus: null, resourceType: null, load: null,
+      ownerName: null, allianceTag: null, marchStatus: null, resourceType: null, load: null, displayName: null,
     }] }] })
   const root = h.root
   root.beginMonsterMarchCompose('MONSTER:monster-internal-17')
@@ -178,10 +178,10 @@ test('原生首战：迷雾、玩家城或已消失的选中目标均不能变�
   feedViewport({ serverNow: SERVER_NOW, staleChunks: [], exploredChunks: ['1:0'], fogChunks: ['0:0'],
     chunks: [{ key: '0:0', version: 1, truncated: false, entities: [{
       id: 'hidden', type: 'MONSTER', x: 17, y: 16, level: 1,
-      ownerName: null, allianceTag: null, marchStatus: null, resourceType: null, load: null,
+      ownerName: null, allianceTag: null, marchStatus: null, resourceType: null, load: null, displayName: null,
     }] }, { key: '1:0', version: 1, truncated: false, entities: [{
       id: 'P9', type: 'CITY', x: 33, y: 16, level: 1,
-      ownerName: '邻居', allianceTag: null, marchStatus: null, resourceType: null, load: null,
+      ownerName: '邻居', allianceTag: null, marchStatus: null, resourceType: null, load: null, displayName: null,
     }] }] })
   const root = h.root
   for (const key of ['MONSTER:hidden', 'CITY:P9', 'MONSTER:gone']) {
@@ -220,7 +220,7 @@ function visibleReturnMonster() {
   feedViewport({ serverNow: SERVER_NOW, staleChunks: [], exploredChunks: ['0:0'], fogChunks: [],
     chunks: [{ key: '0:0', version: 1, truncated: false, entities: [{
       id: 'monster-return-test', type: 'MONSTER', x: 17, y: 16, level: 5,
-      ownerName: null, allianceTag: null, marchStatus: null, resourceType: null, load: null,
+      ownerName: null, allianceTag: null, marchStatus: null, resourceType: null, load: null, displayName: null,
     }] }] })
 }
 

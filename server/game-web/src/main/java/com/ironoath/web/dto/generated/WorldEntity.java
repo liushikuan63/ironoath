@@ -15,6 +15,7 @@ public record WorldEntity(
         String allianceTag,   // 联盟标签（B10 落地前恒为 null，字段先留位以免届时改协议）
         MarchStatus marchStatus,
         String resourceType,   // 资源点产出的资源 id；其余为 null
-        Long load)   // 行军实体的当前负载
+        Long load,   // 行军实体的当前负载
+        String displayName)   // 固定战略目标的服务端中文名；其他实体为null。缺失时客户端按类型显示通用中文名，不显示内部id。
 {
 }

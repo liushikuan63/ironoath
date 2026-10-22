@@ -139,4 +139,44 @@ class WorldTargetPlacementTest {
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("重复");
     }
 
+    @Test void fixedTargetsOverrideConsumedTerrainAndNeverBecomeMonsters() {
+        when(store.isConsumed(any())).thenReturn(true);
+        var targets = WorldTargets.from(configs).targets();
+        for (var target : targets) {
+            var cell = service.cellAt(target.coord());
+            assertThat(cell.entityType().name()).isEqualTo(target.definition().kind().name());
+            assertThat(cell.entityId()).isEqualTo(target.definition().id());
+            assertThat(cell.level()).isEqualTo((int)target.defender().level());
+        }
+    }
+
+    @Test void visibleMapCarriesServerNamesAndPreservesLegacyCities() {
+        var catalog = WorldTargets.from(configs);
+        var fog = new com.ironoath.core.world.FogOfWar();
+        when(store.fogOf("viewer")).thenReturn(fog);
+        for (var target : catalog.targets()) {
+            Coord nearby = Coord.of(target.coord().x()+1,target.coord().y());
+            when(store.cityOf("viewer")).thenReturn(Optional.of(nearby));
+            when(store.allCities()).thenReturn(java.util.Map.of());
+            fog.explore(target.coord(),32);
+            when(store.consumedInChunk(anyString(),eq(32))).thenReturn(List.of(target.coord()));
+            var entity = service.visibleEntitiesOf("viewer").stream()
+                    .filter(e -> e.x()==target.coord().x() && e.y()==target.coord().y()).findFirst().orElseThrow();
+            assertThat(entity.type().name()).isEqualTo(target.definition().kind().name());
+            assertThat(entity.displayName()).isEqualTo(target.definition().name());
+            assertThat(entity.ownerName()).isNull();
+            when(store.allCities()).thenReturn(java.util.Map.of("legacy-owner",target.coord()));
+            var legacy = service.visibleEntitiesOf("viewer").stream()
+                    .filter(e -> e.x()==target.coord().x() && e.y()==target.coord().y()).findFirst().orElseThrow();
+            assertThat(legacy.type().name()).isEqualTo("CITY");
+            assertThat(legacy.id()).isEqualTo("legacy-owner");
+        }
+    }
+
+    @Test void unexploredTargetChunkDoesNotLeakFixedEntities() {
+        when(store.cityOf("viewer")).thenReturn(Optional.of(Coord.of(255,255)));
+        when(store.fogOf("viewer")).thenReturn(new com.ironoath.core.world.FogOfWar());
+        assertThat(service.visibleEntitiesOf("viewer")).isEmpty();
+    }
+
 }

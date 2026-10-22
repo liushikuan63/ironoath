@@ -832,9 +832,14 @@ export class WorldMap extends Component {
     if (req === null) {
       return
     }
-    requester.viewport(req)
     // 立刻标记已发出：否则响应回来之前每帧都会重发同一个请求
     model.markRequested()
+    try {
+      requester.viewport(req)
+    } catch (error) {
+      model.requestFailed()
+      throw error
+    }
   }
 
   // ---------- 渲染 ----------
@@ -1177,7 +1182,7 @@ export class WorldMap extends Component {
     graphics.enabled = true
     graphics.clear()
     graphics.fillColor = color
-    if (type === 'CITY' || type === 'BUILDING') {
+    if (type === 'CITY' || type === 'BUILDING' || type === 'GATE' || type === 'CAPITAL' || type === 'FORTRESS') {
       // 城与联盟建筑用方块，其余用圆角块：占位美术阶段先靠形状区分，正式美术换成图标
       graphics.rect(-size / 2, -size / 2, size, size)
     } else {
@@ -1426,6 +1431,7 @@ function tileColor(tile: ChunkTile): Color {
 function entityColor(type: WorldEntityType): Color {
   switch (type) {
     case 'CITY':
+    case 'CAPITAL':
       return COLOR_CITY
     case 'MONSTER':
       return COLOR_MONSTER
@@ -1434,6 +1440,8 @@ function entityColor(type: WorldEntityType): Color {
     case 'MARCH':
       return COLOR_MARCH
     case 'BUILDING':
+    case 'GATE':
+    case 'FORTRESS':
       return COLOR_BUILDING
     case 'EMPTY':
     default:
@@ -1444,12 +1452,15 @@ function entityColor(type: WorldEntityType): Color {
 function entityArtKey(type: WorldEntityType): ArtKey | null {
   switch (type) {
     case 'CITY':
+    case 'CAPITAL':
       return 'map.entity.city'
     case 'MONSTER':
       return 'map.entity.monster'
     case 'RESOURCE':
       return 'map.entity.resource'
     case 'BUILDING':
+    case 'GATE':
+    case 'FORTRESS':
       return 'map.entity.allianceBuilding'
     case 'MARCH':
       return 'map.entity.march'
@@ -1470,7 +1481,8 @@ function terrainVariantForChunk(cx: number, cy: number): number {
 
 /** 城比野怪大一圈：占位美术阶段「谁更重要」只能靠尺寸表达。 */
 function entitySize(type: WorldEntityType, cell: number): number {
-  const ratio = type === 'CITY' || type === 'BUILDING' ? CITY_SIZE_RATIO : ENTITY_SIZE_RATIO
+  const ratio = type === 'CITY' || type === 'BUILDING' || type === 'GATE' || type === 'CAPITAL' || type === 'FORTRESS'
+    ? CITY_SIZE_RATIO : ENTITY_SIZE_RATIO
   return cell * ratio
 }
 

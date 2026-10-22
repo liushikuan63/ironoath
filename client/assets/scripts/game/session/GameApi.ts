@@ -26,7 +26,7 @@ import type { TimeSync } from '../../core/TimeSync'
 import type { NetModule, NetOutcome } from '../../net/NetModule'
 import type { Store } from '../store/Store'
 import {
-  applyExileResult, bindWorldRequester, feedMarches, feedTimeOffset, feedViewport, initializeWorld,
+  applyExileResult, bindWorldRequester, feedMarches, feedTimeOffset, feedViewport, initializeWorld, worldModel,
 } from '../world/WorldContext'
 import type { WorldActionResult } from '../world/WorldContext'
 import type {
@@ -733,13 +733,20 @@ export class GameApi {
 
   /** POST /world/viewport。响应喂给 WorldContext，场景订阅模型变化后自动重绘。 */
   async worldViewport(req: ViewportReq): Promise<NetOutcome<ViewportResp>> {
+    const owner = worldModel()
     const sentAt = this.deps.now()
-    const outcome = await this.deps.net.post<ViewportReq, ViewportResp>('/world/viewport', req)
-    const calibrated = this.calibrate(outcome, sentAt)
-    if (calibrated.kind === 'ok') {
-      feedViewport(calibrated.data)
+    try {
+      const outcome = await this.deps.net.post<ViewportReq, ViewportResp>('/world/viewport', req)
+      // 切账号或重入世界后的旧回执不能写进新模型，也不能校准它的世界时间。
+      if (owner !== worldModel() || !this.worldReady) return outcome
+      const calibrated = this.calibrate(outcome, sentAt)
+      if (calibrated.kind === 'ok') feedViewport(calibrated.data)
+      else owner?.requestFailed()
+      return calibrated
+    } catch (error) {
+      if (owner === worldModel()) owner?.requestFailed()
+      throw error
     }
-    return calibrated
   }
 
   /** GET /world/marches。响应喂给 WorldContext，行军插值与纠偏都从它来（B07 验收 10）。 */

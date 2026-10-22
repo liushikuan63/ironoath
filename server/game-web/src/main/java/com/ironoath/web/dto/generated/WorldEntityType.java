@@ -3,7 +3,7 @@
 package com.ironoath.web.dto.generated;
 
 /**
- * 地图实体类型。与 game-core 的 WorldGenerator.EntityType 一致，另外多一个 MARCH —— 行军不是格子上的静态内容而是移动实体，所以生成器不产出它，只由 viewport 组装时按当前位置投影进来。BUILDING 预留给 B10 联盟建筑。
+ * 地图实体类型。与 game-core 的 WorldGenerator.EntityType 一致，另外多一个 MARCH —— 行军不是格子上的静态内容而是移动实体，所以生成器不产出它，只由 viewport 组装时按当前位置投影进来。BUILDING 预留给 B10 联盟建筑。 GATE/CAPITAL/FORTRESS为服务端world_target固定图层，显示不代表开放攻占。
  */
 public enum WorldEntityType {
     EMPTY,
@@ -11,5 +11,8 @@ public enum WorldEntityType {
     MONSTER,
     RESOURCE,
     MARCH,
-    BUILDING
+    BUILDING,
+    GATE,
+    CAPITAL,
+    FORTRESS
 }

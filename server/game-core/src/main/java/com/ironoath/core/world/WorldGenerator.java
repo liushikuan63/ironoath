@@ -129,7 +129,15 @@ public final class WorldGenerator {
         CITY,
         MONSTER,
         RESOURCE,
-        BUILDING
+        BUILDING,
+        GATE,
+        CAPITAL,
+        FORTRESS;
+
+        /** 固定战略图层由应用层按服务端配置叠加，不能按野怪/空地结算。 */
+        public boolean isStrategic() {
+            return this == GATE || this == CAPITAL || this == FORTRESS;
+        }
     }
 
     /**

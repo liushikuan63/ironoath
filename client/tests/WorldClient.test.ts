@@ -21,7 +21,7 @@ function entity(id: string, x: number, y: number): WorldEntity {
   return {
     id, type: 'MONSTER', x, y,
     level: null, ownerName: null, allianceTag: null,
-    marchStatus: null, resourceType: null, load: null,
+    marchStatus: null, resourceType: null, load: null, displayName: null,
   }
 }
 

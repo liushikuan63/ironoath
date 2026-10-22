@@ -55,9 +55,19 @@ function protocolResourceTypes(): string[] {
 function entity(over: Partial<WorldEntity> & { type: WorldEntity['type'] }): WorldEntity {
   return {
     id: 'e1', x: 10, y: 20, level: null, ownerName: null, allianceTag: null,
-    marchStatus: null, resourceType: null, load: null, ...over,
+    marchStatus: null, resourceType: null, load: null, displayName: null, ...over,
   }
 }
+
+test('战略目标只显示服务端中文名，缺名时不露内部id或枚举', () => {
+  for (const [kind, name, fallback] of [
+    ['GATE', '北境关卡', '关卡'], ['CAPITAL', '中央王城', '王城'], ['FORTRESS', '东北第一要塞', '要塞'],
+  ]) {
+    const target = { ...entity({ type: kind as WorldEntityType }), id: 'internal_target_fixture', displayName: name } as WorldEntity
+    assert.equal(entityCaption(target), name)
+    assert.equal(entityCaption({ ...target, displayName: null } as WorldEntity), fallback)
+  }
+})
 
 test('资源格印的是配置表里的中文名，不是 WOOD/STONE/IRON/GRAIN（#268 的缺陷形态）', () => {
   for (const row of rows) {

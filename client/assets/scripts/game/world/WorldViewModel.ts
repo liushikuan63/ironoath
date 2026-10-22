@@ -161,6 +161,8 @@ export class WorldViewModel {
   private requestedKeys: string[] = []
   /** 需要重新请求：视野移动过、缩放变过、或首次还没有数据 */
   private needsFetch = true
+  /** 在途期间不覆盖 requestedKeys；否则 stale 补发会每帧并发并互相驱逐缓存。 */
+  private requestInFlight = false
   /** 服务端没能发全的块 → 已重试次数 */
   private readonly stale = new Map<string, number>()
   private readonly explored = new Set<string>()
@@ -314,6 +316,7 @@ export class WorldViewModel {
    * 无变化时二次请求的实体数为 0。首次请求版本清单为空数组，服务端据此下发全量。
    */
   nextRequest(): ViewportReq | null {
+    if (this.requestInFlight) return null
     if (!this.needsFetch && this.stale.size === 0) {
       return null
     }
@@ -329,6 +332,13 @@ export class WorldViewModel {
   /** 请求已发出。防止场景在响应回来之前每帧重发同一个请求。 */
   markRequested(): void {
     this.needsFetch = false
+    this.requestInFlight = true
+  }
+
+  /** 传输层已结束失败：释放在途槽，保留期间的新视野意图，不无限重放旧 stale。 */
+  requestFailed(): void {
+    this.requestInFlight = false
+    this.stale.clear()
   }
 
   // ---------- 服务端数据落地 ----------
@@ -341,6 +351,12 @@ export class WorldViewModel {
    * 永远留在 explored 集合里，玩家把地图拖回来时会看到一片本该是黑雾的区域是亮的。
    */
   applyViewport(resp: ViewportResp): void {
+    this.requestInFlight = false
+    const previous = new Map(this.cache.versionsFor(this.requestedKeys).map(c => [c.key, c.version]))
+    // 预算分批下发是正常进展，不能把后排九块按同一个“三次失败”预算提前丢掉。
+    // 只有完整的新块/更高版本才算进展；重复或截断响应仍受原三次停止判据约束。
+    const progressed = resp.chunks.some(c => !c.truncated && this.requestedKeys.includes(c.key)
+      && (previous.get(c.key) === undefined || c.version > (previous.get(c.key) ?? -1)))
     const staleKeys = new Set(resp.staleChunks)
     for (const chunk of resp.chunks) {
       if (chunk.truncated) {
@@ -351,7 +367,7 @@ export class WorldViewModel {
 
     const retry: string[] = []
     for (const key of staleKeys) {
-      const attempts = (this.stale.get(key) ?? 0) + 1
+      const attempts = progressed ? 0 : (this.stale.get(key) ?? 0) + 1
       if (attempts > STALE_RETRY_LIMIT) {
         console.warn(`[WorldViewModel] 块 ${key} 连续 ${STALE_RETRY_LIMIT} 次未能完整下发，停止重试（可能是实体数超出 payload 上限）`)
         this.stale.delete(key)
@@ -532,6 +548,7 @@ export class WorldViewModel {
     this.pendingCorrections.clear()
     this.stale.clear()
     this.needsFetch = true
+    this.requestInFlight = false
     this.notify()
   }
 
