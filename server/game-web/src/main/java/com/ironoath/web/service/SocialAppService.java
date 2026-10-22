@@ -136,6 +136,11 @@ public class SocialAppService {
     private final PlayerRepository players;
     private final PlayerLock playerLock;
     private final com.ironoath.web.nation.NationOperationLock nationLock;
+    private record RallyLockContext(Rally.Scope scope,String groupId) {}
+    private final ThreadLocal<java.util.Map<String,RallyLockContext>> heldRallyContexts=new ThreadLocal<>();
+    private static final class RallyContextChanged extends RuntimeException {
+        private static final long serialVersionUID=1L;
+    }
     private final IdempotencyStore idempotency;
     private final TimeService timeService;
     private final ConfigRegistry configs;
@@ -3019,12 +3024,66 @@ public class SocialAppService {
 
     /** 出发消费/恢复和到期推进共用，国家分支从读权威集结到行军落档全程持国家锁。 */
     public <T> T runRallyDepartureLocked(String rallyId, java.util.function.Supplier<T> action) {
-        return withNationalRallyLock(rallyId, () -> playerLock.runLocked(
-                "@rally-departure:" + rallyId, LOCK_TIMEOUT_MS, () -> {
-                    Rally latest = store.rallyOf(rallyId).orElseThrow();
-                    com.ironoath.web.social.RallySettlementRecovery.recover(store, armies, latest.groupId());
-                    return action.get();
-                }));
+        return runRalliesDepartureLocked(java.util.Collections.singletonList(rallyId),action);
+    }
+
+    /** 所有国家→所有集结→调用方目标锁。上下文变化只能退出全部旧锁后重新分派。 */
+    public <T> T runRalliesDepartureLocked(java.util.Collection<String> rallyIds,java.util.function.Supplier<T> action) {
+        if(rallyIds==null || rallyIds.isEmpty() || action==null)
+            throw new IllegalArgumentException("集结锁集合和动作不得为空");
+        var sorted=new java.util.TreeSet<String>();
+        for(String id:rallyIds) {
+            if(id==null || id.isBlank())throw new IllegalArgumentException("集结锁标识不得为空");
+            sorted.add(id);
+        }
+        var ids=List.copyOf(sorted);
+        var parent=heldRallyContexts.get();
+        if(parent!=null && !parent.keySet().containsAll(ids))
+            throw new IllegalStateException("已持集结锁时不能扩张参与方，须退出外层后重新分派");
+        for(int attempt=0;attempt<2;attempt++) {
+            var expected=rallyLockContexts(ids);
+            if(parent!=null && ids.stream().anyMatch(id->!expected.get(id).equals(parent.get(id))))
+                throw new IllegalStateException("已持集结锁的国家上下文已变化，须退出外层重新分派");
+            var nations=expected.values().stream().filter(c->c.scope()==Rally.Scope.NATION)
+                    .map(RallyLockContext::groupId).distinct().sorted().toList();
+            try {
+                return nationLock.runLockedAll(nations,()->{
+                    requireRallyLockContexts(ids,expected);
+                    // 保留旧国家恢复步骤；不得把原退款日志移到另一国家的锁下处理。
+                    for(String nation:nations)com.ironoath.web.social.RallySettlementRecovery.recover(store,armies,nation);
+                    return lockRallySet(ids,0,()->{
+                        requireRallyLockContexts(ids,expected);
+                        for(String group:expected.values().stream().map(RallyLockContext::groupId).distinct().sorted().toList())
+                            com.ironoath.web.social.RallySettlementRecovery.recover(store,armies,group);
+                        heldRallyContexts.set(parent==null?expected:parent);
+                        try{return action.get();}
+                        finally{if(parent==null)heldRallyContexts.remove();else heldRallyContexts.set(parent);}
+                    });
+                });
+            } catch(RallyContextChanged changed) {
+                if(parent!=null)throw new IllegalStateException("已持集结锁的上下文变化，须退出外层重新分派",changed);
+                // 此处所有旧锁已释放，才允许重新读取新参与方。
+            }
+        }
+        throw new IllegalStateException("集结归属持续变化，保留原状态后重试");
+    }
+
+    private java.util.Map<String,RallyLockContext> rallyLockContexts(List<String> ids) {
+        var contexts=new java.util.LinkedHashMap<String,RallyLockContext>();
+        for(String id:ids) {
+            var rally=store.rallyOf(id).orElseThrow(()->new IllegalStateException("集结来源缺失，不能推定国家锁"));
+            contexts.put(id,new RallyLockContext(rally.scope(),rally.groupId()));
+        }
+        return java.util.Collections.unmodifiableMap(contexts);
+    }
+
+    private void requireRallyLockContexts(List<String> ids,java.util.Map<String,RallyLockContext> expected) {
+        if(!expected.equals(rallyLockContexts(ids)))throw new RallyContextChanged();
+    }
+
+    private <T> T lockRallySet(List<String> ids,int index,java.util.function.Supplier<T> action) {
+        if(index==ids.size())return action.get();
+        return playerLock.runLocked("@rally-departure:"+ids.get(index),LOCK_TIMEOUT_MS,()->lockRallySet(ids,index+1,action));
     }
 
     private java.util.Optional<Rally.Departure> doSettleDueRally(Rally rally, long now) {
