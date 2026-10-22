@@ -690,6 +690,32 @@ if (process.env.NATION_LIVE_UI === '1') {
         durationLabel !== null && afterShown.includes(`王城战时长 ${durationLabel}`))
       checkThat('（回读屏）屏上不再说旧的 3 小时', !afterShown.includes('这一场打 3 小时'))
       checkThat('（回读屏）开战后屏上仍无内部 id', !/nation_[a-z0-9]/.test(afterShown))
+      const noticeLayout = await page.evaluate(() => {
+        const panel = window.cc.director.getScene()
+          .getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
+        const card = panel?.getChildByName('NationCard')
+        let notice = null
+        const walk = node => {
+          if (notice) return
+          const label = node.getComponent?.('cc.Label')
+          if (label && String(label.string ?? '').startsWith('已对 ')) { notice = node; return }
+          for (const child of node.children) walk(child)
+        }
+        if (panel) walk(panel)
+        const rect = node => {
+          const box = node?.getComponent?.('cc.UITransform')?.getBoundingBoxToWorld?.()
+          return box ? { left: box.x, right: box.x + box.width,
+            bottom: box.y, top: box.y + box.height } : null
+        }
+        return { notice: rect(notice), card: rect(card) }
+      })
+      checkThat('（回读屏）宣战回执整句在国家卡片内，不能压到底部导航',
+        noticeLayout.notice !== null && noticeLayout.card !== null
+          && noticeLayout.notice.left >= noticeLayout.card.left + 8
+          && noticeLayout.notice.right <= noticeLayout.card.right - 8
+          && noticeLayout.notice.bottom >= noticeLayout.card.bottom + 8
+          && noticeLayout.notice.top <= noticeLayout.card.top - 8)
+      console.log('  宣战回执盒：' + JSON.stringify(noticeLayout))
       await page.screenshot({ path: path.join(OUT, 'live-war-declared.png') })
       console.log(`  截图：${path.join(OUT, 'live-war-declared.png')}`)
 

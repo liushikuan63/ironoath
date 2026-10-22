@@ -292,7 +292,18 @@ export class NationPanelView extends Component {
     this.decor('ui.seal.wax', 34, 34, PANEL_WIDTH / 2 - PADDING - 120, top - 18)
     this.button('CloseButton', '关闭', PANEL_WIDTH / 2 - PADDING - 38, top - 18, 76, true,
       () => this.onClose?.())
-    if (!compactPolicy) this.label(data.headline, COLOR_HINT, 14, left, top - 44, 'left')
+    // 国战页内容最长，成功/拒绝回执若再接在末尾会掉出卡片，压到底部导航。
+    // 借用标题下方现成的说明位，回执优先于身份摘要；其它页签仍按原位置画。
+    const warHeaderNotice = data.mode !== 'NONE' && data.tab === 'WAR' ? data.notice : null
+    if (!compactPolicy) {
+      const header = this.label(warHeaderNotice ?? data.headline,
+        warHeaderNotice === null ? COLOR_HINT : (data.noticeTone === 'ok' ? COLOR_GOLD : COLOR_WARN),
+        14, left, top - 44, 'left')
+      if (warHeaderNotice !== null && header !== null) {
+        header.node.getComponent(UITransform)!.setContentSize(new Size(innerWidth, 24))
+        header.overflow = Label.Overflow.SHRINK
+      }
+    }
 
     let cursor = top - (compactPolicy ? 36 : TITLE_BAND)
     if (data.mode === 'NONE') {
@@ -327,7 +338,7 @@ export class NationPanelView extends Component {
           break
       }
     }
-    if (data.notice !== null && data.tab !== 'POLICY') {
+    if (data.notice !== null && data.tab !== 'POLICY' && warHeaderNotice === null) {
       // **成功是金色、失败是红色**：这一屏同时承载公共资产的操作，
       // 把"研究完成"染成警告红，玩家读到的就是"出错了"。
       this.label(data.notice, data.noticeTone === 'ok' ? COLOR_GOLD : COLOR_WARN, 14,
