@@ -5383,7 +5383,7 @@ export class AppRoot {
   /** 复用同一支付与查单流程，结果由发起购买的界面显示。 */
   private purchaseProduct(productId: string, track: (name: string, params: Record<string, string>) => void): Promise<PayView> {
     const flow = new GiftPayFlow({
-      createOrder: (id) => this.api.createPayOrder(id),
+      createOrder: (id, requestId) => this.api.createPayOrder(id, requestId),
       orderStatus: (orderId) => this.api.payOrderStatus(orderId),
       invokePayment: (params) => requestMidasPayment(params),
       now: () => Date.now(),

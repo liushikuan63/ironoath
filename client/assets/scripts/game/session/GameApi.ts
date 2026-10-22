@@ -835,8 +835,9 @@ export class GameApi {
     return this.calibrate(outcome, sentAt)
   }
 
-  async createPayOrder(productId: string): Promise<NetOutcome<CreateOrderResp>> {
-    return this.mutate<CreateOrderReq, CreateOrderResp>("/pay/order", { productId, count: 1, heroChoice: null })
+  async createPayOrder(productId: string, requestId?: string): Promise<NetOutcome<CreateOrderResp>> {
+    return this.mutate<CreateOrderReq, CreateOrderResp>("/pay/order",
+      { productId, count: 1, heroChoice: null }, false, false, requestId)
   }
 
   /**
@@ -1330,7 +1331,8 @@ export class GameApi {
   }
 
   /**
-   * 变更请求。统一在这里生成 requestId —— 调用方忘填幂等键的后果是重试刷奖励，
+   * 变更请求默认在这里生成 requestId；支付失联恢复可显式沿用原键。
+   * 调用方忘填幂等键的后果是重试刷奖励，
    * 那种 bug 只在弱网下出现，所以不给调用方留忘记的机会。
    *
    * @param queueWhenOffline 断网时是否入离线队列。默认 false，理由见文件头
@@ -1340,8 +1342,12 @@ export class GameApi {
     req: Omit<TReq, 'requestId'>,
     queueWhenOffline = false,
     bindPlayerIdentity = false,
+    originalRequestId?: string,
   ): Promise<NetOutcome<TResp>> {
-    const requestId = this.deps.newRequestId()
+    const requestId = originalRequestId ?? this.deps.newRequestId()
+    if (requestId.trim() === '') {
+      throw new Error('requestId 不得为空')
+    }
     const body = { ...req, requestId } as TReq
     const sentAt = this.deps.now()
     const outcome = await this.deps.net.post<TReq, TResp>(path, body,

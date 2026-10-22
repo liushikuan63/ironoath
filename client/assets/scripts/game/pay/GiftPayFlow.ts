@@ -52,7 +52,7 @@ export interface PayView {
 }
 
 export interface PayFlowDeps {
-  createOrder(productId: string): Promise<NetOutcome<CreateOrderResp>>
+  createOrder(productId: string, requestId?: string): Promise<NetOutcome<CreateOrderResp>>
   orderStatus(orderId: string): Promise<NetOutcome<OrderStatusResp>>
   invokePayment(params: PayParams): Promise<PaymentOutcome>
   now(): number
@@ -61,7 +61,7 @@ export interface PayFlowDeps {
 }
 
 export interface PayFlowConfig {
-  /** 轮询次数与间隔。默认 5 次 × 1 秒：补单通常在一两次回调内完成，超过这个窗口就该让玩家走了。 */
+  /** 查单轮询次数；pollIntervalMs 也用于失联下单同键重投前的短暂等待。 */
   readonly maxPolls: number
   readonly pollIntervalMs: number
 }
@@ -87,14 +87,24 @@ export class GiftPayFlow {
     // 而后人据此以为这一环真的没人发
     this.deps.track(TRACK_EVENTS.payClick, { productId })
 
-    const order = await this.deps.createOrder(productId)
+    let order = await this.deps.createOrder(productId)
+    if (order.kind === 'network' && !order.queued && order.requestId?.trim()) {
+      // 只沿用这次网络结果里的原键重投一次：第一枪可能已落库但回执丢了。
+      // 旧后端可能回「重复请求」；此时仍保持未知，不能把它说成已下单或已扣款。
+      await this.deps.delay(this.config.pollIntervalMs)
+      const replay = await this.deps.createOrder(productId, order.requestId)
+      if (replay.kind === 'ok' || replay.kind === 'network') {
+        order = replay
+      }
+    }
     if (order.kind === 'biz') {
       // 服务端的 msg 是写给玩家的（15011 今天买过了 / 15012 报价过期），原样用它
       return failed(order.msg, order.detail, null)
     }
     if (order.kind === 'network') {
       // 网络错误也可能是服务端已建单、回执却丢了；本次没有拿到支付参数，所以未拉起支付。
-      return failed('下单结果未确认', '下单回执未返回，支付未拉起；请稍后再试', null)
+      return failed('下单结果未确认',
+        '下单回执未返回，支付未拉起；请勿反复下单，如需核查请联系客服', null, true)
     }
 
     // 下单成功才有这一列：它说的是"本月还剩多少"，与后面的支付结果无关（超限也照常下单），

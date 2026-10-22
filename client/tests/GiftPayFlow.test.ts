@@ -23,6 +23,8 @@ function okOutcome<T>(data: T): NetOutcome<T> {
 
 interface Harness {
   flow: GiftPayFlow
+  createOrderCalls: Array<{ productId: string, requestId: string | undefined }>
+  paymentCalls: number[]
   orderStatusCalls: number[]
   tracked: Array<{ name: string, params: Record<string, string> }>
   delays: number[]
@@ -30,23 +32,35 @@ interface Harness {
 
 function harness(options: {
   createOrder?: NetOutcome<CreateOrderResp>
+  createOrders?: Array<NetOutcome<CreateOrderResp>>
   statuses?: Array<NetOutcome<OrderStatusResp>>
   payment?: PaymentOutcome
   maxPolls?: number
 } = {}): Harness {
   const statuses = options.statuses ?? []
+  const createOrderCalls: Array<{ productId: string, requestId: string | undefined }> = []
+  const paymentCalls: number[] = []
   const orderStatusCalls: number[] = []
   const tracked: Array<{ name: string, params: Record<string, string> }> = []
   const delays: number[] = []
   let statusIndex = 0
+  let orderIndex = 0
 
   const deps: PayFlowDeps = {
-    createOrder: async () => options.createOrder ?? okOutcome<CreateOrderResp>({
+    createOrder: async (productId, requestId) => {
+      createOrderCalls.push({ productId, requestId })
+      const defaultOrder = okOutcome<CreateOrderResp>({
       // **minorNotice 必须显式给 null**：生成类型把它列成必填（契约里 required 不含它，
       // 但 TS 侧按非可选生成），而「成年 / 年龄未知」这一路的真值就是 null ——
       // 夹具不写它会在类型检查期报缺字段，那是第一道能抓住的信号。
       orderId: 'order-1', minorNotice: null, payParams: PAY_PARAMS,
-    }),
+      })
+      const script = options.createOrders ?? [options.createOrder ?? defaultOrder]
+      const step = script[Math.min(orderIndex, script.length - 1)]
+      orderIndex += 1
+      assert.ok(step !== undefined, 'FakeOrder 未配置 script')
+      return step
+    },
     orderStatus: async () => {
       orderStatusCalls.push(statusIndex)
       const step = statuses[Math.min(statusIndex, statuses.length - 1)]
@@ -54,7 +68,10 @@ function harness(options: {
       assert.ok(step !== undefined, 'FakeStatus 未配置 script')
       return step
     },
-    invokePayment: async () => options.payment ?? 'ok',
+    invokePayment: async () => {
+      paymentCalls.push(1)
+      return options.payment ?? 'ok'
+    },
     now: () => 1_000,
     delay: async (ms: number) => {
       delays.push(ms)
@@ -63,6 +80,8 @@ function harness(options: {
   }
   return {
     flow: new GiftPayFlow(deps, { maxPolls: options.maxPolls ?? 5, pollIntervalMs: 1_000 }),
+    createOrderCalls,
+    paymentCalls,
     orderStatusCalls,
     tracked,
     delays,
@@ -173,6 +192,71 @@ test('下单回执丢失时不声称请求没有发出；本次没有拉起支�
   assert.match(view.detail ?? '', /支付未拉起|未拉起支付/)
   assert.doesNotMatch(view.detail ?? '', /没有发出去|没有扣款/)
   assert.equal(h.orderStatusCalls.length, 0, '没有 orderId 不能调用按订单号查询')
+})
+
+test('下单回执失联且有请求号时，只用原号有界重放；拿到原单后才拉起一次支付', async () => {
+  const h = harness({
+    createOrders: [
+      { kind: 'network', message: 'response lost', queued: false, requestId: 'req-recover-1' },
+      okOutcome<CreateOrderResp>({ orderId: 'order-original', minorNotice: null, payParams: PAY_PARAMS }),
+    ],
+    statuses: [success([{ type: 'RESOURCE', id: 'GOLD', count: 180 }])],
+  })
+
+  const view = await h.flow.buy('gift_stuck_supply')
+
+  assert.deepEqual(h.createOrderCalls, [
+    { productId: 'gift_stuck_supply', requestId: undefined },
+    { productId: 'gift_stuck_supply', requestId: 'req-recover-1' },
+  ])
+  assert.deepEqual(h.delays, [1_000])
+  assert.equal(h.paymentCalls.length, 1)
+  assert.equal(view.phase, 'delivered')
+})
+
+test('网络态缺请求号或已入队时不猜新键重投，也不拉起支付', async () => {
+  for (const outcome of [
+    { kind: 'network', message: 'unknown', queued: false, requestId: null },
+    { kind: 'network', message: 'queued', queued: true, requestId: 'req-queued' },
+  ] as const) {
+    const h = harness({ createOrder: outcome })
+    const view = await h.flow.buy('gift_stuck_supply')
+    assert.equal(h.createOrderCalls.length, 1)
+    assert.equal(h.paymentCalls.length, 0)
+    assert.equal(view.phase, 'failed')
+    assert.equal(view.showSupport, true)
+  }
+})
+
+test('旧后端同键重投回重复请求时仍报未知并给客服，不把它说成已下单或已扣款', async () => {
+  const h = harness({
+    createOrders: [
+      { kind: 'network', message: 'response lost', queued: false, requestId: 'req-old-server' },
+      { kind: 'biz', code: 1002, msg: '请求重复提交', detail: null, traceId: 't' },
+    ],
+  })
+  const view = await h.flow.buy('gift_stuck_supply')
+
+  assert.equal(h.createOrderCalls[1]?.requestId, 'req-old-server')
+  assert.equal(h.paymentCalls.length, 0)
+  assert.equal(view.phase, 'failed')
+  assert.equal(view.title, '下单结果未确认')
+  assert.equal(view.showSupport, true)
+  assert.doesNotMatch(view.detail ?? '', /已下单|没有扣款/)
+})
+
+test('同键重投仍失联时总共只发两次下单，不会递归重试或拉起支付', async () => {
+  const h = harness({
+    createOrder: { kind: 'network', message: 'offline', queued: false, requestId: 'req-still-offline' },
+  })
+  const view = await h.flow.buy('gift_stuck_supply')
+
+  assert.equal(h.createOrderCalls.length, 2)
+  assert.equal(h.createOrderCalls[1]?.requestId, 'req-still-offline')
+  assert.deepEqual(h.delays, [1_000])
+  assert.equal(h.paymentCalls.length, 0)
+  assert.equal(view.phase, 'failed')
+  assert.equal(view.showSupport, true)
 })
 
 test('下单被业务拒绝 ⇒ 原样用服务端的提示（15011 今天买过了 / 15012 报价过期都走这条）', async () => {
