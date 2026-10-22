@@ -54,13 +54,6 @@ JAR="${GAME_WEB_JAR:-server/game-web/target/game-web.jar}"
 # ⚠️ 只在"后端是本脚本起的"时成立 —— 打到别人的后端时我们无从知道它的令牌，那时探针会记 NO-RUN 而不是红。
 OPS_TOK="${RUNTIME_OPS_TOKEN:-art-verify-local}"
 
-mkdir -p "$(dirname "$LOG")"
-# 后端日志落在 $LOGDIR 下，而 `java ... >> "$LOGDIR/dual-backend.log"` 发生在任何 mkdir 之前：
-# LOGDIR 指到一个新目录时重定向直接失败 ⇒ **JVM 根本没起来**，脚本却只报"普通后端没起来（探活失败）"，
-# 看起来像产品/端口问题（2026-10-07 全量批跑就是这么在 2 秒内退 2 的）。
-mkdir -p "$LOGDIR" "$BACKEND_TMP_DIR"
-: > "$LOG"
-
 # 探活到返回就 0，最多 70 秒
 wait_up() {
   for _ in $(seq 1 70); do
@@ -112,6 +105,55 @@ report_stray_backends() {
     echo "[dual]    'Unable to rename …' ⇒ 需要先自己停掉它们" >> "$LOG"
   fi
 }
+
+run_probe_batch() {
+  BACKEND="http://127.0.0.1:$BACKEND_PORT" \
+  BOOST_BACKEND="http://127.0.0.1:$BOOST_PORT" \
+  WAR_BACKEND="http://127.0.0.1:$WAR_PORT" \
+  OPS_TOKEN_VALUE="$OPS_TOK" \
+  RUNTIME_PROBES_TIMEOUT="$TIMEOUT" \
+  RUNTIME_PROBES_LOGDIR="$LOGDIR" \
+    bash scripts/run-runtime-probes.sh "$@" >> "$LOG" 2>&1
+}
+
+finish_probe_batch() {
+  local batch_exit
+  if run_probe_batch "$@"; then batch_exit=0; else batch_exit=$?; fi
+  echo "BATCH_EXIT=$batch_exit" >> "$LOG"
+  local left=''
+  for p in "$BACKEND_PORT" "$BOOST_PORT" "$WAR_PORT"; do
+    kill_listen "$p" || left="$left $p"
+  done
+  # "后端已收"这句话**必须由复验说了算**：原先它是无条件打印的，而清理函数其实一直在空转
+  if [ -z "$left" ]; then
+    echo "[dual] 后端已收（三台端口复验过：$BACKEND_PORT / $BOOST_PORT / $WAR_PORT 都不再监听）" >> "$LOG"
+  else
+    echo "[dual] 后端**没有全部收掉**，仍被占着的端口：$left ⇒ 它们会持着 $JAR，之后跑 build.sh 会报 Unable to rename" >> "$LOG"
+  fi
+  echo "[dual] DONE" >> "$LOG"
+  [ -z "$left" ] || return 1
+  return "$batch_exit"
+}
+
+# 只验证真实收尾控制流；覆盖启动/清理函数前不发任何网络/进程动作。
+if [ "${1:-}" = "--self-test-exit-propagation" ]; then
+  case "${2:-}" in 0|1|2) ;; *) exit 2 ;; esac
+  case "${3:-}" in 0|1|2) ;; *) exit 2 ;; esac
+  [ -n "${4:-}" ] || exit 2
+  selftest_batch="$2"; selftest_cleanup="$3"; LOG="$4"
+  mkdir -p "$(dirname "$LOG")"; : > "$LOG"
+  run_probe_batch() { return "$selftest_batch"; }
+  kill_listen() { return "$selftest_cleanup"; }
+  finish_probe_batch
+  exit $?
+fi
+
+mkdir -p "$(dirname "$LOG")"
+# 后端日志落在 $LOGDIR 下，而 `java ... >> "$LOGDIR/dual-backend.log"` 发生在任何 mkdir 之前：
+# LOGDIR 指到一个新目录时重定向直接失败 ⇒ **JVM 根本没起来**，脚本却只报"普通后端没起来（探活失败）"，
+# 看起来像产品/端口问题（2026-10-07 全量批跑就是这么在 2 秒内退 2 的）。
+mkdir -p "$LOGDIR" "$BACKEND_TMP_DIR"
+: > "$LOG"
 
 echo "[dual] 收掉旧后端（$BACKEND_PORT / $BOOST_PORT / $WAR_PORT）" >> "$LOG"
 kill_listen "$BACKEND_PORT"
@@ -169,23 +211,5 @@ else
 fi
 
 echo "[dual] 开始批跑" >> "$LOG"
-BACKEND="http://127.0.0.1:$BACKEND_PORT" \
-BOOST_BACKEND="http://127.0.0.1:$BOOST_PORT" \
-WAR_BACKEND="http://127.0.0.1:$WAR_PORT" \
-OPS_TOKEN_VALUE="$OPS_TOK" \
-RUNTIME_PROBES_TIMEOUT="$TIMEOUT" \
-RUNTIME_PROBES_LOGDIR="$LOGDIR" \
-  bash scripts/run-runtime-probes.sh "$@" >> "$LOG" 2>&1
-echo "BATCH_EXIT=$?" >> "$LOG"
-
-left=''
-for p in "$BACKEND_PORT" "$BOOST_PORT" "$WAR_PORT"; do
-  kill_listen "$p" || left="$left $p"
-done
-# "后端已收"这句话**必须由复验说了算**：原先它是无条件打印的，而清理函数其实一直在空转
-if [ -z "$left" ]; then
-  echo "[dual] 后端已收（三台端口复验过：$BACKEND_PORT / $BOOST_PORT / $WAR_PORT 都不再监听）" >> "$LOG"
-else
-  echo "[dual] 后端**没有全部收掉**，仍被占着的端口：$left ⇒ 它们会持着 $JAR，之后跑 build.sh 会报 Unable to rename" >> "$LOG"
-fi
-echo "[dual] DONE" >> "$LOG"
+finish_probe_batch "$@"
+exit $?

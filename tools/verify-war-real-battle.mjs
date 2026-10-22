@@ -23,13 +23,14 @@
  * 没架对，不是功能坏了。倍速过高也不行：国战窗口 WAR_DURATION_MINUTES=90 会被压到几秒，
  * 出战、行军还没落地仗就过期了（记录会被 EXPIRED 挡住）。
  *
- * <p><b>退出码</b>：0 = 全过；1 = 有断言失败（逐条打印）；2 = 前置不满足（后端/提速档/倍速）。
+ * <p><b>退出码</b>：0 = 全过；1 = 有断言失败（逐条打印）；2 = 前置不满足或判据未验证（后端/提速档/倍速/未进入真实围城）。
  *
  * <p><b>重复跑</b>：dev 是内存存储、跨轮不清，每轮用新号（deviceId 带时间戳），并尽量在收尾
  * 解散两国（有活跃战事时解散会被拒 —— 那是预期形状之一，只提示不判错；名额占满时重启后端即清）。
  */
 import path from 'node:path'
 import process from 'node:process'
+import { canVerifySiegeSettlement, fatigueWarAction } from './lib/war-probe-preconditions.mjs'
 
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8299'
 const T1 = 'unit_infantry_t1'
@@ -38,11 +39,12 @@ const B_TROOPS = 100
 const A_TROOPS = 160
 /** 期望击杀下限：与 WAR 榜的最小上榜击杀（global.WAR_SEASON_POINT_MIN_KILLS=10）同一条线。 */
 const MIN_KILLS = 10
-/** 可接受的最低时间倍速：低于它本探针的等待会超过 5 分钟。 */
+/** 可接受的最低时间倍速：低于它本探针的等待会超出合理验证窗口。 */
 const MIN_SPEED = 50
 
 let pass = 0
 let fail = 0
+const unverified = []
 let seq = 0
 const ok = (m) => { pass += 1; console.log(`  PASS  ${m}`) }
 const bad = (m) => { fail += 1; console.log(`  FAIL  ${m}`) }
@@ -257,7 +259,7 @@ const nationB = await foundNation(defender, '守', 'B', 380 + (runTag % 40), 380
 checkThat('两国 id 都拿到', nationA !== null && nationB !== null)
 if (nationA === null || nationB === null) {
   console.error('[war-real] 建国没成，后续（宣战/记账）无从验；先看上面 detail')
-  console.log(`\n=== 真链路打真仗：${pass} 通过 / ${fail} 失败 ===`)
+  console.log(`\n=== 真链路打真仗：${pass} 通过 / ${fail} 失败 / ${unverified.length} 未验证 ===`)
   return 1
 }
 
@@ -309,24 +311,28 @@ const ledgerOk = await waitUntil(async () => {
 checkThat(`战后全服击杀入账（${killsBase} → ${killsAfter}，增量 ${killsAfter - killsBase} ≥ ${MIN_KILLS}）`, ledgerOk === true)
 checkThat(`攻方疲劳已累积（myFatigue=${fatigueA} ≥ 1）`, fatigueA >= 1)
 
-// WAR 榜是"国战结算那一刻"才把个人击杀分写进去的（3b-1 的 reportWarSeasonPoints 挂在这里：
-// WarAppService.warStatus → settleIfExpired → settledNow 才进账，见该文件 :132-138）。
-// ⇒ 等这一场打满 90 分钟窗口（WAR_DURATION_MINUTES=90，倍速 100× 下 ≈54 秒真实时间）。
-// ⚠️ 结算后 hasWar 仍是 true、只有 phase 变 SETTLED（仗还"在库里"）—— 判据必须是 phase。
-const warEnded = await waitUntil(async () => {
-  const war = await call('GET', '/nation/war', undefined, attacker)
-  return war.code === 0 && (war.data?.phase === 'SETTLED' || war.data?.hasWar === false) ? true : null
-}, 360_000, 4000, '国战打满 90 分钟窗口并结算')
-checkThat('国战已结算（phase=SETTLED）', warEnded === true)
-
-let warRank = null
-const onBoard = await waitUntil(async () => {
-  warRank = await call('GET', '/rank/list?type=WAR&page=1&size=50', undefined, attacker)
-  return (warRank.data?.myRank ?? null) !== null ? true : null
-}, 30_000, 3000, 'WAR 榜出现我的行（结算后）')
-check('WAR 榜可读', warRank?.code, 0)
-checkThat(`攻方已进 WAR 榜（myRank=${warRank?.data?.myRank}，myValue=${warRank?.data?.myValue}）`,
-  onBoard === true && (warRank?.data?.myValue ?? 0) >= MIN_KILLS)
+// 90分钟从真实SIEGE起算，不能等待宣战时刻来伪造已验证的围城结算。
+const settlementState = await call('GET', '/nation/war', undefined, attacker)
+check('围城结算前提可读取', settlementState.code, 0)
+if (canVerifySiegeSettlement(settlementState.data)) {
+  const warEnded = await waitUntil(async () => {
+    const war = await call('GET', '/nation/war', undefined, attacker)
+    return war.code === 0 && war.data?.phase === 'SETTLED'
+      && war.data?.preparationAbandoned !== true ? true : null
+  }, 360_000, 4000, '进入围城后的90分钟窗口结算')
+  checkThat('国战围城已结算（phase=SETTLED，非筹备作废）', warEnded === true)
+  let warRank = null
+  const onBoard = await waitUntil(async () => {
+    warRank = await call('GET', '/rank/list?type=WAR&page=1&size=50', undefined, attacker)
+    return (warRank.data?.myRank ?? null) !== null ? true : null
+  }, 30_000, 3000, 'WAR榜出现我的行（真实围城结算后）')
+  check('WAR榜可读', warRank?.code, 0)
+  checkThat(`攻方已进WAR榜（myRank=${warRank?.data?.myRank}，myValue=${warRank?.data?.myValue}）`,
+    onBoard === true && (warRank.data?.myValue ?? 0) >= MIN_KILLS)
+} else {
+  unverified.push('真实进入SIEGE后的90分钟结算', '真实结算后WAR榜个人击杀积分')
+  console.log(`  PREREQ  未通过真实关卡争夺进入围城（phase=${settlementState.data?.phase ?? '未知'}），不以宣战起点等结算；保留前半战斗证据，整份退2`)
+}
 
 // 战报可读（内容口径随协议演进，这里只钉"读得到"这一层；击杀的权威读数在上面的国战账）
 const reports = await call('GET', '/battle/reports', undefined, attacker)
@@ -343,8 +349,15 @@ check('对照组：不存在的路径回 404', missing.http, 404)
 // 到顶（myFatigue >= fatigueMax）后的下一次发起必须被 13026（WAR_FATIGUE_MAX_REACHED）拒。
 // 兵：SCOUT 到达自动返程、到家归还（#768 修复的形状），少量兵即可周转；战损后不足先补练。
 const WAR_FATIGUE_MAX_REACHED = 13026   // 出处：ErrorCode.java（探针不引 Java 枚举）
+const currentCapWar = await call('GET', '/nation/war', undefined, attacker)
+check('到顶相当前战事可读取', currentCapWar.code, 0)
+const capWarAction = fatigueWarAction(currentCapWar)
 let capRival = null
-{
+let capCleanupPlayer = null
+if (capWarAction === 'REUSE') {
+  capRival = defender
+  ok('到顶相复用现有活跃战事，不对仍在筹备/围城的板子再次宣战')
+} else if (capWarAction === 'DECLARE') {
   const c = await initPlayer('warcap-c')
   if (c === null) {
     bad('到顶相前置：第三国号建不出来')
@@ -357,16 +370,20 @@ let capRival = null
     }, c) : { code: cAlliance.code, detail: cAlliance.detail ?? cAlliance.msg }
     checkThat(`到顶相前置：第三国建成（盟 ${cAlliance.code} / 国 ${cFound.code}）`, cFound.code === 0)
     if (cFound.code === 0) {
-      capRival = c
+      capCleanupPlayer = c
       const reDeclare = await call('POST', '/nation/war/declare', {
         requestId: rid('cap-declare'), targetNationId: cFound.data?.nation?.nationId,
       }, attacker)
       check(`到顶相前置：对第三国重开一场活跃战事（${reDeclare.detail ?? reDeclare.msg}）`, reDeclare.code, 0)
+      if (reDeclare.code === 0) capRival = c
     }
   }
+} else {
+  unverified.push('疲劳到顶拒发起：当前战事读取未确认，未创建第三国或再次宣战')
+  console.log('  PREREQ  当前战事资料不足，停止到顶相的新业务写入')
 }
-const capHome = (await call('GET', '/world/marches', undefined, attacker)).data?.home ?? null
-checkThat('到顶相前置：攻方家坐标可读', capHome !== null && Number.isInteger(capHome.x))
+const capHome = capRival === null ? null : (await call('GET', '/world/marches', undefined, attacker)).data?.home ?? null
+if (capRival !== null) checkThat('到顶相前置：攻方家坐标可读', capHome !== null && Number.isInteger(capHome.x))
 if (capHome !== null && capRival !== null) {
   const armyNow = await call('GET', '/army/list', undefined, attacker)
   const haveNow = (armyNow.data?.units ?? []).find((u) => u.unitId === T1)?.count ?? 0
@@ -406,14 +423,17 @@ if (capHome !== null && capRival !== null) {
 }
 
 // ---------- 9. 收尾（尽力而为，不判错）：解散两国，给下一轮让名额 ----------
-for (const [player, nick] of [[attacker, '攻方'], [defender, '守方'], [capRival, '丙方（到顶相第三国）']]) {
-  if (player === null || player === undefined) continue
+const cleanedPlayers = new Set()
+for (const [player, nick] of [[attacker, '攻方'], [defender, '守方'], [capCleanupPlayer, '丙方（到顶相第三国）']]) {
+  if (player === null || player === undefined || cleanedPlayers.has(player.playerId)) continue
+  cleanedPlayers.add(player.playerId)
   const disband = await call('POST', '/nation/disband', { requestId: rid('disband') }, player)
   console.log(`  （收尾）${nick} 解散：code=${disband.code} ${disband.detail ?? disband.msg}${disband.code !== 0 ? '（有活跃战事时被拒是预期形状之一）' : ''}`)
 }
 
-console.log(`\n=== 真链路打真仗（宣战 → 出兵 → 结算 → 击杀进账）：${pass} 通过 / ${fail} 失败 ===`)
-return fail > 0 ? 1 : 0
+console.log(`\n=== 真链路打真仗（宣战 → 出兵 → 结算 → 击杀进账）：${pass} 通过 / ${fail} 失败 / ${unverified.length} 未验证 ===`)
+for (const item of unverified) console.log(`  NO-RUN  ${item}`)
+return fail > 0 ? 1 : unverified.length > 0 ? 2 : 0
 })()
 
 // 刻意不调 process.exit：本机 Node(win) 下 exit 与此前 fetch 的 keep-alive 收尾赛跑会触发

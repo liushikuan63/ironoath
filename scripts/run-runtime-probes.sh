@@ -27,6 +27,50 @@ probe_log_count() {
   printf '%s\n' "$count"
 }
 
+# 0只表示本批账中每份探针均退出0；各量具内部范围仍按其证据审查，不能推为全项目验收。
+# 显式未验证与断言/执行失败分开，但都必须阻止批次假绿。
+# 此入口也可对既有退出码账只读重算，无需重起后端或再次发业务请求。
+summarize_status() {
+  local ledger="$1" line status attempted=0 passed=0 failed=0 incomplete=0
+  local timed=0 prereq=0 norun=0 skipped=0 invalid=0
+  if [ ! -f "$ledger" ] || [ ! -r "$ledger" ]; then
+    echo "[runtime-probes][PREREQ] 无法读取退出码账：$ledger" >&2; return 2
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    case "$line" in ''|'# '*) continue ;; esac
+    status="${line%% *}"; attempted=$((attempted + 1))
+    case "$status" in
+      0) passed=$((passed + 1)) ;;
+      TIMEOUT|124) timed=$((timed + 1)); incomplete=$((incomplete + 1)) ;;
+      PREREQ|2) prereq=$((prereq + 1)); incomplete=$((incomplete + 1)) ;;
+      NO-RUN) norun=$((norun + 1)); incomplete=$((incomplete + 1)) ;;
+      SKIP) skipped=$((skipped + 1)); incomplete=$((incomplete + 1)) ;;
+      *) if [[ "$status" =~ ^[1-9][0-9]*$ ]]; then failed=$((failed + 1))
+         else invalid=$((invalid + 1)); incomplete=$((incomplete + 1)); fi ;;
+    esac
+    [ "$status" = "0" ] || echo "[runtime-probes] $line"
+  done < "$ledger"
+  echo "[runtime-probes] 尝试=$attempted 已确认通过=$passed 失败=$failed 未验证=$incomplete（TIMEOUT=$timed PREREQ=$prereq NO-RUN=$norun SKIP=$skipped 无效状态=$invalid）"
+  if [ "$failed" -gt 0 ]; then return 1; fi
+  if [ "$attempted" -eq 0 ] || [ "$incomplete" -gt 0 ]; then return 2; fi
+  return 0
+}
+
+if [ "${1:-}" = "--summarize-status" ]; then
+  summarize_status "${2:-}"
+  exit $?
+fi
+
+normalize_probe_result() {
+  local raw="$1" log="$2"
+  if [ ! -s "$log" ] || grep -qE 'ERR_MODULE_NOT_FOUND|Cannot find module|MODULE_NOT_FOUND|ENOENT.*index\.html' "$log"; then
+    echo NO-RUN
+  elif [ "$raw" = "124" ]; then echo TIMEOUT
+  elif [ "$raw" = "2" ]; then echo PREREQ
+  else echo "$raw"; fi
+}
+
 # Self-test the fresh-directory case and the file-only count without starting probes.
 if [ "${1:-}" = "--self-test-log-count" ]; then
   source scripts/tmp-work-dir.sh runtime-probe-log-count-selftest
@@ -114,12 +158,9 @@ fi
 : > "$OUT"
 # 把"这一批打的是哪台后端"写进记录：`BACKEND` 有默认值（8199＝dev 约定），
 # 但默认值一旦没落进输出，事后就分不清这批读数是哪个端机器给的（同族教训：静默回落 8080）
-# ⚠️ **本批的「起始行号」**：$OUT 是**跨批累加**的（每批追加，不清空）⇒
-#   「本批真红有几份」必须只数**本批写的那些行**（起始行号之后的），
-#   否则上一批留下的红会一直把每一批都判成红（实测：判成红的那批其实只跑到第 2 份就被掐断了）。
-OUT_BASE="$(wc -l < "$OUT" 2>/dev/null || echo 0)"
+# OUT在本批启动时已清空，保留完整本批账供独立重算。
 echo "# 后端=$BACKEND 清单=$LIST 记账=$OUT" | tee -a "$OUT"
-while read -r f; do
+while IFS= read -r f || [ -n "$f" ]; do
   # 显式清单也会由 Windows 工具写成 CRLF；read 会保留行尾 CR，导致真实文件被当成不存在。
   # 只规范化行尾，不改路径正文，否则整批会得到 MODULE_NOT_FOUND / NO-RUN 而没有功能读数。
   f="${f%$'\r'}"
@@ -127,7 +168,9 @@ while read -r f; do
   base="$(basename "$f")"
   # 排除名单已在生成 $LIST 时过滤过（见上）；这里保留 case 只为兼容**显式传入** LIST 的旧用法。
   case "$base" in
-    verify-label-fit-runtime.mjs) continue ;;   # 这一份每格都在跑，不必重复
+    verify-label-fit-runtime.mjs)
+      echo "SKIP $base（本批未执行，须另有本格证据）" | tee -a "$OUT"
+      continue ;;
   esac
   # 凭据这一族（2026-10-07 重写谓词，取证见 收口清单 #776）。
   # 旧写法 `[ -z "${!tok_env:-}" ]` 只看"shell 里有没有那个变量名"，**不看探针自带的默认值**，
@@ -211,29 +254,8 @@ while read -r f; do
     echo "$code"
   }
   code=$(run_probe "$port" "$log")
-  [ "$code" = "124" ] && code="TIMEOUT"
-  # 日志空 = 这一份**根本没跑成**（重定向失败、node 没起来…），它的退出码和被测系统无关。
-  # 不标出来的话，"没跑"会被记成一次普通的红或绿 —— #416 那版 just 这么把 `RUNTIME_PROBES_LOGDIR`
-  # 指到一个不存在的目录，就得到一个凭空虚记的 "1"。
-  if [ ! -s "$log" ]; then
-    code="NO-RUN"
-  # 2026-10-04 加：**日志非空，也可能是"量具自己没起来"**。启动期错误（模块找不到、前端产物缺失）
-  # 会往日志里写满 stack trace ⇒ 旧判据下它被记成一次普通的红，**冒充产品缺陷**。
-  # 实测（新机器上从零装环境那次）：探针写死的 playwright 绝对路径失效 ⇒ 所有浏览器类探针一起判红，
-  # 而根因与环境有关、与产品无关；同一批里 `client/build/web-mobile` 缺失也走同一条路。
-  # ⇒ 这两类"没跑起来"的形状与"日志空"同义，一并记 NO-RUN，让它与真红可分辨。
-  elif grep -qE 'ERR_MODULE_NOT_FOUND|Cannot find module|MODULE_NOT_FOUND' "$log" \
-    || grep -qE 'ENOENT.*index\.html' "$log"; then
-    code="NO-RUN"
-  fi
-  # 退出码 2 = **探针自己声明的「量具前提不足」**（本仓约定，见 `verify-social-create-runtime` A 相那类：
-  # 读到等级不对就退 2 并说明"这一份要跑在不带提速档的后端上"）。
-  # 它既不是产品红，也不是"量具没起来"的 NO-RUN，而是"这台机器/这个后端不满足我跑的前提"。
-  # 2026-10-04 实测踩到：`verify-panel-reachability` 退 2 并写明「量具未校准，读数作废」，
-  # 而旧汇总只放过 `0 `/`SKIP `/`TIMEOUT `/`# ` ⇒ 它被算进「需看的份数」，还白跑一次 RERUN
-  # （补跑解决不了"前提没架对"，那不是噪声，是确定性红）。
-  # ⇒ 单独归一类 PREREQ：不进 RERUN、不进"需看"、不与 TIMEOUT 混在一起列表。
-  [ "$code" = "2" ] && code="PREREQ"
+  code=$(normalize_probe_result "$code" "$log")
+  # 首跑/复跑统一归类；前提不足、没启动和超时都不能成为通过。
   # 有的量具拿"计时对上预算"当判据，而那条预算正落在它自己的读数散布里（#444 实测：perf 首屏
   # 同一颗 SHA 四跑 2715/2830/3234/3244 对预算 3000）—— 超一次不构成缺陷。所以非零时补跑一次，
   # **两次都超才判红**：真退化会连红两次，于是这不是把阈值挪走，只是不让噪声冒充缺陷。
@@ -242,7 +264,7 @@ while read -r f; do
   # PREREQ 不补跑：前提没架对，补跑必然同样退 2，白等一个超时窗口
   if [ "$code" != "0" ] && [ "$code" != "NO-RUN" ] && [ "$code" != "TIMEOUT" ] && [ "$code" != "PREREQ" ]; then
     code2=$(run_probe "$((port + 100))" "$log.retry")
-    [ -s "$log.retry" ] || code2="NO-RUN"
+    code2=$(normalize_probe_result "$code2" "$log.retry")
     # 这行必须带 `#` 前缀：汇总按 `^(0 |SKIP |# )` 排除元信息，换个词就被数成一次红。
     echo "# RERUN $base 首跑=$code 复跑=$code2 判定取复跑" | tee -a "$OUT"
     code="$code2"
@@ -250,43 +272,6 @@ while read -r f; do
   echo "$code $base ($backend_env, port $port)" | tee -a "$OUT"
 done < "$LIST"
 
-# ⚠️⚠️ **反空转：一份探针都没跑成 ⇒ 退 2（不是 0）**。
-# 实测过一次**假绿**：本机 Git Bash 下 mktemp 失败却退出 0 ⇒ 列表文件压根没建成
-# ⇒ 循环体一次都没进 ⇒ 汇总打印「需看的份数 = 0」⇒ 而脚本**照样退 0**
-# ⇒ 上层（批跑入口）读到的「BATCH_EXIT=0」会被当成「探针全过」。
-# ⇒ 「跑了几份」要从 $OUT 数（每跑一份写一行），**不能**从 $LIST 数
-# （列表可能压根没建成 —— 那正是本条要抓的形状）。
-# 本批的行 = $OUT 里起始行号之后的那些（$OUT 跨批累加，见上面 OUT_BASE 的注释）
-batch_lines() { tail -n "+$((OUT_BASE + 1))" "$OUT" 2>/dev/null || true; }
-RUN_COUNT="$(batch_lines | grep -cvE '^(# |SKIP )' || true)"
-if [ "${RUN_COUNT:-0}" -eq 0 ]; then
-  echo "[runtime-probes][FAIL] 一份探针都没跑成（跑了 0 份）—— 此时退出 0 是假绿" >&2
-  echo "[runtime-probes] 常见原因：列表文件没建成（mktemp 在本机不可用）、" >&2
-  echo "[runtime-probes] 后端没起来（探活失败）、或全部被排除名单剔掉。" >&2
-  exit 2
-fi
-echo "[runtime-probes] 本批实跑 ${RUN_COUNT} 份" >&2
-
-# SKIP 不是红、`#` 开头的是本批的元信息行、超时与 PREREQ 另列（见末尾那两行）：
-# 这张表只数"真正需要人看、且不是超时/前提不足"的那些。
-# ⚠️ 措辞用"需看的份数"而不是"非零退出的份数"（2026-10-04）：NO-RUN 与 PREREQ 都**没有可用的退出码**
-# （前者是量具没起来，后者是量具声明前提不足），旧措辞把它们算进"非零退出"会让人以为量具测出了红。
-echo "--- 汇总：需看的份数 = $(batch_lines | grep -cvE '^(0 |SKIP |TIMEOUT |PREREQ |# )' || true)（其中 未跑成 NO-RUN = $(grep -c '^NO-RUN ' "$OUT")，再其中 缺凭据 = $(grep -c '^NO-RUN .*缺凭据' "$OUT")）  超时 = $(grep -c '^TIMEOUT ' "$OUT")  前提不足 PREREQ = $(grep -c '^PREREQ ' "$OUT")  SKIP = $(grep -c '^SKIP ' "$OUT")"
-batch_lines | grep -vE '^(0 |SKIP |TIMEOUT |PREREQ |# )' || true
-# 超时与"前提不足"各自单独列一遍：它们不在上面那张表里，但恰恰是最需要人看的一批
-batch_lines | grep '^TIMEOUT ' || true
-batch_lines | grep '^PREREQ ' || true
-
-# ⚠️⚠️ **有真红就要退非 0**（2026-10-20 补）。
-# 此前这个脚本的退出码是**最后一条 grep 的状态**（恒为 0）⇒
-# **批跑里哪怕有一份真红，退出码也是 0** ⇒ 上层（`run-batch-dual-backend.sh` 的 `BATCH_EXIT=`）
-# 读到的「0」会被当成「这批全过」。
-# ⇒ 现在按**退出码账**算：0 / SKIP / TIMEOUT / PREREQ / NO-RUN / `#` 开头的元信息行**都不算红**，
-#   其余（真红）≥1 就退 1。
-# ⚠️ 口径与上面「需看的份数」**刻意不同**：那一行按 2026-10-04 的口径把 NO-RUN 也算进去
-# （「量具没起来」该让人看），而**退出码只认真红** —— 「要人看」与「判失败」是两件事。
-NEED_REVIEW="$(batch_lines | grep -cvE '^(0 |SKIP |TIMEOUT |PREREQ |NO-RUN |# )' || true)"
-if [ "${NEED_REVIEW:-0}" -gt 0 ]; then
-  echo "[runtime-probes][FAIL] 本批有 ${NEED_REVIEW} 份真红（上面那张表）—— 退出码按真红判" >&2
-  exit 1
-fi
+# 明确传播三态：完整通过0、断言或执行失败1、任何未验证/空批2。
+summarize_status "$OUT"
+exit $?
