@@ -8,18 +8,19 @@
  * "数据装对了、请求发对了"，而**面板有没有把页签画出来、点了页签会不会切**只有真跑才知道 ——
  * 这个仓库已经栽过一次（`[...map.values()]` 被 SWC 编成不展开迭代器，节点测试全绿、面板整个画不出来）。
  *
- * <p><b>本探针不验"榜上真有人"那一屏</b>，刻意如此：dev 服上的新号没有战力上报也没有击杀
- * （要有得练兵/上阵/真打一仗），而"给探针发兵"正是被禁止的作弊端点。所以这里验的是
- * 页签条、切换、空态与翻页按钮的状态 —— 行渲染那条留给真服上来之后的人工/真机复核。
+ * <p>新号不代表全服空榜。每次点击绑定该请求的真实响应，按返回的空榜/非空榜核对可见行；
+ * 非空时逐行核名次、名称和榜值，不造击杀、不改榜。页面仍验证页签、快照与翻页门禁。
  *
  * <p>端口用环境变量可换（RANK_PROBE_PORT / RANK_BACKEND）：两个会话同时跑量具时，
  * 撞端口会表现为"读到别人的产物"，而那看起来像产物坏了。
  */
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
 import { hideGuideOverlay } from './lib/guide-overlay.mjs'
+import { retainResponseWait } from './lib/runtime-response-wait.mjs'
+import { assertRankBoardEvidence, matchesRankBoardResponse } from './lib/rank-board-evidence.mjs'
 
 const OUT = process.env.RANK_VERIFY_OUT ?? path.resolve(process.cwd(), 'client/build/rank-verify')
 mkdirSync(OUT, { recursive: true })
@@ -118,6 +119,7 @@ const LABEL_SNAPSHOT = `(() => {
   const out = []
   const ys = []
   const walk = (node, dy) => {
+    if (!node.activeInHierarchy) return
     const y = dy + node.getPosition().y
     const label = node.getComponent('cc.Label')
     if (label && label.string) {
@@ -127,10 +129,22 @@ const LABEL_SNAPSHOT = `(() => {
     for (const child of node.children) walk(child, y)
   }
   walk(panel.node, 0)
+  const rows = panel.node.children.filter(n => n.name === 'row' && n.activeInHierarchy).map(node => {
+    const labels = []
+    const visit = n => {
+      if (!n.activeInHierarchy) return
+      const label = n.getComponent('cc.Label')
+      if (label && label.string) labels.push(label.string)
+      n.children.forEach(visit)
+    }
+    visit(node)
+    return { labels, y: node.getWorldPosition().y }
+  })
   const transform = panel.node.getComponent('cc.UITransform')
   return {
     active: panel.node.active,
     labels: out,
+    rows,
     ys,
     halfHeight: transform ? transform.contentSize.height / 2 : -1,
   }
@@ -157,6 +171,38 @@ async function clickTab(key) {
 }
 
 const has = (labels, text) => labels.some((l) => l.includes(text))
+
+/** 先挂响应等待再点击，只认指定后端、当前榜类型的GET，不抓预览源或另一页签旧回执。 */
+async function clickBoard(type) {
+  const pending = retainResponseWait(page.waitForResponse(response => {
+    return matchesRankBoardResponse(response.url(), response.request().method(), type, BACKEND)
+  }, { timeout: 15000 }))
+  let reply = null
+  let snapshot = null
+  let failure = null
+  try {
+    await clickTab(type)
+    const response = await pending
+    reply = { status: response.status(), body: await response.json() }
+    for (let attempt = 0; attempt < 100; attempt++) {
+      snapshot = await readPanel()
+      try {
+        const evidence = assertRankBoardEvidence(reply, type, snapshot)
+        ok(`${type} 本次真实响应与可见榜行一致（${evidence.kind}，${evidence.rowCount}行）`)
+        const data = reply.body.data
+        writeFileSync(path.join(OUT, `rank-${type.toLowerCase()}-evidence.json`), JSON.stringify({
+          status: reply.status, type: data.type, page: data.page, pageSize: data.pageSize,
+          entries: data.entries.map(({rank,name,value}) => ({rank,name,value})), rows: snapshot.rows,
+          evidence, scope: 'same clicked request real response and visible rows; no rank mutation',
+        }, null, 2) + '\n')
+        return { snapshot, reply }
+      } catch (error) { failure = error }
+      await page.waitForTimeout(100)
+    }
+  } catch (error) { failure = error }
+  bad(`${type} 真实响应/可见榜行未确认：${String(failure?.message ?? 'missing response').slice(0,180)}`)
+  return { snapshot: snapshot ?? await readPanel() ?? {labels:[],rows:[],ys:[],halfHeight:-1}, reply }
+}
 
 /**
  * 内容有没有跑出面板：**每一行文字的纵向位置都要落在面板高度之内**。
@@ -219,12 +265,11 @@ check('明细页不发榜单请求', beforeTabs, 0)
 checkInsidePanel(first, '明细页')
 
 // 切到战力榜：请求发出去、空态说明画出来、页签高亮跟着走
-await clickTab('POWER')
-const power = await readPanel()
+const { snapshot: power, reply: powerReply } = await clickBoard('POWER')
 check('切到战力榜后发了一次 /rank/list', rankCalls(), 1)
 check('明细页的内容让位（总计那一行不在了）', has(power.labels, '总计'), false)
-check('空榜有说明（"这个榜还没有人"）', has(power.labels, '这个榜还没有人'), true)
-check('未上榜有下一步指引', has(power.labels, '还没有上榜') || has(power.labels, '还没有分数'), true)
+if (powerReply?.body?.data?.myRank === null)
+  check('未上榜有下一步指引', has(power.labels, '还没有上榜') || has(power.labels, '还没有分数'), true)
 check('页号画出来了', has(power.labels, '第 1 页'), true)
 check('翻页按钮画出来了', has(power.labels, '上一页') && has(power.labels, '下一页'), true)
 checkInsidePanel(power, '战力榜')
@@ -293,25 +338,24 @@ check('第 1 页的「上一页」按钮点得到', prevHit, true)
 check('第 1 页点「上一页」不发请求（canPrev=false 时按钮不吃触摸）', rankCalls(), beforePrev)
 
 // 换一张榜：页签高亮与请求的 type 都要跟着走
-await clickTab('KILL')
-const kill = await readPanel()
+const { snapshot: kill } = await clickBoard('KILL')
 check('切到击杀榜后 /rank/list 的次数', rankCalls(), 2)
-check('击杀榜那一屏也画出来了（"这个榜还没有人"）', has(kill.labels, '这个榜还没有人'), true)
 checkInsidePanel(kill, '击杀榜')
+await page.screenshot({ path: path.join(OUT, 'rank-board-kill.png') })
+console.log(`  截图（击杀榜实际内容）：${path.join(OUT, 'rank-board-kill.png')}`)
 
 // 国战榜（V18 第五张榜，B13 承载 3b-2 的客户端承接）。三条判据各挡一种"看着绿其实没接上"：
 // ① 点页签真的按 type=WAR 拉了一次 —— 挡"页签画了但回调还指着上一张榜"；
 // ② 空榜说明里带着"一场仗打完那一刻"那一句 —— 挡"刚宣完战就点开的人把空榜读成功能没生效"，
 //    这一句是**只有这张榜才有**的文案，所以它同时也是"画的是国战榜而不是别的榜"的证据；
 // ③ 屏上不出现内部标识原文 WAR —— 本仓红线（裸 id 不许印给玩家），静态黑话门看不见运行期插值。
-await clickTab('WAR')
-const war = await readPanel()
+const { snapshot: war, reply: warReply } = await clickBoard('WAR')
 check('切到国战榜后又发了一次 /rank/list', rankCalls(), 3)
 check('那一次请求的 type 真的是 WAR',
   requests.filter((u) => u.includes('/rank/list') && u.includes('type=WAR')).length, 1)
-check('国战榜那一屏画出来了（"这个榜还没有人"）', has(war.labels, '这个榜还没有人'), true)
 const warCompact = war.labels.join(' ').replace(/\s+/g, '')
-check('空榜说明写了发分时点（一场仗打完那一刻）', warCompact.includes('一场仗打完那一刻'), true)
+if (warReply?.body?.data?.entries?.length === 0)
+  check('空榜说明写了发分时点（一场仗打完那一刻）', warCompact.includes('一场仗打完那一刻'), true)
 check('国战榜那一屏不出现内部标识原文 WAR',
   /(^|[^A-Za-z])WAR([^A-Za-z]|$)/.test(warCompact), false)
 // 下面两条补的是**量具自己漏掉的那一维**（2026-10-06 实测）：页签与文案都对了，
@@ -319,7 +363,8 @@ check('国战榜那一屏不出现内部标识原文 WAR',
 // 而"我自己那一行"永不高亮 —— 41 项读数全绿，截图一眼看见。
 check('国战榜没有串到组织榜那句提示（它不是联盟/国家的账）',
   warCompact.includes('你所在的联盟'), false)
-check('未上榜说的是自己（玩家维度那一句）', warCompact.includes('你还没有上榜'), true)
+if (warReply?.body?.data?.myRank === null)
+  check('未上榜说的是自己（玩家维度那一句）', warCompact.includes('你还没有上榜'), true)
 // 页签**节点**在不在（节点名是 `tab-WAR`）：文案里出现"国战榜"三个字可能是别处的说明文字，
 // 而这个节点才是入口 —— 缺它的话玩家看得到词、点不进去。
 const warTabNode = await page.evaluate(`(() => {
@@ -331,7 +376,7 @@ const warTabNode = await page.evaluate(`(() => {
 check('国战榜的页签节点真在面板上（点得进去，不只是有这句文案）', warTabNode, true)
 checkInsidePanel(war, '国战榜')
 await page.screenshot({ path: path.join(OUT, 'rank-board-war.png') })
-console.log(`  截图（国战榜空榜）：${path.join(OUT, 'rank-board-war.png')}`)
+console.log(`  截图（国战榜实际内容）：${path.join(OUT, 'rank-board-war.png')}`)
 
 // 明细页来回切：不重复发榜请求
 const beforeBack = rankCalls()

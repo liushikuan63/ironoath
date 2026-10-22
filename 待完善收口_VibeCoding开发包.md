@@ -8137,3 +8137,6 @@ TEST_EXIT=0
 
 
 | PVP 在途战损不再双扣城内余兵 #2369 | 本格原子本地提交，未推送 | 出征预扣后，攻城攻方/拦截双方仅March扣损，真实城防仍扣Army；医院/CAS/Uncertain隔离保留。攻城先红2条100→0/400→106，review采集先红2条400→24/26；最终61定向绿，check51/tools57/build主3134+balance7/client1413全零红错跳，旧移包XML1份排除；中间build不当最终 | 最终JARac2f6bb7…6883b0/48cfg普通1×自有Mongo真实HTTP攻城+采集拦截，有医院/余兵/战报及归队守恒，无改时钟/无战果mock；兵力医院城市为夹具。9探针8过、rank首复跑均42过1失败、batchEXIT1，无未验；KILL榜实际4条249/173/167/103而旧量具断言空榜，不称全绿。review无P1/P2，复用无漂移Cocos；D:/tmp/ironoath-2369-receipt.json、http-reserve.json、rank-nonempty.json、exits.txt | 下一#2370立即修rank非空榜判据，原红账保留；自有PID48888/8523和Mongo库及owner保留待复用，不报清理。非战略成员医院分摊，历史损失不回填；真实攻占/全灭/医院战报/围城/全国收益/奖励未完，NPC及要塞幅度待答。原库不写，5000无准入不跑，不推 |
+
+
+| 榜单量具真实响应与可见行证据 #2370 | 本格原子本地提交，未推送 | 点击前绑定实际后端/GET/榜类型，核空/非空、逐行名次名称榜值和世界y次序；旧rank2次42过1失败原账保留，新版错误主机37过3红已修；仅反转可见行10跑1红后10绿，check51/tools67/client1413零红错跳，review无P1/P2 | 原Mongo非空43/0、新自有memory空榜43/0，4条249/173/167/103不删不改；非空图SHA51eb6453…d0397未变复用已看观察，空榜新图已看。编译输入无漂移，复用#2369JAR及#2364 Cocos，不称新Maven/Cocos构建；原8相关探针证据复用，原batchEXIT1保留。D:/tmp/ironoath-2370-receipt.json、rank-populated-final、rank-empty | 截图已证非空行名前缀横向溢出，下一2371加边界反证并修左右锚点/列宽，未验收整体布局；自有Mongo48888/8523及memory56100/8527和原击杀数据保留，不报清理。实际B13链仍未完，5000无新准入不跑、不推 |
