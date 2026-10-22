@@ -362,3 +362,5 @@ PVP 战损的兵力来源（#2369）：出征时 Army 已预扣，攻城攻方�
 B13 多方争夺锁（#2372）：内部需要同时保护两支集结时，从 `SocialAppService.runRalliesDepartureLocked` 外层一次申报完整 ID 集合，不要在旧单集结/目标锁内追加另一方。锁顺序是国家 ID 排序去重、集结 ID 排序去重、最后目标；scope/group 改变只在释放全部旧锁后有限重试。原单方接口委托此边界并保留旧结清恢复。同 PlayerLock 身份的国家门面共享线程持有集，允许同集/子集重入而拒绝扩张；集合不能缺失或靠不存在的集结推定国家。此 API 未替代真实战斗计划、归属 CAS 或伤兵/退款幂等。
 
 B13成员战损（#2373）：`GarrisonLossAllocation.plan(currentMembers, actualLosses)` 接受当前兵权与已按unitId展开的真实损失；`withWounded` 接受同阶总损失中的伤兵，返回逐成员伤兵/阵亡，不负责医院。`March.applyLosses` 驻军路径复用计划的survivorsByPlayer；后续冻结战果须使用同一lossesByPlayer，不得按原出兵比例另算。输入过量/无效/溢出失败不改输入，空成员身份保留；全灭后的March移除、Army收容回执与战报仍须在目标操作链集成。测试：`mvn -f server/pom.xml -pl game-core -am -Dtest=GarrisonLossAllocationTest,StrategicGarrisonTest,TierSplitTest -Dsurefire.failIfNoSpecifiedTests=false test`（先按本仓env.sh使用JDK17）。
+
+B13单方冻结战果（#2374）：`BattleArmyFactory.freezeStrategicCasualties(march, marchVersion, rally, result, side, hospitalCapacities)`只构造不可变账务载荷，不写Army/归属。调用方须绑定原战斗输入和配置/英雄、真实医院容量与目标操作权；该方raw结果必须未预扣组医院溢出。载荷存成员原结果，构造/JSON解码验守恒而不重分；伤兵优先级用`woundUnitOrder`显式列表保存并参与相等判断，Map顺序单独不足。当前数据模型尚未接入Mongo目标操作槽，不可当旧撤防迁移或真实攻占已验。相关测试`StrategicRallyCasualtiesTest`区分真实simulate与显式账务夹具；零兵幸存结果只是计划数据，不会创建零兵March。

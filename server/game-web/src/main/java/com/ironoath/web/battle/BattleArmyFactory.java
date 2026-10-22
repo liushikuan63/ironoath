@@ -14,6 +14,10 @@ import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.ConfigException;
 import com.ironoath.config.cfg.UnitCfg;
 import com.ironoath.core.army.TierSplit;
+import com.ironoath.core.army.GarrisonLossAllocation;
+import com.ironoath.core.march.March;
+import com.ironoath.core.social.Rally;
+import com.ironoath.battle.BattleResult;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -306,4 +310,40 @@ public class BattleArmyFactory {
         }
         return losses;
     }
+    /**
+     * 冻结单方战略战损，调用方须已持原国家/集结上下文并冻结真实战斗输入及医院容量。
+     * 本方法只构造载荷，不授予目标结算权，也不向任何Army写伤兵。
+     */
+    public StrategicRallyCasualties freezeStrategicCasualties(March march,long marchVersion,Rally rally,
+            BattleResult result,StrategicRallyCasualties.Side side,Map<String,Long> hospitalCapacities) {
+        if(march==null || marchVersion<0 || side==null)throw new IllegalArgumentException("战略战损行军/版本缺失");
+        var frozen=March.fromSnapshot(march.snapshot());
+        var identity=StrategicRallyCasualties.RallyIdentity.freeze(rally);
+        var types=new LinkedHashMap<String,UnitType>();frozen.units().keySet().forEach(id->types.put(id,unitTypeOf(id)));
+        StrategicRallyCasualties.requirePhysics(frozen.units(),types,result,side);
+        var counts=StrategicRallyCasualties.countsByType(frozen.units(),types);
+        var survivors=side==StrategicRallyCasualties.Side.ATTACKER?result.atkSurvivors():result.defSurvivors();
+        // 既有TierSplit只承诺游戏量级；在调用前拒绝溢出，不让坏冻结输入进入余数循环。
+        frozen.units().forEach((id,n)->Math.multiplyExact(n,counts.get(types.get(id))-survivors.get(types.get(id))));
+        var losses=unfoldLosses(frozen.units(),counts,survivors);
+        long totalDead=side==StrategicRallyCasualties.Side.ATTACKER?result.atkDead():result.defDead();
+        losses.values().forEach(n->Math.multiplyExact(n,totalDead));
+        var dead=TierSplit.splitProportionally(losses,totalDead);
+        var wounds=new LinkedHashMap<String,Long>();
+        losses.forEach((id,n)->{long count=n-dead.getOrDefault(id,0L);if(count>0)wounds.put(id,count);});
+        Map<String,Map<String,Long>> current=new LinkedHashMap<>();
+        if(side==StrategicRallyCasualties.Side.DEFENDER)current.putAll(frozen.garrisonTroopsByPlayer());
+        else identity.participants().forEach((player,p)->current.put(player,p.troops()));
+        var allocation=GarrisonLossAllocation.plan(current,losses);var casualties=allocation.withWounded(wounds);
+        // 医院仍按原战斗兵种顺序收容。核心分配器的字典序仅用于算份额，不能暗改床位优先级。
+        var orderedWounds=new LinkedHashMap<String,Map<String,Long>>();
+        casualties.woundedByPlayer().forEach((player,values)->{
+            var ordered=new LinkedHashMap<String,Long>();
+            wounds.keySet().forEach(id->{long n=values.getOrDefault(id,0L);if(n>0)ordered.put(id,n);});
+            orderedWounds.put(player,ordered);
+        });
+        return new StrategicRallyCasualties(1,side,marchVersion,frozen.snapshot(),identity,result,types,List.copyOf(wounds.keySet()),current,
+                allocation.lossesByPlayer(),allocation.survivorsByPlayer(),orderedWounds,casualties.deadByPlayer(),hospitalCapacities);
+    }
+
 }
