@@ -337,7 +337,7 @@ public class PlayerCityBattleService {
         // ---------- 五、双方战损 ----------
         stage.effectsStarted=true;
         applyAttackerLosses(march, attackerFold, result, attackerHospital, attackerId);
-        applyDefenderLosses(defenderId, defenderTroops, defenderFold, result, defenderHospital);
+        applyDefenderLosses(defenderId, defenderTroops, defenderFold, result, defenderHospital,CasualtySource.CITY);
 
         // ---------- 六、掠夺（只有打赢才搬得走） ----------
         Map<String, Long> plundered = won
@@ -485,9 +485,9 @@ public class PlayerCityBattleService {
         stage.effectsStarted=true;
         applyAttackerLosses(attacker, attackerFold, result, attackerHospital, attackerId);
         applyDefenderLosses(gathererId, new LinkedHashMap<>(gatherer.units()), gathererFold, result,
-                gathererHospital);
-        // 守方的兵是从行军里出的，所以行军上的兵力也要同步扣掉，
-        // 否则它到家时会把已经死掉的兵再入一次账
+                gathererHospital,CasualtySource.MARCH);
+        // 采集守方的现役兵只在行军扣损，城内仅收伤兵；否则会伤及未参战余兵。
+        // 此处必须减掉在途损失，否则到家会把已损失的兵再入账。
         Map<String, Long> gathererLosses = armyFactory.unfoldLosses(gatherer.units(),
                 gathererFold.counts(), result.defSurvivors());
         gatherer.applyLosses(gathererLosses);
@@ -684,18 +684,18 @@ public class PlayerCityBattleService {
         Map<String, Long> losses = armyFactory.unfoldLosses(march.units(), fold.counts(),
                 result.atkSurvivors());
         Map<String, Long> dead = TierSplit.splitProportionally(losses, result.atkDead());
-        admitWounded(attackerId, losses, dead, hospitalCapacity);
+        admitWounded(attackerId, losses, dead, hospitalCapacity, CasualtySource.MARCH);
         march.applyLosses(losses);
     }
 
-    /** 守方战损：损失从城内兵力扣，伤兵进守方医院。守方不在线也要结算（服务器权威）。 */
+    /** 守方战损：来源由调用点明确区分城内守军与在途采集队，伤兵进各自医院。 */
     private void applyDefenderLosses(String defenderId, Map<String, Long> defenderTroops,
                                      BattleArmyFactory.Folded fold, BattleResult result,
-                                     long hospitalCapacity) {
+                                     long hospitalCapacity,CasualtySource source) {
         Map<String, Long> losses = armyFactory.unfoldLosses(defenderTroops, fold.counts(),
                 result.defSurvivors());
         Map<String, Long> dead = TierSplit.splitProportionally(losses, result.defDead());
-        admitWounded(defenderId, losses, dead, hospitalCapacity);
+        admitWounded(defenderId, losses, dead, hospitalCapacity, source);
     }
 
     /**
@@ -719,12 +719,11 @@ public class PlayerCityBattleService {
         return army;
     }
 
-    /**
-     * 扣掉损失、把伤兵送进医院，超容量的部分死亡。攻守双方共用这一份实现 ——
-     * 两条路径各写一遍的话，「伤兵进医院」这件事迟早会只改一边。
-     */
+    private enum CasualtySource { MARCH, CITY }
+
+    /** 双方共用伤兵收容；只有守城损失从城内扣，攻方已在出征时预扣且另从March减员。 */
     private void admitWounded(String playerId, Map<String, Long> losses, Map<String, Long> dead,
-                              long hospitalCapacity) {
+                              long hospitalCapacity, CasualtySource source) {
         Map<String, Long> wounded = new LinkedHashMap<>();
         losses.forEach((unitId, loss) -> {
             long deadCount = dead.getOrDefault(unitId, 0L);
@@ -735,9 +734,8 @@ public class PlayerCityBattleService {
         });
         ArmyState army = loadOrInsertArmy(playerId);
         long version = armies.versionOf(playerId);
-        // 先扣损失再收伤兵：反过来的话伤兵会先被算进「现有兵力」，
-        // 而 deduct 是按现有数量扣的，于是同一批兵被扣两次
-        losses.forEach(army::deduct);
+        // 守方仍先扣损失再收伤兵；进攻行军的损失不能再从未参战的城内余兵扣一份。
+        if(source==CasualtySource.CITY)losses.forEach(army::deduct);
         long overflowDead = wounded.isEmpty() ? 0L : army.admitWounded(wounded, hospitalCapacity);
         armies.save(playerId, army, version);
         if (overflowDead > 0L) {

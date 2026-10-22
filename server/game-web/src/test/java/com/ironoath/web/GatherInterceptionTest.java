@@ -238,6 +238,41 @@ class GatherInterceptionTest {
         assertThat(marches.activeCountOf(attacker)).as("被拒时不能留下行军").isZero();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
+    @DisplayName("拦截双方在途兵承担损失：城内未参战余兵不变，医院及归队守恒")
+    void interceptionNeverDeductsEitherPlayersUnsentReserve(boolean hospital) {
+        Pair p=pairWithGatherer(1_200L,1_200L,300L,400L);
+        if(hospital)for(String player:List.of(p.attacker,p.gatherer)) {
+            long version=cities.versionOf(player);var city=cities.findByPlayerId(player).orElseThrow();
+            city.restoreBuilding(new com.ironoath.core.city.BuildingInstance("owned-reserve-hospital","hospital",1,4,4));
+            cities.save(player,city,version);
+        }
+        assertThat(armies.findByPlayerId(p.attacker).orElseThrow().countOf(UNIT)).isEqualTo(300L);
+        assertThat(armies.findByPlayerId(p.gatherer).orElseThrow().countOf(UNIT)).isEqualTo(400L);
+        arriveAndProcess(p.attackerMarchId);
+        var attack=marches.findById(p.attackerMarchId).orElseThrow();
+        var gather=marches.findById(p.gathererMarchId).orElseThrow();
+        assertThat(attack.status()).isEqualTo(March.Status.RETURNING);
+        assertThat(gather.status()).isEqualTo(March.Status.RETURNING);
+        assertThat(attack.totalUnits()).isLessThan(1_200L);assertThat(gather.totalUnits()).isLessThan(1_200L);
+        assertThat(armies.findByPlayerId(p.attacker).orElseThrow().countOf(UNIT)).as("拦截者城内余兵不再扣一份").isEqualTo(300L);
+        assertThat(armies.findByPlayerId(p.gatherer).orElseThrow().countOf(UNIT)).as("采集守方的兵也已预扣，不能扣城内余兵").isEqualTo(400L);
+        var before=new java.util.LinkedHashMap<String,Map<String,Long>>();
+        for(String player:List.of(p.attacker,p.gatherer)) {
+            var wounded=armies.findByPlayerId(player).orElseThrow().wounded();before.put(player,Map.copyOf(wounded));
+            if(hospital)assertThat(wounded.values().stream().mapToLong(Long::longValue).sum()).isPositive();
+            else assertThat(wounded).isEmpty();
+        }
+        long at=Math.max(attack.returnArriveAt(),gather.returnArriveAt())+1L;
+        marchAppService.processDue(p.attacker,at);marchAppService.processDue(p.gatherer,at);
+        assertThat(marches.findById(p.attackerMarchId)).isEmpty();assertThat(marches.findById(p.gathererMarchId)).isEmpty();
+        assertThat(armies.findByPlayerId(p.attacker).orElseThrow().countOf(UNIT)).isEqualTo(300L+attack.totalUnits());
+        assertThat(armies.findByPlayerId(p.gatherer).orElseThrow().countOf(UNIT)).isEqualTo(400L+gather.totalUnits());
+        marchAppService.processDue(p.attacker,at+1L);
+        for(String player:before.keySet())assertThat(armies.findByPlayerId(player).orElseThrow().wounded()).isEqualTo(before.get(player));
+    }
+
     // ---------- 夹具 ----------
 
     private record Pair(String attacker, String gatherer, String attackerMarchId, String gathererMarchId) {
@@ -250,9 +285,13 @@ class GatherInterceptionTest {
      * 服务端不跑定时器，测试也不 sleep（与行军到期的推进手法一致）。
      */
     private Pair pairWithGatherer(long attackerTroops, long gathererTroops) {
+        return pairWithGatherer(attackerTroops,gathererTroops,0L,0L);
+    }
+
+    private Pair pairWithGatherer(long attackerTroops,long gathererTroops,long attackerReserve,long gathererReserve) {
         String gatherer = newPlayer();
         Coord gathererHome = worldAppService.homeOf(gatherer);
-        giveTroops(gatherer, gathererTroops);
+        giveTroops(gatherer, Math.addExact(gathererTroops,gathererReserve));
         liftProtection(gatherer);
         powerRefreshService.refresh(gatherer);
         Coord node = findResourceNode(gathererHome);
@@ -263,7 +302,7 @@ class GatherInterceptionTest {
                 .as("夹具前提：守方必须处于采集中").isEqualTo(March.Status.GATHERING);
 
         String attacker = newPlayer();
-        giveTroops(attacker, attackerTroops);
+        giveTroops(attacker, Math.addExact(attackerTroops,attackerReserve));
         liftProtection(attacker);
         powerRefreshService.refresh(attacker);
         // 拦截的出征校验要求「那一刻确实有人在采集」，所以必须在守方就位之后再出发

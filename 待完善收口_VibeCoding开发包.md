@@ -8134,3 +8134,6 @@ TEST_EXIT=0
 
 
 | B13 实际驻军可恢复整支撤防 #2368 | 本格原子本地提交，未推送 | 保国EMPTY，原计划冻结；March→owner→queue→completed，未完成禁止归队/换代次；回执先查且不复活。身份11跑3红、回退2跑2红、窄窗2跑2错误，去真实到家屏障1跑1红后SHA恢复；最终定向68、check51/tools57、build主3128+balance7/client1413均零红错跳，旧移包XML1份排除；只读复核无P1/P2 | 冻JAR4bd60dae…f358eb/48cfg，普通1×自有Mongo HTTP同键/非主人6006/保国EMPTY；JVM55328→43544后成员返2/3各1凭据、March/due删除、归队后回放无副作用；9相关探针全0且无未验状态，自有库/PID/19端口全清。量具Army基线缺档/漏治疗必填字段失败留档，修自有夹具后过；复用无漂移#2364 Cocos。D:/tmp/ironoath-2368-receipt.json及http-restart.json、barrier-mutant.json、exits.txt | 非真实胜战，真实争夺/全灭恢复/成员战损医院战报/四关围城/全国收益/奖励未完；NPC首败余兵规则与要塞收益幅度待答，候选数值坐标仍TODO(需确认)。原库不写，5000无新准入不跑，不推 |
+
+
+| PVP 在途战损不再双扣城内余兵 #2369 | 本格原子本地提交，未推送 | 出征预扣后，攻城攻方/拦截双方仅March扣损，真实城防仍扣Army；医院/CAS/Uncertain隔离保留。攻城先红2条100→0/400→106，review采集先红2条400→24/26；最终61定向绿，check51/tools57/build主3134+balance7/client1413全零红错跳，旧移包XML1份排除；中间build不当最终 | 最终JARac2f6bb7…6883b0/48cfg普通1×自有Mongo真实HTTP攻城+采集拦截，有医院/余兵/战报及归队守恒，无改时钟/无战果mock；兵力医院城市为夹具。9探针8过、rank首复跑均42过1失败、batchEXIT1，无未验；KILL榜实际4条249/173/167/103而旧量具断言空榜，不称全绿。review无P1/P2，复用无漂移Cocos；D:/tmp/ironoath-2369-receipt.json、http-reserve.json、rank-nonempty.json、exits.txt | 下一#2370立即修rank非空榜判据，原红账保留；自有PID48888/8523和Mongo库及owner保留待复用，不报清理。非战略成员医院分摊，历史损失不回填；真实攻占/全灭/医院战报/围城/全国收益/奖励未完，NPC及要塞幅度待答。原库不写，5000无准入不跑，不推 |

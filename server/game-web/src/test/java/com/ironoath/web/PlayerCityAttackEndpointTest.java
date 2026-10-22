@@ -288,6 +288,36 @@ class PlayerCityAttackEndpointTest {
                 .isZero();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"100,false","400,false","100,true","400,true"})
+    @DisplayName("攻方只派部分兵：真实战损不得再次扣城内留守兵，到家总数按战果守恒")
+    void attackingLossesNeverDeductUnsentCityReserve(long reserve,boolean hospital) {
+        Fixture f=readyPair(1_800L,1_000L);
+        if(hospital) {
+            long version=cities.versionOf(f.attacker);var city=cities.findByPlayerId(f.attacker).orElseThrow();
+            city.restoreBuilding(new com.ironoath.core.city.BuildingInstance("owned-reserve-hospital","hospital",1,4,4));
+            cities.save(f.attacker,city,version);powerRefreshService.refresh(f.attacker);
+        }
+        long sent=1_800L-reserve;
+        String marchId=sendAttack(f.attacker,f.defenderCoord,Map.of("unit_infantry_t1",sent));
+        assertThat(totalTroops(f.attacker)).as("出征已从城内预扣，仅留下未参战部队").isEqualTo(reserve);
+        arriveAndProcess(marchId);
+        var returning=marches.findById(marchId).orElseThrow();
+        assertThat(returning.status()).isEqualTo(March.Status.RETURNING);
+        assertThat(returning.totalUnits()).as("量具须有真实战损").isLessThan(sent);
+        assertThat(totalTroops(f.attacker)).as("未参战城内兵不承担行军的第二份损失").isEqualTo(reserve);
+        long wounded=totalWounded(f.attacker);
+        if(hospital)assertThat(wounded).as("医院仍收容本场真实伤兵").isPositive();
+        else assertThat(wounded).isZero();
+        long survivors=returning.totalUnits();
+        marchAppService.processDue(f.attacker,returning.returnArriveAt()+1L);
+        assertThat(marches.findById(marchId)).isEmpty();
+        assertThat(totalTroops(f.attacker)).as("归队=原留守兵+幸存行军兵").isEqualTo(reserve+survivors);
+        marchAppService.processDue(f.attacker,returning.returnArriveAt()+2L);
+        assertThat(totalTroops(f.attacker)).isEqualTo(reserve+survivors);
+        assertThat(totalWounded(f.attacker)).as("到家不重复收容伤兵").isEqualTo(wounded);
+    }
+
     @Test
     @DisplayName("PVP 战报双方各一份：内容同一场，ownerId 不同 —— 被打的人回来必须看得到自己是怎么输的")
     void bothSidesGetTheirOwnReport() {
