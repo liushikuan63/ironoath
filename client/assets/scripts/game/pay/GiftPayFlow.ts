@@ -122,12 +122,24 @@ export class GiftPayFlow {
         '请勿立即重复付款；若已扣款或奖励未到账，请联系客服', minorNotice, true)
     }
     if (paid === 'cancelled') {
+      // 桥的取消回调不等于后端订单 CANCELLED；目前服务端也没有该回调的取消写口。
+      // 先查本人订单，迟到的成功回调若已入账就不能再画「取消」。
+      const status = await this.deps.orderStatus(order.data.orderId)
+      if (status.kind === 'ok') {
+        if (status.data.status === 'SUCCESS') {
+          return this.successView(status.data, minorNotice)
+        }
+        if (status.data.status === 'FAILED') {
+          return failed('支付未成功',
+            '当前订单未确认付款；如看到扣款或奖励未到账，请联系客服', minorNotice, true)
+        }
+      }
       return {
         phase: 'cancelled',
-        title: '已取消支付',
-        detail: '已退出支付流程；如看到扣款或权益未到账，请通过设置页联系客服',
+        title: '支付流程已退出',
+        detail: '订单状态待确认，请勿立即重复付款；如看到扣款或奖励未到账，请联系客服',
         rewards: [],
-        showSupport: false,
+        showSupport: true,
         minorNotice,
       }
     }

@@ -110,14 +110,46 @@ test('retryQueued=true 同样走「发货处理中」', async () => {
 })
 
 test('支付桥报告取消时不凭客户端回调断言未扣款', async () => {
-  const h = harness({ payment: 'cancelled' })
+  const h = harness({
+    payment: 'cancelled',
+    statuses: [okOutcome<OrderStatusResp>({ status: 'PENDING', rewards: [], retryQueued: null })],
+  })
 
   const view = await h.flow.buy('gift_stuck_supply')
 
+  assert.equal(h.orderStatusCalls.length, 1, '取消回调仍要查本人订单，不能当成服务端取消凭据')
   assert.equal(view.phase, 'cancelled')
-  assert.doesNotMatch(view.detail ?? '', /没有扣款|已到账/,
+  assert.doesNotMatch(view.detail ?? '', /没有扣款|已到账|订单已取消/,
     '取消回调也不代替服务端订单状态')
   assert.match(view.detail ?? '', /客服/, '有扣款争议时仍能找到处理入口')
+  assert.equal(view.showSupport, true)
+})
+
+test('支付桥报告取消但本人订单已到账时，以服务端奖励为准', async () => {
+  const h = harness({
+    payment: 'cancelled',
+    statuses: [success([{ type: 'RESOURCE', id: 'GOLD', count: 180 }])],
+  })
+
+  const view = await h.flow.buy('gift_stuck_supply')
+
+  assert.equal(h.orderStatusCalls.length, 1)
+  assert.equal(view.phase, 'delivered')
+  assert.equal(view.rewards[0]?.count, 180)
+})
+
+test('取消回调后的查单弱网仍给客服入口，不把未知当作已取消订单', async () => {
+  const h = harness({
+    payment: 'cancelled',
+    statuses: [{ kind: 'network', message: 'fetch failed', queued: false, requestId: null }],
+  })
+
+  const view = await h.flow.buy('gift_stuck_supply')
+
+  assert.equal(h.orderStatusCalls.length, 1)
+  assert.equal(view.phase, 'cancelled')
+  assert.equal(view.showSupport, true)
+  assert.match(view.detail ?? '', /订单状态|待确认/)
 })
 
 test('浏览器/编辑器（拉不起支付）⇒ 明确说清是环境限制，不是死按钮', async () => {
@@ -263,6 +295,7 @@ test('未成年提示：四种结局都带着它（它与支付成败无关—�
   const cancelled = await harness({
     createOrder: orderWithNotice(MINOR_NOTICE),
     payment: 'cancelled',
+    statuses: [okOutcome<OrderStatusResp>({ status: 'PENDING', rewards: [], retryQueued: null })],
   }).flow.buy('gift_stuck_supply')
   const payFailed = await harness({
     createOrder: orderWithNotice(MINOR_NOTICE),
