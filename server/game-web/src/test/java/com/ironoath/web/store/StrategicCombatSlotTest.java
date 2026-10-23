@@ -42,7 +42,20 @@ class StrategicCombatSlotTest {
         return battle(seed,playerDefender,false);
     }
     static CapturedStrategicBattle battle(long seed,boolean playerDefender,boolean hospital) {
+        return battle(seed,playerDefender,hospital,false);
+    }
+    static CapturedStrategicBattle battle(long seed,boolean playerDefender,boolean hospital,boolean forceDraw)throws RuntimeException {
         var cfg=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));var social=mock(SocialStore.class);
+        if(forceDraw)try {
+            var root=Path.of("").toAbsolutePath();while(root!=null && !java.nio.file.Files.isRegularFile(root.resolve("contract/config/global.json")))root=root.getParent();
+            if(root==null)throw new IllegalStateException("owned fixture config root missing");
+            var mapper=new com.fasterxml.jackson.databind.ObjectMapper();var json=mapper.readTree(java.nio.file.Files.readString(root.resolve("contract/config/global.json")));
+            for(var row:json.get("rows")){
+                if(row.get("id").asText().equals("BATTLE_MAX_ROUNDS"))((com.fasterxml.jackson.databind.node.ObjectNode)row).put("value",1);
+                if(row.get("id").asText().equals("BATTLE_DRAW_GAP_RATIO"))((com.fasterxml.jackson.databind.node.ObjectNode)row).put("value","1.0");
+            }
+            cfg.reload("global",com.ironoath.config.model.GlobalCfg.class,json.toString());
+        }catch(java.io.IOException e){throw new IllegalStateException(e);}
         var heroes=new HeroBattleMapper(cfg,new HeroStatsService(cfg),new EquipLedgers(mock(InventoryRepository.class),cfg),mock(HeroRepository.class),social);
         var tech=new BattleTechBonuses(new AllianceTechBonuses(social,cfg),new TechEffects(cfg),mock(PlayerRepository.class));
         var prep=new CapturedBattlePreparation(cfg,heroes,tech,new NationPolicyBonuses(cfg,social,mock(NationStore.class),mock(NationLeaders.class),new BattleArmyFactory(cfg)));

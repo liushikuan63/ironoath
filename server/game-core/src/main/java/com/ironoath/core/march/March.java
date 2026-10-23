@@ -389,6 +389,35 @@ public final class March {
         status=Status.STATIONED;
     }
 
+    /**
+     * 消费已冻结的实际成员余兵，不按原出兵比例再分。调用者须持原兵权/版本与目标操作权。
+     * 仅用于有幸存兵的战略战后投影；全灭由持久操作的版本删除意图表达，不制造0兵行军。
+     */
+    public void applyStrategicSurvivors(Map<String,Map<String,Long>> currentOwners,
+                                        Map<String,Map<String,Long>> survivorsByPlayer,long happenedAt,
+                                        boolean remainStationed) {
+        if(targetType!=TargetType.STRATEGIC_TARGET || action!=Action.ATTACK || !isRallyMarch()
+                || (status!=Status.FIGHTING && !(status==Status.STATIONED && hasGarrisonOwnership())))
+            throw new IllegalStateException("只有原战略交战或实际驻军能消费战后余兵");
+        if(happenedAt<arriveAt)throw new IllegalArgumentException("战斗时点不得早于原行军到达");
+        var before=freezeOwners(currentOwners);var survivors=freezeOwners(survivorsByPlayer);
+        if((!hasGarrisonOwnership() && !before.containsKey(playerId)) || !before.keySet().equals(survivors.keySet())
+                || !sumOwners(before).equals(units)
+                || (hasGarrisonOwnership() && !before.equals(garrisonTroopsByPlayer)))
+            throw new IllegalArgumentException("原战略成员兵权与当前行军不一致");
+        for(var member:survivors.entrySet())for(var unit:member.getValue().entrySet())
+            if(unit.getValue()>before.get(member.getKey()).getOrDefault(unit.getKey(),0L))
+                throw new IllegalArgumentException("实际成员余兵超过原兵权或出现新兵种");
+        var total=normalize(sumOwners(survivors),id);
+        if(total.isEmpty())throw new IllegalArgumentException("全灭须使用明确版本删除意图，不能生成0兵行军");
+        // 包括时间溢出在内的所有验证先完成，避免失败后留下半份总兵/成员兵权。
+        Long returnedAt=remainStationed?null:Math.addExact(happenedAt,Math.subtractExact(arriveAt,startAt));
+        units.clear();units.putAll(total);garrisonTroopsByPlayer=survivors;
+        status=remainStationed?Status.STATIONED:Status.RETURNING;
+        returnArriveAt=returnedAt;returnStartAt=remainStationed?null:happenedAt;
+        returnFrom=remainStationed?null:to;gatherStartAt=null;
+    }
+
     /** 开始采集（到达资源点之后）。 */
     public void startGathering(long now) {
         if (status != Status.GATHERING) {

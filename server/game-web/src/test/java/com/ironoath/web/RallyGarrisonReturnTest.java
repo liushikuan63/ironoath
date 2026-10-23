@@ -80,4 +80,21 @@ class RallyGarrisonReturnTest {
                 .isInstanceOf(com.ironoath.common.BizException.class).hasMessageContaining("尚未开放争夺");
         assertThat(armies.findByPlayerId(player)).isEmpty();
     }
+
+    @Test void defeatedFrozenSurvivorsReachTheirActualMemberThroughProductionReturnOnce() {
+        String id="owned-frozen-return-"+UUID.randomUUID(),a=id+"-A",b=id+"-B";
+        var members=new LinkedHashMap<String,Rally.Participant>();members.put(a,new Rally.Participant(a,Map.of(UNIT,1L),List.of()));members.put(b,new Rally.Participant(b,Map.of(UNIT,1L),List.of()));
+        var rally=Rally.restore(id,Rally.Scope.NATION,"N-owned",a,2,2,100,110,members,Rally.Status.PREPARING,null,256,216,"STRATEGIC_TARGET",1);rally.depart(110);social.saveRally(rally,0);
+        assertThat(armies.insertIfAbsent(a,new com.ironoath.core.army.ArmyState())).isTrue();assertThat(armies.insertIfAbsent(b,new com.ironoath.core.army.ArmyState())).isTrue();
+        var original=Map.of(a,Map.of(UNIT,1L),b,Map.of(UNIT,1L));var allocation=com.ironoath.core.army.GarrisonLossAllocation.plan(original,Map.of(UNIT,1L));
+        var march=new March(id+"-march",a,Coord.of(10,10),Coord.of(256,216),100,110,Map.of(UNIT,2L),List.of(),100,1,March.TargetType.STRATEGIC_TARGET,"gate_north",March.Action.ATTACK);
+        march.attachToRally(id);march.arrive(110);march.applyStrategicSurvivors(original,allocation.survivorsByPlayer(),120,false);march.arriveHome(130);
+        ReflectionTestUtils.invokeMethod(service,"returnRallyTroops",march);ReflectionTestUtils.invokeMethod(service,"returnRallyTroops",march);
+        for(String player:List.of(a,b)) {
+            var army=armies.findByPlayerId(player).orElseThrow();long returned=allocation.survivorsByPlayer().get(player).getOrDefault(UNIT,0L);assertThat(army.countOf(UNIT)).isEqualTo(returned);
+            // 既有生产返兵仅为正数credits落退款凭据；0返兵不写，与医院必须确认0伤兵回执的契约不同。
+            assertThat(army.snapshot().rallyRefunds()).hasSize(returned==0?0:1);
+        }
+        assertThat(armies.findByPlayerId(a).orElseThrow().countOf(UNIT)+armies.findByPlayerId(b).orElseThrow().countOf(UNIT)).isEqualTo(1);
+    }
 }
