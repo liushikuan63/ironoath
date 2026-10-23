@@ -39,13 +39,20 @@ class StrategicCombatSlotTest {
         return battle(seed,false);
     }
     static CapturedStrategicBattle battle(long seed,boolean playerDefender) {
+        return battle(seed,playerDefender,false);
+    }
+    static CapturedStrategicBattle battle(long seed,boolean playerDefender,boolean hospital) {
         var cfg=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));var social=mock(SocialStore.class);
         var heroes=new HeroBattleMapper(cfg,new HeroStatsService(cfg),new EquipLedgers(mock(InventoryRepository.class),cfg),mock(HeroRepository.class),social);
         var tech=new BattleTechBonuses(new AllianceTechBonuses(social,cfg),new TechEffects(cfg),mock(PlayerRepository.class));
         var prep=new CapturedBattlePreparation(cfg,heroes,tech,new NationPolicyBonuses(cfg,social,mock(NationStore.class),mock(NationLeaders.class),new BattleArmyFactory(cfg)));
-        var scope=prep.capture(200);var troops=Map.of("unit_infantry_t4",100L);
+        var scope=prep.capture(200);
+        var leaderTroops=hospital&&!playerDefender?Map.of("unit_infantry_t3",50000L,"unit_infantry_t4",50000L):Map.of("unit_infantry_t4",100L);
+        var participants=new LinkedHashMap<String,Rally.Participant>();participants.put("owned-leader",new Rally.Participant("owned-leader",leaderTroops,List.of()));
+        if(hospital&&!playerDefender)participants.put("owned-tiny",new Rally.Participant("owned-tiny",Map.of("unit_infantry_t4",1L),List.of()));
+        var troops=new LinkedHashMap<String,Long>();participants.values().forEach(p->p.troops().forEach((id,n)->troops.merge(id,n,Math::addExact)));
         var rally=Rally.restore("owned-combat-rally",Rally.Scope.NATION,"owned-N","owned-leader",2,1,100,110,
-                Map.of("owned-leader",new Rally.Participant("owned-leader",troops,List.of())),Rally.Status.PREPARING,null,256,216,"STRATEGIC_TARGET",1);
+                participants,Rally.Status.PREPARING,null,256,216,"STRATEGIC_TARGET",1);
         rally.depart(110);
         var march=new March("owned-combat-march","owned-leader",Coord.of(10,10),Coord.of(256,216),110,120,troops,List.of(),1000,1,March.TargetType.STRATEGIC_TARGET,"gate_north",March.Action.ATTACK);
         march.attachToRally(rally.rallyId());march.arrive(120);
@@ -64,8 +71,11 @@ class StrategicCombatSlotTest {
         var reader=new StrategicTargetDefender(cfg,owners,marches,social,new InMemoryNeutralTargetGarrisonStore());
         var simulation=scope.simulateTarget(attacker,scope.readTarget(reader,"gate_north"),playerDefender?PlayerTech.empty():null,defenderRally,TerrainType.PLAIN,seed,BattleModifier.none(),BattleModifier.none());
         var save=mock(PlayerSave.class);when(save.tech()).thenReturn(PlayerTech.empty());
-        var hospitals=scope.prepareHospitals(Map.of("owned-leader",new CapturedBattlePreparation.MemberHospital(mock(CityState.class),save)));
-        var defenderHospitals=playerDefender?scope.prepareHospitals(Map.of("owned-defender",new CapturedBattlePreparation.MemberHospital(mock(CityState.class),save))):null;
+        var city=mock(CityState.class);
+        if(hospital){var building=mock(com.ironoath.core.city.BuildingInstance.class);when(building.configId()).thenReturn("hospital");when(building.level()).thenReturn(1);when(city.buildings()).thenReturn(List.of(building));}
+        var member=new CapturedBattlePreparation.MemberHospital(city,save);var members=new LinkedHashMap<String,CapturedBattlePreparation.MemberHospital>();participants.keySet().forEach(id->members.put(id,member));
+        var hospitals=scope.prepareHospitals(members);
+        var defenderHospitals=playerDefender?scope.prepareHospitals(Map.of("owned-defender",member)):null;
         return scope.freezeTargetBattle(simulation,hospitals,defenderHospitals);
     }
 
