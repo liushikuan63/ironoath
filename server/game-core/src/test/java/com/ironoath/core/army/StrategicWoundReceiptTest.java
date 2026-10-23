@@ -12,7 +12,7 @@ class StrategicWoundReceiptTest {
         army.admitWounded(Map.of("unit_infantry_t4",3L),10);
         Map<String,Long> incoming=new LinkedHashMap<>();incoming.put("unit_infantry_t4",6L);incoming.put("unit_cavalry_t4",4L);
         var receipt=army.admitStrategicWoundedOnce("gate_north",1,"battle-one",incoming,10);
-        assertThat(receipt.admitted()).hasSize(2).containsEntry("unit_infantry_t4",6L).containsEntry("unit_cavalry_t4",1L);
+        assertThat(receipt.admitted()).hasSize(2).containsEntry("unit_infantry_t4",4L).containsEntry("unit_cavalry_t4",3L);
         assertThat(receipt.requested().keySet()).containsExactly("unit_infantry_t4","unit_cavalry_t4");
         assertThat(receipt.overflowDead()).isEqualTo(3L);
         assertThat(army.totalWounded()).isEqualTo(10L);assertThat(army.totalTroops()).isEqualTo(100L);

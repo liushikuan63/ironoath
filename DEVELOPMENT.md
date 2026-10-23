@@ -366,3 +366,5 @@ B13成员战损（#2373）：`GarrisonLossAllocation.plan(currentMembers, actual
 B13单方冻结战果（#2374）：`BattleArmyFactory.freezeStrategicCasualties(march, marchVersion, rally, result, side, hospitalCapacities)`只构造不可变账务载荷，不写Army/归属。调用方须绑定原战斗输入和配置/英雄、真实医院容量与目标操作权；该方raw结果必须未预扣组医院溢出。载荷存成员原结果，构造/JSON解码验守恒而不重分；伤兵优先级用`woundUnitOrder`显式列表保存并参与相等判断，Map顺序单独不足。当前数据模型尚未接入Mongo目标操作槽，不可当旧撤防迁移或真实攻占已验。相关测试`StrategicRallyCasualtiesTest`区分真实simulate与显式账务夹具；零兵幸存结果只是计划数据，不会创建零兵March。
 
 B13配置隔离（#2375）：`ConfigRegistry.readOnlySnapshot()`从一次volatile原始表整图读取生成独立视图，深拷贝JSON行/索引、独立global与类型缓存；不取父monitor，拒绝视图reload，rawTable诊断防御拷贝。支持正式reload的发布一致性，不支持任意并发修改原诊断JSON。战略`freezeStrategicCasualties`内部用同一视图查类型/展开损失；未来producer仍须pre-sim用同一视图构造所有战斗输入，不能把已有BattleResult自动当原配置已绑定。`ConfigRegistrySnapshotTest`含私有注册表热更、缓存/JSON隔离、守卫持锁时非阻塞读取、整图并发捕获；所有文件写入只在JUnit拥有的临时目录。
+
+B13战略医院（#2376）：`ArmyState.admitStrategicWoundedOnce`新批次等比例收容，`StrategicWoundReceipt.policy`为PROPORTIONAL_V1；普通admitWounded原顺序不变。嵌套回执旧缺列/null及旧七参Java构造按LEGACY_ORDERED匹配原顺序并重放实际事实，不回算，不做批量回填；未知枚举拒绝读取且不改档。ArmyDocument仍同档保存整个嵌套回执，Spring Data映射新列；TestMongo兼容例必须实际unset/null并重建store验证。治疗会返兵，验证重放守恒应计入已治疗返兵，不把40+7+7误判为重复返兵。目标操作/真实战斗仍须另接，禁止用医院组件测试代替攻占验收。

@@ -103,29 +103,50 @@ public final class ArmyState {
         if(previous!=null) {
             if(sequence==previous.sequence() && operationId.equals(previous.operationId())
                     && hospitalCapacity==previous.hospitalCapacity()
-                    && new java.util.ArrayList<>(requested.entrySet()).equals(
-                            new java.util.ArrayList<>(previous.requested().entrySet())))return previous;
+                    && (previous.policy()==StrategicWoundPolicy.PROPORTIONAL_V1
+                        ? requested.equals(previous.requested())
+                        : new java.util.ArrayList<>(requested.entrySet()).equals(
+                            new java.util.ArrayList<>(previous.requested().entrySet()))))return previous;
             if(sequence<=previous.sequence() || operationId.equals(previous.operationId()))
                 throw new IllegalStateException("战略伤兵旧代次或同操作异内容，不能重新收容");
         }
-        // 普通收容的兵种顺序/容量规则保持唯一实现；在副本上计算，验证失败不留下半份医院。
+        // 新战略批次按本成员伤兵等比例收容；普通医院不变。副本验证后医院/回执一起提交。
         var copy=ArmyState.fromSnapshot(snapshot());
-        long overflow=copy.admitWounded(requested,hospitalCapacity);
+        long overflow=copy.admitStrategicProportionally(requested,hospitalCapacity);
         Map<String,Long> admitted=new LinkedHashMap<>();
         requested.forEach((unit,count)->{
             long n=copy.wounded.getOrDefault(unit,0L)-wounded.getOrDefault(unit,0L);
             if(n>0L)admitted.put(unit,n);
         });
-        var receipt=new StrategicWoundReceipt(targetId,operationId,sequence,requested,admitted,hospitalCapacity,overflow);
+        var receipt=new StrategicWoundReceipt(targetId,operationId,sequence,requested,admitted,hospitalCapacity,overflow,StrategicWoundPolicy.PROPORTIONAL_V1);
         wounded.clear();wounded.putAll(copy.wounded);
         strategicWounds.put(targetId,receipt);
         return receipt;
     }
 
+    /** 缺旧列按最严格的原顺序回放；新策略只决定新批次，不重算历史实际收容。 */
+    public enum StrategicWoundPolicy { LEGACY_ORDERED,PROPORTIONAL_V1 }
+
+    private long admitStrategicProportionally(Map<String,Long> requested,long hospitalCapacity) {
+        long existing=sumWounds(copyWounds(wounded));long incoming=sumWounds(requested);
+        long room=existing>=hospitalCapacity?0L:hospitalCapacity-existing;
+        long amount=Math.min(room,incoming);
+        for(long count:requested.values())Math.multiplyExact(count,amount);
+        var shares=TierSplit.splitProportionally(requested,amount);
+        for(var entry:shares.entrySet())wounded.merge(entry.getKey(),entry.getValue(),Math::addExact);
+        return incoming-amount;
+    }
+
     public record StrategicWoundReceipt(String targetId,String operationId,long sequence,
                                         Map<String,Long> requested,Map<String,Long> admitted,
-                                        long hospitalCapacity,long overflowDead) {
+                                        long hospitalCapacity,long overflowDead,StrategicWoundPolicy policy) {
+        /** 旧Java调用/旧文档回执保原实际结果，不能借新策略重新入院。 */
+        public StrategicWoundReceipt(String targetId,String operationId,long sequence,
+                Map<String,Long> requested,Map<String,Long> admitted,long hospitalCapacity,long overflowDead) {
+            this(targetId,operationId,sequence,requested,admitted,hospitalCapacity,overflowDead,StrategicWoundPolicy.LEGACY_ORDERED);
+        }
         public StrategicWoundReceipt {
+            if(policy==null)policy=StrategicWoundPolicy.LEGACY_ORDERED;
             requireText(targetId,"targetId");requireText(operationId,"operationId");
             if(sequence<1 || hospitalCapacity<0 || overflowDead<0)throw new IllegalArgumentException("战略伤兵凭据无效");
             requested=copyWounds(requested);admitted=copyWounds(admitted);
