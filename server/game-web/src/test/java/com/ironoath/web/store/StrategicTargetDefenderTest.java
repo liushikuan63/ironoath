@@ -29,7 +29,7 @@ class StrategicTargetDefenderTest {
     private final TargetOccupationStore owners=new InMemoryTargetOccupationStore();
     private final MarchRepository marches=new InMemoryMarchStore(32);
     private final SocialStore social=mock(SocialStore.class);
-    private final StrategicTargetDefender service=new StrategicTargetDefender(configs,owners,marches,social);
+    private final StrategicTargetDefender service=new StrategicTargetDefender(configs,owners,marches,social,new com.ironoath.web.store.memory.InMemoryNeutralTargetGarrisonStore());
     private TargetOccupationStore.Snapshot owner(TargetOccupationStore.Garrison garrison,long version,String op) {
         return new TargetOccupationStore.Snapshot("gate_north",WorldGenerator.EntityType.GATE,256,216,
                 "N-owned","验收国",100,op,version,garrison);
@@ -92,7 +92,7 @@ class StrategicTargetDefenderTest {
                 valid.units(),List.of(),1000,1,March.TargetType.STRATEGIC_TARGET,"gate_north",March.Action.ATTACK);
         n.attachToRally(m.rallyId());n.arrive(110);n.holdStrategicVictory(Map.of(n.playerId(),n.units()));separate.insertIfAbsent(n);
         var other=new InMemoryTargetOccupationStore();other.compareAndSet(owner(TargetOccupationStore.Garrison.stationed(n.id()),1,"wrong-nation"),0);
-        assertThatThrownBy(()->new StrategicTargetDefender(configs,other,separate,social).read(target))
+        assertThatThrownBy(()->new StrategicTargetDefender(configs,other,separate,social,new com.ironoath.web.store.memory.InMemoryNeutralTargetGarrisonStore()).read(target))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("国家");
     }
 
@@ -110,10 +110,10 @@ class StrategicTargetDefenderTest {
         owners.compareAndSet(before,0);
         var unstable=spy(owners);
         when(unstable.findByTargetIds(List.of("gate_north"))).thenReturn(Map.of("gate_north",before),Map.of("gate_north",owner(TargetOccupationStore.Garrison.empty(),2,"withdraw")));
-        assertThatThrownBy(()->new StrategicTargetDefender(configs,unstable,marches,social).read(target))
+        assertThatThrownBy(()->new StrategicTargetDefender(configs,unstable,marches,social,new com.ironoath.web.store.memory.InMemoryNeutralTargetGarrisonStore()).read(target))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("已变化");
         var changing=spy(marches);when(changing.versionOf(m.id())).thenReturn(1L,2L);
-        assertThatThrownBy(()->new StrategicTargetDefender(configs,owners,changing,social).read(target))
+        assertThatThrownBy(()->new StrategicTargetDefender(configs,owners,changing,social,new com.ironoath.web.store.memory.InMemoryNeutralTargetGarrisonStore()).read(target))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("已变化");
     }
 
@@ -126,7 +126,7 @@ class StrategicTargetDefenderTest {
             assertThat(mongoOwners.compareAndSet(owner(TargetOccupationStore.Garrison.stationed(source.id()),1,"capture"),0)).isTrue();
             var restarted=new StrategicTargetDefender(configs,
                     new com.ironoath.web.store.mongo.MongoTargetOccupationStore(db.template()),
-                    new com.ironoath.web.store.mongo.MongoMarchStore(db.template(),32),social);
+                    new com.ironoath.web.store.mongo.MongoMarchStore(db.template(),32),social,new com.ironoath.web.store.mongo.MongoNeutralTargetGarrisonStore(db.template()));
             assertThat(restarted.read(target).troops()).containsExactlyEntriesOf(Map.of("unit_infantry_t4",2L));
             assertThat(mongoOwners.compareAndSet(owner(TargetOccupationStore.Garrison.empty(),2,"withdraw-done"),1)).isTrue();
             assertThat(restarted.read(target).troops()).isEmpty();

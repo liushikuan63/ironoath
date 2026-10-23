@@ -368,3 +368,7 @@ B13单方冻结战果（#2374）：`BattleArmyFactory.freezeStrategicCasualties(
 B13配置隔离（#2375）：`ConfigRegistry.readOnlySnapshot()`从一次volatile原始表整图读取生成独立视图，深拷贝JSON行/索引、独立global与类型缓存；不取父monitor，拒绝视图reload，rawTable诊断防御拷贝。支持正式reload的发布一致性，不支持任意并发修改原诊断JSON。战略`freezeStrategicCasualties`内部用同一视图查类型/展开损失；未来producer仍须pre-sim用同一视图构造所有战斗输入，不能把已有BattleResult自动当原配置已绑定。`ConfigRegistrySnapshotTest`含私有注册表热更、缓存/JSON隔离、守卫持锁时非阻塞读取、整图并发捕获；所有文件写入只在JUnit拥有的临时目录。
 
 B13战略医院（#2376）：`ArmyState.admitStrategicWoundedOnce`新批次等比例收容，`StrategicWoundReceipt.policy`为PROPORTIONAL_V1；普通admitWounded原顺序不变。嵌套回执旧缺列/null及旧七参Java构造按LEGACY_ORDERED匹配原顺序并重放实际事实，不回算，不做批量回填；未知枚举拒绝读取且不改档。ArmyDocument仍同档保存整个嵌套回执，Spring Data映射新列；TestMongo兼容例必须实际unset/null并重建store验证。治疗会返兵，验证重放守恒应计入已治疗返兵，不把40+7+7误判为重复返兵。目标操作/真实战斗仍须另接，禁止用医院组件测试代替攻占验收。
+
+B13中立余兵（#2377）：`NeutralTargetGarrisonStore`内存/Mongo双实现，同目标单文档CAS保存原始caps与实际余兵，NEUTRAL空明细和RETIRED终态均不得恢复配置兵。`StrategicTargetDefender`读取/冻结独立状态，启动与world_target重载核锚点，混合归属/有效NPC状态拒绝，Mongo模式存储守卫新增此端口。真实失败战斗写入方与目标统一恢复仍未接，不允许用fixture仓储写入当玩家争夺验收。测试只在TestMongo自有随机库写入；直接读配置原文件的夹具须向上查实际repo根，不能假设Surefire当前目录就是仓库根。旧“无owner就满兵”反证应使三兵余兵用例失败，finally逐字节恢复后必须重跑相关suite覆盖变异编译产物。
+
+审查修复（#2377）：同一world_target同时受WorldAppService归属/操作槽与StrategicTargetDefender中立余兵约束。ConfigRegistry.addReloadGuard使用稳定具名身份：不同身份按注册顺序执行，同名实例替换，两参旧接口继续替换默认槽，任一拒绝阻止发布。两个真实服务/三类持久锚点/两注册顺序/单表与目录热更12例，旧put实现6fail。初次直接累积所有旧回调令活动历史1例在全量测试失败，已保留证据并修成具名接口兼容；补3配置层用例确认同候选/发布前顺序、后到拒绝保旧表与原异常、同名及旧接口替换不移除其他具名守卫，连活动历史共100相关全过。首次独立审查确有1个P2，按有效反证与完整回归修复，未伪称原审无问题或另行重审。

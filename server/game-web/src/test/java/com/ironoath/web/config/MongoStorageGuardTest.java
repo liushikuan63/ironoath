@@ -21,6 +21,16 @@ import org.springframework.mock.env.MockEnvironment;
  * 也必须能拒绝内存实现与缺实现（后者仍然要守）。
  */
 class MongoStorageGuardTest {
+    @Test void neutralGarrisonCannotSilentlyUseMemoryInMongoMode() {
+        try(var context=new org.springframework.context.support.GenericApplicationContext()) {
+            context.getBeanFactory().registerSingleton("neutralTargetGarrisonStore",new com.ironoath.web.store.memory.InMemoryNeutralTargetGarrisonStore());
+            context.refresh();var guard=new MongoStorageGuard();
+            guard.setEnvironment(new MockEnvironment().withProperty("ironoath.storage","mongo"));guard.setApplicationContext(context);
+            org.assertj.core.api.Assertions.assertThatThrownBy(guard::afterSingletonsInstantiated)
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("NeutralTargetGarrisonStore");
+        }
+    }
+
     @Test void targetOperationsCannotSilentlyUseMemoryInMongoMode() {
         try(var context=new org.springframework.context.support.GenericApplicationContext()) {
             context.getBeanFactory().registerSingleton("targetOperationStore",new com.ironoath.web.store.memory.InMemoryTargetOperationStore());

@@ -114,7 +114,7 @@ public class WorldAppService {
         var initialTargets=WorldTargets.from(configs);
         validateOccupationCatalog(initialTargets,occupations.findAll(initialTargets.targets().size()+1));
         validateOperationCatalog(initialTargets,targetOperations);
-        configs.addReloadGuard("world_target",candidate -> {
+        configs.addReloadGuard("world_target","occupation-and-operations",candidate -> {
             var targets=WorldTargets.from(candidate);
             validateOccupationCatalog(targets,occupations.findAll(targets.targets().size()+1));
             validateOperationCatalog(targets,targetOperations);

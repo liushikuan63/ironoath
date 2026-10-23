@@ -14,39 +14,50 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * 战略目标守军的只读战前输入。仅从未占领目标取配置 NPC；已占空兵是零防守，
+ * 战略目标守军的只读战前输入。仅从无中立交战存档的目标取初始NPC；保存后使用真实余兵。
+ * 已占空兵是零防守，退出中立后的归属缺档必须拒绝，
  * 旧档未知或断开的兵权引用必须停止争夺，不用配置守军掩盖资料缺失。
  * 本读取不申请战斗写入权；调用方仍须以冻结的目标/行军版本取得结算归属。
  */
 @Component
 public final class StrategicTargetDefender {
     public record Defender(TargetOccupationStore.Snapshot occupation, Long marchVersion,
-                           March.Snapshot march, Map<String,Long> troops, boolean initialNpc) {
+                           March.Snapshot march, Map<String,Long> troops, boolean initialNpc,
+                           NeutralTargetGarrisonStore.Snapshot neutral) {
         public Defender { troops=Map.copyOf(troops); }
     }
     private final ConfigRegistry configs;
     private final TargetOccupationStore occupations;
     private final MarchRepository marches;
     private final SocialStore social;
+    private final NeutralTargetGarrisonStore neutralGarrisons;
     public StrategicTargetDefender(ConfigRegistry configs,TargetOccupationStore occupations,
-                                   MarchRepository marches,SocialStore social) {
+                                   MarchRepository marches,SocialStore social,NeutralTargetGarrisonStore neutralGarrisons) {
         this.configs=configs;this.occupations=occupations;this.marches=marches;this.social=social;
+        this.neutralGarrisons=Objects.requireNonNull(neutralGarrisons);
+        validateNeutralCatalog(WorldTargets.from(configs));
+        configs.addReloadGuard("world_target","neutral-garrison",candidate->validateNeutralCatalog(WorldTargets.from(candidate)));
     }
 
     public Defender read(WorldTargets.Target target) {
         Objects.requireNonNull(target,"战略目标不得为空");
-        var id=target.definition().id();var owner=owner(id);
+        var id=target.definition().id();var owner=owner(id);var neutral=neutral(id);
+        if(neutral!=null)requireNeutralAnchor(target,neutral);
         if(owner==null) {
-            var initial=new Defender(null,null,null,initialTroops(target),true);
-            requireSameOwner(id,null);return initial;
+            if(neutral!=null && neutral.phase()==NeutralTargetGarrisonStore.Phase.RETIRED)
+                throw new IllegalStateException("目标已退出中立但归属档缺失，拒绝恢复配置守军");
+            var input=new Defender(null,null,null,neutral==null?initialTroops(target):neutral.troops(),neutral==null,neutral);
+            requireSameState(id,null,neutral);return input;
         }
+        if(neutral!=null && neutral.phase()!=NeutralTargetGarrisonStore.Phase.RETIRED)
+            throw new IllegalStateException("目标归属与仍有效的中立守军矛盾，须先恢复原操作");
         if(owner.x()!=target.coord().x() || owner.y()!=target.coord().y()
                 || !owner.kind().name().equals(target.definition().kind().name()))
             throw new IllegalStateException("战略目标归属锚点与配置绑定不一致");
         var ref=owner.garrison();
         if(ref==null)throw new IllegalStateException("已占目标驻军资料未建立，不能推定为空或恢复配置守军");
         if(ref.kind()==TargetOccupationStore.Garrison.Kind.EMPTY) {
-            requireSameOwner(id,owner);return new Defender(owner,null,null,Map.of(),false);
+            requireSameState(id,owner,neutral);return new Defender(owner,null,null,Map.of(),false,neutral);
         }
         long version=marches.versionOf(ref.marchId());
         var march=marches.findById(ref.marchId()).orElseThrow(
@@ -61,8 +72,8 @@ public final class StrategicTargetDefender {
         var frozen=March.fromSnapshot(march.snapshot()).snapshot();
         if(marches.versionOf(ref.marchId())!=version)
             throw new IllegalStateException("实际驻军版本已变化，请重读后再申请战斗");
-        requireSameOwner(id,owner);
-        return new Defender(owner,version,frozen,frozen.units(),false);
+        requireSameState(id,owner,neutral);
+        return new Defender(owner,version,frozen,frozen.units(),false,neutral);
     }
 
     /** 待恢复计划可能已写RETURNING；原集结身份仍须验证，不能因此回退到旧比例/旧成员。 */
@@ -90,8 +101,24 @@ public final class StrategicTargetDefender {
     private TargetOccupationStore.Snapshot owner(String id) {
         return occupations.findByTargetIds(List.of(id)).get(id);
     }
-    private void requireSameOwner(String id,TargetOccupationStore.Snapshot before) {
+    private NeutralTargetGarrisonStore.Snapshot neutral(String id) {
+        return neutralGarrisons.findByTargetIds(List.of(id)).get(id);
+    }
+    private void requireSameState(String id,TargetOccupationStore.Snapshot before,NeutralTargetGarrisonStore.Snapshot neutralBefore) {
         if(!Objects.equals(before,owner(id)))throw new IllegalStateException("目标归属已变化，请重读后再申请战斗");
+        if(!Objects.equals(neutralBefore,neutral(id)))throw new IllegalStateException("中立守军已变化，请重读后再申请战斗");
+    }
+    private void validateNeutralCatalog(WorldTargets targets) {
+        for(var snapshot:neutralGarrisons.findAll(targets.targets().size()+1).values()) {
+            var target=targets.at(com.ironoath.core.world.Coord.of(snapshot.x(),snapshot.y()));
+            if(target==null)throw new IllegalStateException("中立守军目标被移位或移除，须先制定迁移："+snapshot.targetId());
+            requireNeutralAnchor(target,snapshot);
+        }
+    }
+    private void requireNeutralAnchor(WorldTargets.Target target,NeutralTargetGarrisonStore.Snapshot snapshot) {
+        if(!snapshot.targetId().equals(target.definition().id()) || snapshot.x()!=target.coord().x()
+                || snapshot.y()!=target.coord().y() || !snapshot.kind().name().equals(target.definition().kind().name()))
+            throw new IllegalStateException("中立守军目标被移位、改类型或移除，须先制定迁移："+snapshot.targetId());
     }
     private Map<String,Long> initialTroops(WorldTargets.Target target) {
         var row=target.defender();Map<String,Long> troops=new LinkedHashMap<>();

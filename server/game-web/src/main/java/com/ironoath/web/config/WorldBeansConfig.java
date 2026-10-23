@@ -33,6 +33,13 @@ public class WorldBeansConfig {
     @Bean
     @ConditionalOnProperty(name = "ironoath.storage", havingValue = GameProperties.STORAGE_MEMORY,
             matchIfMissing = true)
+    public com.ironoath.web.world.NeutralTargetGarrisonStore neutralTargetGarrisonStore() {
+        return new com.ironoath.web.store.memory.InMemoryNeutralTargetGarrisonStore();
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "ironoath.storage", havingValue = GameProperties.STORAGE_MEMORY,
+            matchIfMissing = true)
     public com.ironoath.web.world.TargetOperationStore targetOperationStore() {
         return new com.ironoath.web.store.memory.InMemoryTargetOperationStore();
     }

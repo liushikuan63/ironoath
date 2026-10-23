@@ -49,7 +49,7 @@ class StrategicGarrisonWithdrawalTest {
             doAnswer(inv->((Supplier<?>)inv.getArgument(1)).get()).when(app).runRallyDepartureLocked(anyString(),any());
         }
         StrategicGarrisonWithdrawal service(){return new StrategicGarrisonWithdrawal(configs,ops,owners,marches,due,
-                new StrategicTargetDefender(configs,owners,marches,social),app,locks);}
+                new StrategicTargetDefender(configs,owners,marches,social,new com.ironoath.web.store.memory.InMemoryNeutralTargetGarrisonStore()),app,locks);}
         March current(){return marches.findById(original.id()).orElseThrow();}
     }
 
