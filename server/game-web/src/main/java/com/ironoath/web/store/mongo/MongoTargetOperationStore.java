@@ -26,7 +26,9 @@ public final class MongoTargetOperationStore implements TargetOperationStore {
         return read(mongo.findById(id,TargetOperationDocument.class,TargetOperationDocument.COLLECTION));
     }
     @Override public Optional<Snapshot> findByOperationId(String op){
-        return read(mongo.findOne(Query.query(Criteria.where("state.plan.operationId").is(op)),
+        if(op==null || op.isBlank())return Optional.empty();
+        return read(mongo.findOne(Query.query(new Criteria().orOperator(Criteria.where("state.plan.operationId").is(op),
+                        Criteria.where("state.combatPlan.operationId").is(op))),
                 TargetOperationDocument.class,TargetOperationDocument.COLLECTION));
     }
     @Override public List<String> pendingTargetIds(Collection<String> ids){

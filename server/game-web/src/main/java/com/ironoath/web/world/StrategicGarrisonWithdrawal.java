@@ -45,10 +45,10 @@ public final class StrategicGarrisonWithdrawal {
     public Optional<March> replay(String playerId,String marchId) {
         var slot=operations.findByOperationId("withdraw:"+marchId).orElse(null);
         if(slot!=null) {
-            requirePlayer(playerId,slot.plan().stationed().playerId());
-            if(!slot.completed())slot=recoverTarget(slot.targetId(),slot.plan().operationId());
-            if(slot!=null && slot.completed() && slot.plan().operationId().equals("withdraw:"+marchId))
-                return Optional.of(March.fromSnapshot(slot.plan().returning()));
+            requirePlayer(playerId,withdrawal(slot).stationed().playerId());
+            if(!slot.completed())slot=recoverTarget(slot.targetId(),slot.operationId());
+            if(slot!=null && slot.completed() && slot.operationId().equals("withdraw:"+marchId))
+                return Optional.of(March.fromSnapshot(withdrawal(slot).returning()));
         }
         // 槽可能已被后续操作替换。只报告还在生命周期内的权威返程，不重新分配代次。
         var current=marches.findById(marchId).orElse(null);
@@ -59,14 +59,14 @@ public final class StrategicGarrisonWithdrawal {
             return social.runRallyDepartureLocked(current.rallyId(),()->withTarget(current.targetId(),()->{
                 var latest=operations.findByTargetId(current.targetId()).orElse(null);
                 if(latest!=null && !latest.completed()) {
-                    if(!sameContext(latest.plan(),current))throw state("目标由另一集结恢复中，请稍后重试");
+                    if(!sameContext(withdrawal(latest),current))throw state("目标由另一集结恢复中，请稍后重试");
                     applyLocked(latest);
                     latest=operations.findByTargetId(current.targetId()).orElseThrow();
                     if(!latest.completed())throw state("撤防尚未确认完成，不能提前返回成功");
                 }
-                if(latest!=null && latest.plan().operationId().equals("withdraw:"+marchId)) {
-                    requirePlayer(playerId,latest.plan().stationed().playerId());
-                    return Optional.of(March.fromSnapshot(latest.plan().returning()));
+                if(latest!=null && latest.operationId().equals("withdraw:"+marchId)) {
+                    requirePlayer(playerId,withdrawal(latest).stationed().playerId());
+                    return Optional.of(March.fromSnapshot(withdrawal(latest).returning()));
                 }
                 var live=marches.findById(marchId).orElse(null);
                 if(live==null)return Optional.empty();
@@ -92,12 +92,12 @@ public final class StrategicGarrisonWithdrawal {
                 return social.runRallyDepartureLocked(observed.rallyId(),()->withTarget(observed.targetId(),()->{
                     var slot=operations.findByTargetId(observed.targetId()).orElse(null);
                     if(slot!=null && !slot.completed()) {
-                        if(!sameContext(slot.plan(),observed))throw new ContextChanged();
+                        if(!sameContext(withdrawal(slot),observed))throw new ContextChanged();
                         applyLocked(slot);
                         slot=operations.findByTargetId(observed.targetId()).orElseThrow();
                     }
-                    if(slot!=null && slot.plan().operationId().equals("withdraw:"+marchId) && slot.completed())
-                        return March.fromSnapshot(slot.plan().returning());
+                    if(slot!=null && slot.operationId().equals("withdraw:"+marchId) && slot.completed())
+                        return March.fromSnapshot(withdrawal(slot).returning());
                     var latest=requireOwn(playerId,marchId);
                     if(latest.status()==March.Status.RETURNING){requireDetachedReturning(latest);return latest;}
                     var target=requireTarget(latest.targetId());
@@ -106,7 +106,7 @@ public final class StrategicGarrisonWithdrawal {
                         throw state("该队伍不是当前目标的实际驻军");
                     requirePlayer(playerId,defender.march().playerId());
                     long version=slot==null?0:slot.version();
-                    long sequence=slot==null?1:Math.addExact(slot.plan().sequence(),1);
+                    long sequence=slot==null?1:Math.addExact(slot.sequence(),1);
                     var plan=TargetOperationStore.WithdrawalPlan.create(defender.occupation(),
                             March.fromSnapshot(defender.march()),defender.marchVersion(),sequence,now);
                     var active=new TargetOperationStore.Snapshot(plan.targetId(),Math.addExact(version,1),false,plan);
@@ -138,7 +138,7 @@ public final class StrategicGarrisonWithdrawal {
         return withTarget(observed.targetId(),()->{
             var slot=operations.findByTargetId(observed.targetId()).orElse(null);
             if(slot!=null && !slot.completed()) {
-                if(!sameContext(slot.plan(),observed))throw state("目标由另一集结恢复中，请稍后重试");
+                if(!sameContext(withdrawal(slot),observed))throw state("目标由另一集结恢复中，请稍后重试");
                 applyLocked(slot);
             }
             var confirmed=operations.findByTargetId(observed.targetId()).orElse(null);
@@ -153,16 +153,16 @@ public final class StrategicGarrisonWithdrawal {
     private TargetOperationStore.Snapshot recoverTarget(String target,String requiredOperation) {
         for(int attempt=0;attempt<2;attempt++) {
             var observed=operations.findByTargetId(target).orElse(null);
-            if(observed==null || (requiredOperation!=null && !requiredOperation.equals(observed.plan().operationId())))return null;
+            if(observed==null || (requiredOperation!=null && !requiredOperation.equals(observed.operationId())))return null;
             if(observed.completed())return observed;
             try {
-                return social.runRallyDepartureLocked(observed.plan().stationed().rallyId(),()->withTarget(target,()->{
+                return social.runRallyDepartureLocked(withdrawal(observed).stationed().rallyId(),()->withTarget(target,()->{
                     var latest=operations.findByTargetId(target).orElseThrow(ContextChanged::new);
-                    if(!sameContext(observed.plan(),latest.plan()))throw new ContextChanged();
-                    if(requiredOperation!=null && !requiredOperation.equals(latest.plan().operationId()))return null;
+                    if(!sameContext(withdrawal(observed),withdrawal(latest)))throw new ContextChanged();
+                    if(requiredOperation!=null && !requiredOperation.equals(latest.operationId()))return null;
                     applyLocked(latest);
                     var done=operations.findByTargetId(target).orElseThrow();
-                    if(!done.completed() || !done.plan().equals(latest.plan()))throw new ContextChanged();
+                    if(!done.completed() || !withdrawal(done).equals(withdrawal(latest)))throw new ContextChanged();
                     return done;
                 }));
             } catch(ContextChanged changed){ /* 仅在外层重新分派。 */ }
@@ -172,7 +172,7 @@ public final class StrategicGarrisonWithdrawal {
 
     private void applyLocked(TargetOperationStore.Snapshot slot) {
         if(slot.completed())return;
-        var plan=slot.plan();var target=requireTarget(slot.targetId());
+        var plan=withdrawal(slot);var target=requireTarget(slot.targetId());
         if(target.coord().x()!=plan.before().x() || target.coord().y()!=plan.before().y()
                 || !target.definition().kind().name().equals(plan.before().kind().name()))
             throw state("目标计划锚点与当前配置不符，不能移动原部队");
@@ -241,6 +241,11 @@ public final class StrategicGarrisonWithdrawal {
         return locks.runLocked("@strategic-target:"+id,3000,()->{
             targetScope.set(id);try{return action.get();}finally{if(prior==null)targetScope.remove();else targetScope.set(prior);}
         });
+    }
+    private static TargetOperationStore.WithdrawalPlan withdrawal(TargetOperationStore.Snapshot slot){
+        if(slot.kind()!=TargetOperationStore.Kind.WITHDRAWAL)
+            throw state("战略战斗操作尚未确认恢复，不能按撤防或归队推进");
+        return slot.plan();
     }
     private static boolean sameContext(TargetOperationStore.WithdrawalPlan plan,March march){return plan.stationed().rallyId().equals(march.rallyId());}
     private static boolean sameContext(TargetOperationStore.WithdrawalPlan first,TargetOperationStore.WithdrawalPlan second){

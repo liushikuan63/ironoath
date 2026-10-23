@@ -11,7 +11,8 @@ public final class InMemoryTargetOperationStore implements TargetOperationStore 
     private final ConcurrentHashMap<String,Snapshot> states=new ConcurrentHashMap<>();
     @Override public Optional<Snapshot> findByTargetId(String id){return Optional.ofNullable(states.get(id));}
     @Override public Optional<Snapshot> findByOperationId(String op){
-        return states.values().stream().filter(s->s.plan().operationId().equals(op)).findFirst();
+        if(op==null || op.isBlank())return Optional.empty();
+        return states.values().stream().filter(s->s.operationId().equals(op)).findFirst();
     }
     @Override public List<String> pendingTargetIds(Collection<String> ids){
         return states.values().stream().filter(s->ids.contains(s.targetId()) && !s.completed())

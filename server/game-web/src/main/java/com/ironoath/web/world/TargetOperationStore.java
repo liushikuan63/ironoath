@@ -8,6 +8,17 @@ import java.util.Optional;
 
 /** 单目标当前操作槽。代次不重置；所有持久步骤确认后才能完成并被下一计划替换。 */
 public interface TargetOperationStore {
+    enum Kind { WITHDRAWAL,COMBAT }
+    record Anchor(String targetId,com.ironoath.core.world.WorldGenerator.EntityType kind,int x,int y) {}
+    record CombatPlan(String operationId,long sequence,com.ironoath.web.battle.CapturedStrategicBattle battle) {
+        public CombatPlan {
+            if(sequence<1 || battle==null || !Objects.equals(operationId,"battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion()))
+                throw new IllegalArgumentException("原战斗操作ID/代次与兵权版本不一致");
+        }
+        public static CombatPlan create(com.ironoath.web.battle.CapturedStrategicBattle battle,long sequence) {
+            return new CombatPlan("battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion(),sequence,battle);
+        }
+    }
     record WithdrawalPlan(String operationId,long sequence,long happenedAt,
                           TargetOccupationStore.Snapshot before,TargetOccupationStore.Snapshot after,
                           long marchVersion,March.Snapshot stationed,March.Snapshot returning) {
@@ -43,10 +54,27 @@ public interface TargetOperationStore {
             return new WithdrawalPlan(op,sequence,now,owner,after,marchVersion,before,returned.snapshot());
         }
     }
-    record Snapshot(String targetId,long version,boolean completed,WithdrawalPlan plan) {
+    record Snapshot(String targetId,long version,boolean completed,WithdrawalPlan plan,Kind kind,CombatPlan combatPlan) {
+        /** 旧BSON缺kind/combatPlan时仅在原撤防计划完整存在的情况下归一化，读取不回填。 */
+        public Snapshot(String targetId,long version,boolean completed,WithdrawalPlan plan) {
+            this(targetId,version,completed,plan,Kind.WITHDRAWAL,null);
+        }
         public Snapshot {
-            if(targetId==null || targetId.isBlank() || version<1 || plan==null || !targetId.equals(plan.targetId()))
+            if(kind==null && plan!=null && combatPlan==null)kind=Kind.WITHDRAWAL;
+            if(targetId==null || targetId.isBlank() || version<1 || kind==null
+                    || (kind==Kind.WITHDRAWAL && (plan==null || combatPlan!=null || !targetId.equals(plan.targetId())))
+                    || (kind==Kind.COMBAT && (plan!=null || combatPlan==null || !targetId.equals(combatPlan.battle().target().targetId()))))
                 throw new IllegalArgumentException("目标操作槽与计划绑定无效");
+        }
+        public static Snapshot combat(long version,boolean completed,CombatPlan plan) {
+            return new Snapshot(plan.battle().target().targetId(),version,completed,null,Kind.COMBAT,plan);
+        }
+        public String operationId(){return kind==Kind.WITHDRAWAL?plan.operationId():combatPlan.operationId();}
+        public long sequence(){return kind==Kind.WITHDRAWAL?plan.sequence():combatPlan.sequence();}
+        public long happenedAt(){return kind==Kind.WITHDRAWAL?plan.happenedAt():combatPlan.battle().happenedAt();}
+        public Anchor anchor(){
+            if(kind==Kind.WITHDRAWAL){var b=plan.before();return new Anchor(targetId,b.kind(),b.x(),b.y());}
+            var b=combatPlan.battle().target();return new Anchor(targetId,b.kind(),b.x(),b.y());
         }
     }
     private static March.Snapshot freeze(March.Snapshot source){return March.fromSnapshot(source).snapshot();}
@@ -64,11 +92,12 @@ public interface TargetOperationStore {
             throw new IllegalArgumentException("目标操作版本必须等于原期望版本加一");
     }
     static boolean allowed(Snapshot current,Snapshot next,long expectedVersion){
-        if(current==null)return expectedVersion==0 && !next.completed() && next.plan().sequence()==1;
+        if(current==null)return expectedVersion==0 && !next.completed() && next.sequence()==1;
         if(current.version()!=expectedVersion)return false;
-        if(current.plan().operationId().equals(next.plan().operationId()))
-            return !current.completed() && next.completed() && current.plan().equals(next.plan());
+        if(current.operationId().equals(next.operationId()))
+            return !current.completed() && next.completed() && current.kind()==next.kind()
+                    && Objects.equals(current.plan(),next.plan()) && Objects.equals(current.combatPlan(),next.combatPlan());
         return current.completed() && !next.completed()
-                && next.plan().sequence()==Math.addExact(current.plan().sequence(),1);
+                && next.sequence()==Math.addExact(current.sequence(),1);
     }
 }

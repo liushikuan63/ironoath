@@ -68,6 +68,31 @@ class StrategicGarrisonWithdrawalTest {
     }
 
     @ParameterizedTest @EnumSource(Backend.class)
+    void pendingCombatIsExplicitBarrierBeforeMarchOwnerQueueOrAdvancementWrites(Backend b){
+        var f=new Fixture(b);var pending=TargetOperationStore.Snapshot.combat(1,false,
+                TargetOperationStore.CombatPlan.create(StrategicCombatSlotTest.battle(2380),1));
+        assertThat(f.ops.compareAndSet(pending,0)).isTrue();
+        f.marches=spy(f.marches);f.owners=spy(f.owners);f.due=spy(f.due);var service=f.service();
+        var advanced=new AtomicInteger();
+        assertThatThrownBy(()->service.runMarchLocked(f.original,()->advanced.incrementAndGet()))
+                .isInstanceOf(com.ironoath.common.BizException.class).hasMessageContaining("战斗操作");
+        service.recoverPending();
+        assertThat(advanced.get()).isZero();assertThat(f.ops.findByTargetId("gate_north")).contains(pending);
+        verifyNoInteractions(f.marches,f.owners,f.due,f.app);
+    }
+
+    @ParameterizedTest @EnumSource(Backend.class)
+    void completedCombatAllowsNextRealWithdrawalWithoutReadingItAsWithdrawal(Backend b){
+        var f=new Fixture(b);var plan=TargetOperationStore.CombatPlan.create(StrategicCombatSlotTest.battle(2380),1);
+        assertThat(f.ops.compareAndSet(TargetOperationStore.Snapshot.combat(1,false,plan),0)).isTrue();
+        assertThat(f.ops.compareAndSet(TargetOperationStore.Snapshot.combat(2,true,plan),1)).isTrue();
+        var returned=f.service().recall("owned-leader",f.original.id(),200);
+        assertThat(returned.status()).isEqualTo(March.Status.RETURNING);
+        var slot=f.ops.findByTargetId("gate_north").orElseThrow();assertThat(slot.kind()).isEqualTo(TargetOperationStore.Kind.WITHDRAWAL);
+        assertThat(slot.completed()).isTrue();assertThat(slot.sequence()).isEqualTo(2);assertThat(slot.version()).isEqualTo(4);
+    }
+
+    @ParameterizedTest @EnumSource(Backend.class)
     void failedMarchWriteKeepsOriginalCustodyAndRecoversFromFrozenPlan(Backend b){
         var f=new Fixture(b);var real=f.marches;var broken=spy(real);f.marches=broken;
         var failure=new IllegalStateException("owned before return write");doThrow(failure).when(broken).save(any(March.class),anyLong());

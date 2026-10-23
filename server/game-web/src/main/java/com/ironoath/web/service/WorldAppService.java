@@ -688,7 +688,7 @@ public class WorldAppService {
     private static void validateOperationCatalog(WorldTargets targets,TargetOperationStore operations) {
         for(String id:operations.findAllTargetIds(targets.targets().size()+1)) {
             var slot=operations.findByTargetId(id).orElseThrow(()->new IllegalStateException("目标操作目录缺档"));
-            var anchor=slot.plan().before();var target=targets.at(Coord.of(anchor.x(),anchor.y()));
+            var anchor=slot.anchor();var target=targets.at(Coord.of(anchor.x(),anchor.y()));
             if(target==null || !target.definition().id().equals(id)
                     || !target.definition().kind().name().equals(anchor.kind().name()))
                 throw new IllegalStateException("持久目标操作被移位、改类型或移除，须先制定迁移："+id);

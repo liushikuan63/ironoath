@@ -197,6 +197,24 @@ public final class CapturedBattlePreparation {
             return armies.freezeStrategicCasualtiesFromIdentity(March.fromSnapshot(selected.march),selected.marchVersion,
                     selected.rally,battle.result,side,hospitals.capacities);
         }
+        /** 仅冻结本Scope真实目标战果；写入操作槽及恢复仍需调用者持权，不重查配置或重模拟。 */
+        public CapturedStrategicBattle freezeTargetBattle(Simulation battle,PreparedHospitals attackerHospitals,
+                                                           PreparedHospitals defenderHospitals) {
+            if(battle==null || battle.owner!=this || battle.target()==null)
+                throw new IllegalArgumentException("持久目标载荷必须来自同Scope的真实目标模拟");
+            var attack=freezePlayerCasualties(battle,StrategicRallyCasualties.Side.ATTACKER,attackerHospitals);
+            var original=battle.target();var target=original.target;
+            var facts=new CapturedStrategicBattle.TargetFacts(target.definition().id(),
+                    com.ironoath.core.world.WorldGenerator.EntityType.valueOf(target.definition().kind().name()),
+                    target.coord().x(),target.coord().y(),original.defender);
+            StrategicRallyCasualties defense=null;Map<String,UnitType> types=new LinkedHashMap<>();Map<String,Long> survivors=Map.of();
+            if(battle.defender.march==null) {
+                if(defenderHospitals!=null)throw new IllegalArgumentException("NPC不得伪带玩家医院");
+                original.defender.troops().keySet().forEach(id->types.put(id,armies.unitTypeOf(id)));
+                survivors=npcSurvivors(battle,StrategicRallyCasualties.Side.DEFENDER);
+            } else defense=freezePlayerCasualties(battle,StrategicRallyCasualties.Side.DEFENDER,defenderHospitals);
+            return new CapturedStrategicBattle(1,happenedAt,fingerprint(),facts,battle.input,battle.result,attack,defense,types,survivors);
+        }
         /** 只冻结实际NPC余兵，不决定是否占领/退役，也不把败方幸存者伪记为击杀。 */
         public Map<String,Long> npcSurvivors(Simulation battle,StrategicRallyCasualties.Side side) {
             if(battle==null || battle.owner!=this || side==null)throw new IllegalArgumentException("只能冻结同一捕获视图的NPC原战果");
