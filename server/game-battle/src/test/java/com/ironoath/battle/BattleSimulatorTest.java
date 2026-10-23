@@ -102,6 +102,25 @@ class BattleSimulatorTest {
                 BattleModifier.none(), BattleModifier.none(), t1Stats(), rules(), null);
     }
 
+    @Test void resolvedBattleInputCannotBeRewrittenThroughArmyUnitAccessors() {
+        var original=input(army("owned-attack",1000,400,300,100),army("owned-defend",800,300,300,100),4242,BattleType.SIEGE);
+        var result=BattleSimulator.simulate(original);var attackBefore=new EnumMap<>(original.attacker().units());
+        var defendBefore=new EnumMap<>(original.defender().units());
+        assertThatThrownBy(()->original.attacker().units().put(UnitType.INFANTRY,1L)).isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(()->original.attacker().units().entrySet().iterator().next().setValue(1L)).isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(()->original.defender().units().clear()).isInstanceOf(UnsupportedOperationException.class);
+        assertThat(original.attacker().units()).isEqualTo(attackBefore);assertThat(original.defender().units()).isEqualTo(defendBefore);
+        assertThat(BattleSimulator.simulate(original)).as("原输入与种子仍复算出同一真实战果").isEqualTo(result);
+    }
+
+    @Test void armySnapshotDetachesCallerMapAndKeepsAllUnitTypesInEnumOrder() {
+        var supplied=new EnumMap<UnitType,Long>(UnitType.class);supplied.put(UnitType.INFANTRY,100L);
+        var side=new ArmySide("owned-detached",List.of(),supplied,TechBonus.none(),0,FormationType.STANDARD,100);
+        supplied.put(UnitType.INFANTRY,1L);supplied.put(UnitType.SIEGE,20L);
+        assertThat(side.totalUnits()).isEqualTo(100);assertThat(side.units()).containsEntry(UnitType.SIEGE,0L);
+        assertThat(side.units().keySet()).containsExactly(UnitType.values());
+    }
+
     /** 把战果压成一个可比对的摘要串，用于黄金样本回归。 */
     private static String digest(BattleResult r) {
         StringBuilder sb = new StringBuilder();

@@ -86,7 +86,8 @@ public record ArmySide(
             }
             copy.put(type, count);
         }
-        return copy;
+        // 战前快照会随原输入保存；访问器也不能改兵数，否则同seed无法重放原战果。
+        return java.util.Collections.unmodifiableMap(copy);
     }
 
     /** 站位不得重复：两个武将同 slot 会让技能触发顺序不确定。 */

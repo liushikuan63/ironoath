@@ -372,3 +372,5 @@ B13战略医院（#2376）：`ArmyState.admitStrategicWoundedOnce`新批次等�
 B13中立余兵（#2377）：`NeutralTargetGarrisonStore`内存/Mongo双实现，同目标单文档CAS保存原始caps与实际余兵，NEUTRAL空明细和RETIRED终态均不得恢复配置兵。`StrategicTargetDefender`读取/冻结独立状态，启动与world_target重载核锚点，混合归属/有效NPC状态拒绝，Mongo模式存储守卫新增此端口。真实失败战斗写入方与目标统一恢复仍未接，不允许用fixture仓储写入当玩家争夺验收。测试只在TestMongo自有随机库写入；直接读配置原文件的夹具须向上查实际repo根，不能假设Surefire当前目录就是仓库根。旧“无owner就满兵”反证应使三兵余兵用例失败，finally逐字节恢复后必须重跑相关suite覆盖变异编译产物。
 
 审查修复（#2377）：同一world_target同时受WorldAppService归属/操作槽与StrategicTargetDefender中立余兵约束。ConfigRegistry.addReloadGuard使用稳定具名身份：不同身份按注册顺序执行，同名实例替换，两参旧接口继续替换默认槽，任一拒绝阻止发布。两个真实服务/三类持久锚点/两注册顺序/单表与目录热更12例，旧put实现6fail。初次直接累积所有旧回调令活动历史1例在全量测试失败，已保留证据并修成具名接口兼容；补3配置层用例确认同候选/发布前顺序、后到拒绝保旧表与原异常、同名及旧接口替换不移除其他具名守卫，连活动历史共100相关全过。首次独立审查确有1个P2，按有效反证与完整回归修复，未伪称原审无问题或另行重审。
+
+B13原输入兵数（#2378）：ArmySide.units在EnumMap防御复制后使用Collections.unmodifiableMap，保枚举迭代顺序/四兵种补零；record访问器及entry视图均不得改写已模拟原输入。BattleSimulatorTest新增真实模拟后访问器改兵/同seed复算与外部Map隔离/枚举顺序两例，旧2跑1fail，修复内核54+common62全过。此处没有修改模拟公式或零守军门槛，pre-sim战略完整输入与持久恢复仍待下一格。
