@@ -77,8 +77,11 @@ function paintFrame(node: Node, key: DialogKey, width: number, height: number): 
   graphics.enabled = true
   graphics.clear()
   graphics.fillColor = new Color(...PANEL_FALLBACK)
+  graphics.strokeColor = new Color(...BRONZE_GOLD)
+  graphics.lineWidth = 2
   graphics.roundRect(-width / 2, -height / 2, width, height, 6)
   graphics.fill()
+  graphics.stroke()
 }
 
 function rendererChild(parent: Node, name: string, width: number, height: number): Node {
@@ -112,25 +115,10 @@ function inheritDialogLayer(parent: Node): void {
   parent.children.forEach(inherit)
 }
 
-/** 净区不足以容纳 A 档铜边时画同色薄边；三档位图仍各守自己的消费尺寸。 */
-export function paintCompactDialogFrame(node: Node, width: number, height: number): void {
-  node.getComponent(UITransform)!.setContentSize(width, height)
-  const sprite = node.getComponent(Sprite)
-  if (sprite !== null) sprite.enabled = false
-  const bitmap = node.getChildByName('DialogFrameArt')
-  if (bitmap !== null) bitmap.active = false
-  const previousGraphics = node.getComponent(Graphics)
-  if (previousGraphics !== null) { previousGraphics.clear(); previousGraphics.enabled = false }
-  const vector = rendererChild(node, 'DialogFrameVector', width, height)
-  const graphics = vector.getComponent(Graphics) ?? vector.addComponent(Graphics)
-  graphics.enabled = true
-  graphics.clear()
-  graphics.fillColor = new Color(...IRON_SURFACE)
-  graphics.strokeColor = new Color(...BRONZE_GOLD)
-  graphics.lineWidth = 2
-  graphics.roundRect(-width / 2 + 1, -height / 2 + 1, width - 2, height - 2, CORNER_RADIUS)
-  graphics.fill()
-  graphics.stroke()
+/** 紧凑布局同样使用主题九宫格；尺寸不足时由 Sprite 九宫格守住边角与纹理。 */
+export function paintCompactDialogFrame(node: Node, width: number, height: number,
+  key: DialogKey = 'ui.panel.iron'): void {
+  paintFrame(node, key, width, height)
 }
 
 /** 从实际导航读取可用矩形；覆盖层位于同一个 Game 局部坐标系。 */
@@ -175,7 +163,7 @@ export function applyDialogButton(node: Node, enabled: boolean, width: number, h
 }
 
 /** 中心锚点卡片/条行的共用材质。位图、兜底独占子节点，反复渲染不增生节点。 */
-export function applyPanelSurface(node: Node, key: 'ui.panel.gilt' | 'ui.plate.band',
+export function applyPanelSurface(node: Node, key: 'ui.panel.iron' | 'ui.panel.gilt' | 'ui.plate.band',
                                   width: number, height: number, artName = 'PanelSurface'): void {
   node.getComponent(UITransform)?.setContentSize(width, height)
   const previousGraphics = node.getComponent(Graphics)
@@ -231,7 +219,7 @@ export function createDialogScroll(parent: Node, name: string, width: number, he
 /** 把旧选择窗的既有内容放进净区，保留节点名/回调；确认取消在下沿固定。 */
 export function finishLegacyDialog(parent: Node, nodes: Node[],
                                    key: 'ui.panel.iron' | 'ui.panel.warning' | 'ui.panel.parchment' = 'ui.panel.iron',
-                                   options: { readonly flow?: boolean } = {}): ((reset?: boolean) => void) | null {
+                                   options: { readonly flow?: boolean; readonly compactTitleInset?: number } = {}): ((reset?: boolean) => void) | null {
   // 旧代码建节点未继承UI层：有spriteFrame仍可能不在UI相机的可见层，点击也到不了该节点。
   inheritDialogLayer(parent)
   const card = nodes.find(node => node.name === 'card' || node.name === 'CreditsCard')
@@ -265,7 +253,7 @@ export function finishLegacyDialog(parent: Node, nodes: Node[],
 export function fitExistingDialog(parent: Node, card: Node, body: readonly Node[], footer: readonly Node[],
                                   key: DialogKey, width: number, height: number,
                                   options: { readonly registerViewport?: (node: Node) => void;
-                                    readonly flow?: boolean } = {}): (reset?: boolean) => void {
+                                    readonly flow?: boolean; readonly compactTitleInset?: number } = {}): (reset?: boolean) => void {
   // Gift等旧弹层的遮罩/装饰也在此首次装配，必须与宿主处在同一UI相机层。
   inheritDialogLayer(parent)
   const originalY = body.map(node => node.position.y)
@@ -285,9 +273,17 @@ export function fitExistingDialog(parent: Node, card: Node, body: readonly Node[
         const label = node.getComponent(Label)
         if (label === null) continue
         const box = node.getComponent(UITransform)!
-        box.setContentSize(layout.innerWidth, box.height)
-        label.overflow = Label.Overflow.RESIZE_HEIGHT
-        label.enableWrapText = true
+        if (node.name === 'title') {
+          // 标题是固定的首屏身份信息，不能像列表正文一样滚到 Mask 外再被裁掉。
+          // 长标题由调用方按当前净宽省略，余下标题保持单行。
+          box.setContentSize(layout.innerWidth, Math.max(1, label.lineHeight))
+          label.overflow = Label.Overflow.SHRINK
+          label.enableWrapText = false
+        } else {
+          box.setContentSize(layout.innerWidth, box.height)
+          label.overflow = Label.Overflow.RESIZE_HEIGHT
+          label.enableWrapText = true
+        }
       }
     }
     // RESIZE_HEIGHT 的文案在 attach/render 后才有实际高度，每次布局按当前字串量取。
@@ -306,10 +302,12 @@ export function fitExistingDialog(parent: Node, card: Node, body: readonly Node[
     }))
     const naturalTop = flow === null ? Math.max(0, ...bodyBounds.map(box => box.top)) : 0
     const naturalBottom = flow === null ? Math.min(0, ...bodyBounds.map(box => box.bottom)) : -flow.height
-    body.forEach((node, index) => node.setPosition(new Vec3(node.position.x, positions[index]! - naturalTop, 0)))
+    const compactTitleInset = layout.compact ? Math.max(0, options.compactTitleInset ?? 0) : 0
+    body.forEach((node, index) => node.setPosition(new Vec3(node.position.x,
+      positions[index]! - naturalTop - (node.name === 'title' ? compactTitleInset : 0), 0)))
     const localCenter = card === parent ? layout.centerY : 0
     card.setPosition(new Vec3(0, layout.centerY, 0))
-    if (layout.compact) paintCompactDialogFrame(card, layout.width, layout.height)
+    if (layout.compact) paintCompactDialogFrame(card, layout.width, layout.height, key)
     else paintFrame(card, key, layout.width, layout.height)
     if (key === 'ui.panel.parchment') {
       // 语义键沿用，但统一v3的纸面键已换成同一张暗铁框，正文须用现有浅字色。

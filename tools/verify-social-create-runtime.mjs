@@ -354,11 +354,17 @@ const readFormLayout = () => page.evaluate(() => {
       bottom: Math.min(...p.map(v=>v.y)), top: Math.max(...p.map(v=>v.y)) }
   }
   const field = nodes.find(n=>n.name==='name-field'), edit = field.getComponent('cc.EditBox')
-  const title = nodes.find(n=>n.name==='title'), canvas = cc.game.canvas.getBoundingClientRect(), size = cc.view.getVisibleSize()
+  const title = nodes.find(n=>n.name==='title'), card = nodes.find(n=>n.name==='card')
+  const frame = card?.getChildByName('DialogFrameArt'), frameSprite = frame?.getComponent('cc.Sprite')
+  const canvas = cc.game.canvas.getBoundingClientRect(), size = cc.view.getVisibleSize()
   const point = title.getWorldPosition()
   const viewport = nodes.find(n=>n.name==='DialogContent'), scroll = viewport.getComponent('cc.ScrollView')
+  const titleLabel = title.getComponent('cc.Label')
   return { name: edit.string, text: edit.textLabel.string, textVisible: edit.textLabel.node.activeInHierarchy,
+    frameArtVisible: Boolean(frame?.active && frameSprite?.enabled && frameSprite.spriteFrame),
     field: own(field), textRect: own(edit.textLabel.node), viewport: own(viewport),
+    titleText: titleLabel.string, titleVisible: title.activeInHierarchy && titleLabel.enabled,
+    titleRect: own(title), frameRect: own(card),
     cost: own(nodes.find(n=>n.name==='cost')), submit: own(nodes.find(n=>n.name==='submit')),
     contentHeight: scroll.content.getComponent('cc.UITransform').height, viewportHeight: viewport.getComponent('cc.UITransform').height,
     visibleSize: {width:size.width,height:size.height},
@@ -571,6 +577,12 @@ for (const [name, viewport, fullBody] of [
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
   const layout=await readFormLayout()
   writeFileSync(path.join(OUT,'B-layout-'+name+'.json'),JSON.stringify(layout,null,2)+'\n')
+  checkTrue(`B布局 ${name} 保留主题面板纹理与边框`,layout.frameArtVisible)
+  checkTrue(`B布局 ${name} 标题可见且完整在卡片内`,layout.titleVisible
+    && ['创建小队','创建联盟'].includes(layout.titleText)
+    && containsRect(layout.frameRect,layout.titleRect))
+  checkTrue(`B布局 ${name} 标题与外框顶边保留安全间距`,
+    layout.frameRect.top - layout.titleRect.top >= 12)
   checkTrue('B布局 '+name+' 中文仍完整且文字自身框在输入框内',layout.name===typed&&layout.text===typed&&layout.textVisible&&containsRect(layout.field,layout.textRect))
   checkTrue('B布局 '+name+' 确认键在正文滚动区外',layout.submit.top<=layout.viewport.bottom+.25)
   if(fullBody) checkTrue('B布局 '+name+' 消耗完整显示',containsRect(layout.viewport,layout.cost))

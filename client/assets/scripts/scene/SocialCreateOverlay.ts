@@ -211,7 +211,8 @@ export class SocialCreateOverlay extends Component {
     this.hintLabel.node.active = form.hint.length > 0
     this.addButton('cancel', '取消', -BUTTON_WIDTH / 2 - 8, buttonY, false)
     this.addButton('submit', '确认', BUTTON_WIDTH / 2 + 8, buttonY, !form.canSubmit)
-    this.layoutDialog = finishLegacyDialog(this.node, this.nodes, 'ui.panel.warning', { flow: true })
+    this.layoutDialog = finishLegacyDialog(this.node, this.nodes, 'ui.panel.warning',
+      { flow: true, compactTitleInset: 12 })
     this.built = true
     this.builtHeight = view.getVisibleSize().height
     this.builtHasTag = hasTag

@@ -45,6 +45,7 @@ import type {
 import { ClientReddotTree } from '../game/reddot/ReddotTree'
 import { applyCommandButton } from './ArtCatalog'
 import { NodePool } from './NodePool'
+import { applyPanelSurface } from './DialogStyle'
 import { buildRallyPanel } from '../game/social/RallyPanel'
 import type { RallyPanelData } from '../game/session/AppRoot'
 import { applySystemUiFont, capWidth } from './UiFont'
@@ -499,6 +500,17 @@ export class SocialPanelView extends Component {
     graphics.fillColor = COLOR_BACKGROUND
     graphics.rect(-width / 2, -height / 2, width, height)
     graphics.fill()
+
+    // 列表原先直接浮在整屏纯色上：每行虽有铜边，页面本身仍缺少承托和完整外框。
+    // 外框包住页签下的内容区，并在底部导航上沿留安全边距；窄屏按可见尺寸收缩。
+    const surface = new Node('SocialPanelSurface')
+    surface.layer = this.node.layer
+    this.node.addChild(surface)
+    const surfaceTop = height / 2 - PADDING - HEADER_HEIGHT + 12
+    const surfaceBottom = -height / 2 + 62
+    const surfaceHeight = Math.max(1, surfaceTop - surfaceBottom)
+    surface.setPosition(new Vec3(0, (surfaceTop + surfaceBottom) / 2, 0))
+    applyPanelSurface(surface, 'ui.panel.iron', Math.min(width - 32, PANEL_WIDTH + 40), surfaceHeight)
   }
 
   private buildHeader(height: number): void {
@@ -553,8 +565,11 @@ export class SocialPanelView extends Component {
     node.addComponent(UITransform).setContentSize(new Size(PANEL_WIDTH, ROW_HEIGHT))
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = COLOR_ROW
+    graphics.strokeColor = COLOR_COPPER_GOLD
+    graphics.lineWidth = 1.5
     graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 5)
     graphics.fill()
+    graphics.stroke()
 
     const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 11, COLOR_TEXT, 17)
     title.horizontalAlign = Label.HorizontalAlign.LEFT
@@ -1233,8 +1248,11 @@ export class SocialPanelView extends Component {
       graphics.fillColor = draft.actionEnabled || draft.actionText === null
         ? (index % 2 === 0 ? COLOR_ROW : COLOR_ROW_ALT)
         : COLOR_ROW_DISABLED
+      graphics.strokeColor = COLOR_COPPER_GOLD
+      graphics.lineWidth = 1.5
       graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 5)
       graphics.fill()
+      graphics.stroke()
     }
     const title = node.children[0]?.getComponent(Label)
     const detail = node.children[1]?.getComponent(Label)

@@ -994,7 +994,8 @@ function actualMarchOverlay(): MarchVisibilityHarness {
   const March = sceneExports('MarchComposeOverlay', {
     DIALOG_SCRIM: {}, PANEL_IRON_INSET, applyContainedSprite: () => false,
     applySlicedSprite: () => false, applySystemUiFont: (label: Label) => label,
-    applyDialogButton: () => {}, fitExistingDialog: () => () => {},
+    applyDialogButton: () => {}, fitExistingDialog: () => () => {}, observeDialogSize: () => {},
+    dialogLayout, dialogContentRect: () => nativeArea,
     view: { getVisibleSize: () => ({ width: 960, height: 443.6018957345971 }) },
   }).MarchComposeOverlay as new (parent: Node) => MarchVisibilityHarness
   return new March(new Node('Game'))

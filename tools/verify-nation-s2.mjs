@@ -102,10 +102,27 @@ function readPanel() {
   const panel = game.getChildByName('nation')
   const texts = []
   const buttons = {}
+  const visual = { panelSurface: false, techRowsFramed: false }
   const BUILT = ['Tab_TREASURY', 'Tab_TECH', 'Tab_DIPLO', 'Tab_OFFICE', 'TechResearch-nation_tech_wood',
     'DiproTarget-nation_chibi', 'DiproOption-ALLIED', 'AppointTarget-player_minister',
     'AppointOffice-GENERAL', 'AppointOffice-KING', 'AppointOffice-REPRESENTATIVE', 'SpendButton', 'CloseButton']
   if (panel) {
+    const card = panel.getChildByName('NationCard')
+    const art = card?.getChildByName('PanelSurface')
+    const artSprite = art?.getComponent('cc.Sprite')
+    const fallback = card?.getChildByName('PanelSurfaceFallback')
+    const fallbackGraphics = fallback?.getComponent('cc.Graphics')
+    visual.panelSurface = Boolean((artSprite?.enabled && artSprite.spriteFrame)
+      || (fallback?.active && fallbackGraphics?.enabled && fallbackGraphics.lineWidth >= 1))
+    const techRows = panel.children.filter(n => n.name.startsWith('TechRow-'))
+    visual.techRowsFramed = techRows.length > 0 && techRows.every(node => {
+      const surface = node.getChildByName('RowSurface')
+      const sprite = surface?.getComponent('cc.Sprite')
+      const rowFallback = node.getChildByName('RowSurfaceFallback')
+      const graphics = rowFallback?.getComponent('cc.Graphics')
+      return Boolean((sprite?.enabled && sprite.spriteFrame)
+        || (rowFallback?.active && graphics?.enabled && graphics.lineWidth >= 1))
+    })
     const walk = (n) => {
       if (n.activeInHierarchy) {
         const label = n.getComponent('cc.Label')
@@ -119,7 +136,7 @@ function readPanel() {
     }
     walk(panel)
   }
-  return { missing: !panel, active: panel ? panel.activeInHierarchy : false, texts, buttons }
+  return { missing: !panel, active: panel ? panel.activeInHierarchy : false, texts, buttons, visual }
 }
 
 const clickPanelButton = (page, name) => page.evaluate(`(() => {
@@ -324,6 +341,7 @@ await runScene(browser, '页签', { techCase: 'ok' }, async ({ page, state }) =>
   check('切过去才发那一枪 /nation/tech', state.techCalls.length, 1)
   const tech = await page.evaluate(readPanel)
   const techText = (tech.texts ?? []).join('')
+  check('科技页行卡片有主题背景与边框', tech.visual.techRowsFramed, true)
   console.log(`  科技页文字：${(tech.texts ?? []).join(' ｜ ')}`)
   checkThat('表头带国家等级与国库（服务端那一份）', /国家等级 Lv3 · 国库 1,234,567/.test(techText))
   checkThat('行上有名有学派', techText.includes('林地开发') && techText.includes('农政'))

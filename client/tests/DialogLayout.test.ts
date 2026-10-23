@@ -18,7 +18,7 @@ test('普通与矮窗的长名单只增长滚动内容，框和固定操作仍�
   }
 })
 
-test('240逻辑高用token薄边兜底，确认与正文不碰撞且不跨档拉伸提示位图', () => {
+test('240逻辑高仍保留主题位图外框，确认与正文不碰撞', () => {
   const layout = dialogLayout({ x: -480, y: -60, width: 960, height: 180 }, 560, 1600)
   assert.equal(layout.compact, true)
   assert.equal(layout.height, 164)
@@ -31,7 +31,16 @@ test('240逻辑高用token薄边兜底，确认与正文不碰撞且不跨档拉
   for (const file of ['DialogStyle.ts', 'NationPanelView.ts']) {
     const source = readFileSync(path.join(clientDir, 'assets/scripts/scene', file), 'utf8')
     assert.doesNotMatch(source, /ui\.plate\.tooltip/)
-    assert.match(source, /paintCompactDialogFrame\(/)
+    if (file === 'DialogStyle.ts') {
+      const compactStart = source.indexOf('export function paintCompactDialogFrame')
+      const compactEnd = source.indexOf('/** 从实际导航读取可用矩形', compactStart)
+      assert.ok(compactStart >= 0 && compactEnd > compactStart)
+      assert.match(source.slice(compactStart, compactEnd), /paintFrame\(node,\s*key,\s*width,\s*height\)/)
+      assert.match(source.slice(0, compactStart), /graphics\.stroke\(\)/,
+        '主题资源读不到时，兜底底板仍需画出铜色边框')
+    } else {
+      assert.match(source, /applyPanelSurface\(card, 'ui\.panel\.iron'/)
+    }
   }
 })
 

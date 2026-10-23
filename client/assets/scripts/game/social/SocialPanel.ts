@@ -283,8 +283,10 @@ export function buildAllianceSection(alliance: AllianceView | null,
       activeText: activeText(member.lastActiveAt, alliance.serverNow),
       inactive: alliance.serverNow - member.lastActiveAt > INACTIVE_MILLIS,
       // 名字由服务端下发（`squadName`），不拿 `squadId` 去拼：客户端没有小队表，
-      // 拼出来就是「分队 squad_17」这种玩家读不懂的黑话（台账 #422，#421 翻页相截图才看见）
-      squadText: member.squadName === null ? null : `分队 ${member.squadName}`,
+      // 拼出来就是「分队 squad_17」这种玩家读不懂的黑话；漏字段或字面占位符都按无分队处理。
+      squadText: typeof member.squadName !== 'string' || member.squadName.trim() === ''
+        || /^(undefined|null)$/i.test(member.squadName.trim())
+        ? null : `分队 ${member.squadName.trim()}`,
       contributionText: `贡献 ${member.contribution}`,
     })),
   }

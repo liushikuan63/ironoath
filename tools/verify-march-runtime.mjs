@@ -353,12 +353,34 @@ const GEO = `(() => {
     return { top: n.position.y + t.height / 2, bottom: n.position.y - t.height / 2 }
   }
   const rows = panel.children.filter((c) => c.name === 'TargetRow')
+  const rowFrames = rows.map(row => {
+    const graphics = row.getComponent('cc.Graphics')
+    return {strokeWidth:graphics?.lineWidth ?? 0,strokeAlpha:graphics?.strokeColor?.a ?? 0}
+  })
+  const rowTextBounds = rows.flatMap(row => {
+    const width = row.getComponent('cc.UITransform')?.contentSize?.width ?? 0
+    return row.children.map(cell => {
+      const label = cell.getComponent('cc.Label')
+      const transform = cell.getComponent('cc.UITransform')
+      if (!label || !label.string || !transform) return null
+      const cellWidth = transform.contentSize.width
+      const anchor = transform.anchorPoint.x
+      const x = cell.position.x
+      return {text:label.string,left:x-anchor*cellWidth,right:x+(1-anchor)*cellWidth,
+        rowLeft:-width/2,rowRight:width/2}
+    }).filter(Boolean)
+  })
   const controls = ['PrevPageButton', 'RadiusDown', 'RadiusUp', 'SearchButton', 'NextPageButton']
     .map((name) => panel.getChildByName(name)).filter((n) => n !== null && n !== undefined)
   const pagerActive = controls
     .filter((n) => n.name === 'PrevPageButton' || n.name === 'NextPageButton')
     .filter((n) => n.active === true).length
   const notice = panel.getChildByName('Overflow')
+  const searchSurface = panel.getChildByName('SearchSurface')
+  const surfaceArt = searchSurface?.getChildByName('PanelSurface')
+  const surfaceSprite = surfaceArt?.getComponent('cc.Sprite')
+  const surfaceFallback = searchSurface?.getChildByName('PanelSurfaceFallback')
+  const surfaceFallbackGraphics = surfaceFallback?.getComponent('cc.Graphics')
   const view2 = panel.getComponent('TargetSearchView')
   return {
     rowCount: rows.length,
@@ -366,6 +388,12 @@ const GEO = `(() => {
     // 容量按可视高现算，探针不猜那个数：判据写成"和容量的关系"，改窗口也不会假红
     capacity: view2 ? view2.rowCapacity() : null,
     rowNames: rows.map((c) => c.children[0]?.getComponent('cc.Label')?.string ?? ''),
+    rowFrames,
+    rowTextBounds,
+    rowTextInsideFrame: rowTextBounds.length > 0 && rowTextBounds.every(cell =>
+      cell.left >= cell.rowLeft + 4 && cell.right <= cell.rowRight - 4),
+    searchPanelFramed: Boolean((surfaceSprite?.enabled && surfaceSprite.spriteFrame)
+      || (surfaceFallback?.active && surfaceFallbackGraphics?.enabled && surfaceFallbackGraphics.lineWidth >= 1)),
     topRowTop: rows.length === 0 ? null : box(rows[0]).top,
     lowestControlBottom: Math.min(...controls.map((c) => box(c).bottom)),
     lastRowBottom: rows.length === 0 ? null : box(rows[rows.length - 1]).bottom,
@@ -400,9 +428,13 @@ const searchWith = async (count) => {
 
 const geo1 = await searchWith(1)
 check('只有一页（1 个目标）时两颗翻页键收掉，不留点了没反应的按钮', geo1?.pagerActive, 0)
+checkTrue('目标搜索区域有铁面底板与铜边框', geo1?.searchPanelFramed)
 checkTrue('行没有压住控件条（第一行上沿在按钮下沿之下）',
   geo1 !== null && geo1.topRowTop <= geo1.lowestControlBottom)
 checkTrue('行没有压到底部导航条', geo1 !== null && geo1.lastRowBottom >= geo1.navTop)
+checkTrue('目标行卡片有清晰铜边框', geo1 !== null && geo1.rowFrames.length > 0
+  && geo1.rowFrames.every(frame => frame.strokeWidth >= 1.5 && frame.strokeAlpha > 0))
+checkTrue('目标名称/倍率/距离/坐标文字都在行卡片边框内', geo1?.rowTextInsideFrame)
 checkTrue('页码那行字落在屏幕内（写死八行时它在 y=-318，玩家从来没见过）',
   geo1 !== null && geo1.noticeBottom > geo1.screenBottom)
 // 三相判据的第三相：有行时那句话必须不出现（有行还印"没有目标"等于自己打自己）
@@ -524,7 +556,7 @@ const COMPOSE = `(() => {
     return node?.getChildByName('label')?.getComponent('cc.Label')?.string ?? null
   }
   const title = dialogChildren(overlay)
-    .filter((c) => c.name === 'label')
+    .filter((c) => c.name === 'label' || c.name === 'title')
     .map((c) => c.getComponent('cc.Label')?.string ?? '')
     .find((s) => s.includes('：')) ?? ''
   return {

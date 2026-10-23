@@ -176,6 +176,18 @@ test('联盟区块把资金、贡献值、领地、职位与今日捐献档数�
   assert.equal(section.members[0]?.squadText, null, '没有小队就没有这一段，客户端不猜')
 })
 
+test('缺失的小队名按无分队回退，不把undefined印给玩家', () => {
+  const member = allianceMember('legacy-member', { squadId: null, squadName: undefined as unknown as null })
+  const row = buildAllianceSection(alliance(), [member]).members[0]
+  assert.equal(row?.squadText, null)
+})
+
+test('脏回包把undefined当字面小队名时也不印给玩家', () => {
+  const member = allianceMember('legacy-member-text', { squadId: null, squadName: 'undefined' })
+  const row = buildAllianceSection(alliance(), [member]).members[0]
+  assert.equal(row?.squadText, null)
+})
+
 test('摆出来的是「今天还没捐过的档」：已用档位由服务端下发，客户端不再拿计数猜', () => {
   // 旧形态是"只要有额度就把三档全摆出来，点了才知道捐过"（协议只给计数）。
   // 2026-09-13 裁决每档每日一次之后，服务端下发 donateTiersUsed，这条才有可断言的东西

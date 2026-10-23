@@ -1138,7 +1138,7 @@ B13 验收 8「国家集结 50 人门槛」进不去。
 >
 > | 要找什么 | 关键词 / 一条命令 |
 > |---|---|
-> | 静态门（现 **47 道**）逐道的开启动机与自测 | `grep -n "道门\|check-doc-counts\|dead-callbacks\|check-client-orphans" 待完善收口_VibeCoding开发包.md`；道数真值永远以 `bash scripts/check-doc-counts.sh` 为准 |
+> | 静态门（现 **51 道**）逐道的开启动机与自测 | `grep -n "道门\|check-doc-counts\|dead-callbacks\|check-client-orphans" 待完善收口_VibeCoding开发包.md`；道数真值永远以 `bash scripts/check-doc-counts.sh` 为准 |
 > | 植入取证 / 量具假绿的形状 | `grep -n "植入\|对照组\|NO-RUN\|假绿" 待完善收口_VibeCoding开发包.md`（最密的一批在 10-04 全量批跑与 10-07 各格） |
 > | 国战 B13 承载线（3c~3g：只读页 / 宣战 / 关系表 / 全服奖励 / 疲劳 / 冷却） | 小节标题含「B13 承载」与「国战承载」；台账对应 #754~#765、#768、#769 |
 > | **国家集结上限（V22 裁决 / V24 设计与合流式子）** | 卡在本包 **§二·补·六**；三条裁决原文在台账 **#775**；「OPS_TOKEN 是假阻塞」「B15 名额不存在」的取证在 **#776** |
@@ -8181,3 +8181,5 @@ TEST_EXIT=0
 | #2386 全量构建读数更正 | 本笔原子本地提交，未推送 | 完整build首跑exit1，日志汇总game-web 2421 tests / 41 failures / 49 errors；首跑退出后当前源码XML及受影响类重跑均无红。随后从上游重新编译的完整build重跑exit0，server 2421/0/0/0、battle 7/0/0/0、client 1413/0/0/0；独立test.sh exit0亦复现。不能把首跑失败隐去，也不把重跑成功外推为已定位根因 | D:/tmp/ironoath-2386-build.log、2386-build.exit、2386-test-isolated.log、2386-build-rerun.log、2386-build-rerun.exit、2386-current-xml-counts.json | 初轮故障根因尚未查明，保留原失败与成功重跑两份证据；后续若相同汇总差异再现，先查surefire报告时间/进程与reactor增量产物，不宣称构建历史全绿。|
 
 | #2386 首轮构建退出记录更正 | 本笔原子本地提交，未推送 | 复读原件确认 `2386-build.log` Maven最终summary为game-web FAILURE且测试汇总2421/41/49；对应 `2386-build.exit` 实际内容为0，与Maven结果矛盾。故首轮整体结果应记为不一致/不可确认通过，不得记退出1，也不能把shell读数解释成测试成功。后续 `build-rerun.log` 与exit0一致且全套0失败；独立test.sh亦exit0 | D:/tmp/ironoath-2386-build.log、2386-build.exit、2386-build-rerun.log、2386-build-rerun.exit、2386-test-isolated.log | 首轮wrapper为何在Maven FAILURE后留下exit0仍未知；不做环境猜测，不覆盖原件。今后以原始Maven摘要与调用层退出码双重记录；此次可确认的完整build通过证据只来自全量重跑。|
+
+| #2387 逐屏视觉收口：主题材质、铜边与短屏文本安全区 | 本格原子本地提交，未推送 | 截图基线有效RED：排行背景/行/页签缺边框3项；联盟成员脏值分队名显示undefined（68/1）；240高弹窗丢主题纹理（107/1）；March长目标标题被裁（4视口4红），坐标短屏只露10/26px（424/1）。修后类型检查与客户端1415/0/0/0；check.sh EXIT=0，静态51/harness52、工具73/0；Cocos web-mobile脚本EXIT=0；共享弹窗多视口425/0；短屏创建116/0；最终10项受影响runtime 10/10，0失败/0未验证 | D:/tmp/ironoath-2387-social-red-logs、social-create-compact-red-logs、march-title-red-logs、march-coord-red-logs；D:/tmp/ironoath-2387-final-probes-ui3-exits.txt；D:/tmp/ironoath-2387-march-viewport-green-logs；client/build/social-perm-verify、social-create-verify、rank-verify、march-verify，tmp/nation、nation-s2、dialog-style | latest test.sh 客户端1415/0，但Mongo等价性5项跳过；latest build.sh 因Mongo引擎不可用在game-web Mongo测试失败，不能报全量构建通过。Docker Desktop service启动被拒，未改真实玩家库。原Goal仍未完成：COMBAT生产发布/有序恢复、真实攻占与全国收益、B19正式渠道及候选数值/坐标待验；5000无新holder资源UTC准入不跑，不推送。|

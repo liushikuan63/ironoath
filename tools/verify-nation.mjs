@@ -141,7 +141,47 @@ function readNation() {
   const panel = game.getChildByName('nation')
   const texts = []
   const buttons = {}
+  const visual = { panelSurface: false, treasuryRowsFramed: false, treasuryBelowTabs: null,
+    treasuryLabelRects: [], tabsBottom: null }
   if (panel) {
+    const card = panel.getChildByName('NationCard')
+    const art = card?.getChildByName('PanelSurface')
+    const artSprite = art?.getComponent('cc.Sprite')
+    const fallback = card?.getChildByName('PanelSurfaceFallback')
+    const fallbackGraphics = fallback?.getComponent('cc.Graphics')
+    visual.panelSurface = Boolean((artSprite?.enabled && artSprite.spriteFrame)
+      || (fallback?.active && fallbackGraphics?.enabled && fallbackGraphics.lineWidth >= 1))
+    const rect = node => {
+      const ui = node.getComponent('cc.UITransform')
+      if (!ui) return null
+      const {width,height} = ui.contentSize, {x:ax,y:ay} = ui.anchorPoint
+      const points = [[-ax*width,-ay*height],[(1-ax)*width,-ay*height],
+        [-ax*width,(1-ay)*height],[(1-ax)*width,(1-ay)*height]]
+        .map(([x,y])=>ui.convertToWorldSpaceAR(new window.cc.Vec3(x,y,0)))
+      return {top:Math.max(...points.map(p=>p.y)),bottom:Math.min(...points.map(p=>p.y)),
+        left:Math.min(...points.map(p=>p.x)),right:Math.max(...points.map(p=>p.x))}
+    }
+    const treasuryLabels = panel.children.filter(node => {
+      const label = node.getComponent('cc.Label')
+      return label && String(label.string ?? '').startsWith('国库余额')
+    })
+    const balanceRects = treasuryLabels.map(rect).filter(Boolean)
+    const tabBottoms = panel.children.filter(node => node.name.startsWith('Tab_'))
+      .map(rect).filter(Boolean).map(box => box.bottom)
+    visual.treasuryLabelRects = balanceRects
+    visual.tabsBottom = tabBottoms.length ? Math.min(...tabBottoms) : null
+    visual.treasuryBelowTabs = balanceRects.length > 0 && tabBottoms.length > 0
+      && balanceRects.every(box => box.top <= Math.min(...tabBottoms) - 20)
+    const treasuryRows = panel.children.filter(node => node.name === 'TreasuryBalanceRow'
+      || node.name.startsWith('LogRow-'))
+    visual.treasuryRowsFramed = treasuryRows.length > 0 && treasuryRows.every(node => {
+      const surface = node.getChildByName('RowSurface')
+      const sprite = surface?.getComponent('cc.Sprite')
+      const rowFallback = node.getChildByName('RowSurfaceFallback')
+      const graphics = rowFallback?.getComponent('cc.Graphics')
+      return Boolean((sprite?.enabled && sprite.spriteFrame)
+        || (rowFallback?.active && graphics?.enabled && graphics.lineWidth >= 1))
+    })
     const walk = (n) => {
       if (n.activeInHierarchy) {
         const label = n.getComponent('cc.Label')
@@ -157,7 +197,7 @@ function readNation() {
     }
     walk(panel)
   }
-  return { missing: !panel, active: panel ? panel.activeInHierarchy : false, texts, buttons }
+  return { missing: !panel, active: panel ? panel.activeInHierarchy : false, texts, buttons, visual }
 }
 
 /**
@@ -465,6 +505,10 @@ await runScene(browser, {
     await page.waitForTimeout(1500)
     const opened = await page.evaluate(readNation)
     check('面板出现了', opened.active, true)
+    console.log(`  视觉布局：${JSON.stringify(opened.visual)}`)
+    check('国家面板使用铁面纹理与完整边框', opened.visual.panelSurface, true)
+    check('国库余额文字与页签保持安全间距', opened.visual.treasuryBelowTabs, true)
+    check('国库流水卡片均有主题边框', opened.visual.treasuryRowsFramed, true)
     const shown = (opened.texts ?? []).join('')
     console.log(`  面板文字：${(opened.texts ?? []).join(' ｜ ')}`)
     checkThat('概况有国名', shown.includes('国名：赤壁盟'))

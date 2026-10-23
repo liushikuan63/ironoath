@@ -22,8 +22,9 @@ import { buildTargetRows, formatPower, pagerKeysVisible, targetSearchNotice } fr
 import { clampPage, contentPerPage, pageCount, pageNotice, pageWindow } from '../game/ui/PanelPaging'
 import type { TargetRow } from '../game/power/PowerPanel'
 import type { SearchTargetsResp } from '../net/generated/WorldProtocol'
+import { applyPanelSurface } from './DialogStyle'
 import { NodePool } from './NodePool'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -132,6 +133,7 @@ export class TargetSearchView extends Component {
   override onLoad(): void {
     const size = view.getVisibleSize()
     this.buildBackground(size.width, size.height)
+    this.buildSearchSurface(size.height)
     this.rowPool = new NodePool(this.node, () => this.createRow(), MAX_VISIBLE_ROWS)
     this.buildHeader(size.height)
     if (this.pending !== null) {
@@ -192,6 +194,18 @@ export class TargetSearchView extends Component {
     graphics.fillColor = COLOR_BACKGROUND
     graphics.rect(-width / 2, -height / 2, width, height)
     graphics.fill()
+  }
+
+  private buildSearchSurface(height: number): void {
+    const top = height / 2 - PADDING
+    const bottom = -height / 2 + NAV_BAR_BOTTOM + NAV_BAR_HEIGHT + NAV_SAFE_GAP
+    const panelHeight = Math.max(1, top - bottom)
+    const node = new Node('SearchSurface')
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(PANEL_WIDTH, panelHeight))
+    node.setPosition(new Vec3(0, (top + bottom) / 2, 0))
+    applyPanelSurface(node, 'ui.panel.iron', PANEL_WIDTH, panelHeight)
   }
 
   private buildHeader(height: number): void {
@@ -262,19 +276,24 @@ export class TargetSearchView extends Component {
     node.addComponent(UITransform).setContentSize(new Size(PANEL_WIDTH, ROW_HEIGHT))
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = COLOR_ROW
+    graphics.strokeColor = COLOR_COPPER_GOLD
+    graphics.lineWidth = 1.5
     graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 6)
     graphics.fill()
+    graphics.stroke()
 
     // 四段文本各自一个子节点：整行塞进一个 Label 就没法给倍率与暴虐标签单独上色
-    const columns: Array<{ name: string; x: number; align: number; size: number }> = [
-      { name: 'Name', x: -PANEL_WIDTH / 2 + PADDING, align: Label.HorizontalAlign.LEFT, size: 18 },
-      { name: 'Ratio', x: -60, align: Label.HorizontalAlign.CENTER, size: 18 },
-      { name: 'Meta', x: 110, align: Label.HorizontalAlign.CENTER, size: 15 },
-      { name: 'Coord', x: PANEL_WIDTH / 2 - PADDING, align: Label.HorizontalAlign.RIGHT, size: 15 },
+    const columns: Array<{ name: string; x: number; align: number; anchorX: number; maxWidth: number; size: number }> = [
+      { name: 'Name', x: -PANEL_WIDTH / 2 + PADDING, align: Label.HorizontalAlign.LEFT, anchorX: 0, maxWidth: 190, size: 18 },
+      { name: 'Ratio', x: -60, align: Label.HorizontalAlign.CENTER, anchorX: 0.5, maxWidth: 120, size: 18 },
+      { name: 'Meta', x: 110, align: Label.HorizontalAlign.CENTER, anchorX: 0.5, maxWidth: 140, size: 15 },
+      { name: 'Coord', x: PANEL_WIDTH / 2 - PADDING, align: Label.HorizontalAlign.RIGHT, anchorX: 1, maxWidth: 120, size: 15 },
     ]
     for (const column of columns) {
       const label = this.addLabel(node, column.name, column.x, 0, COLOR_TEXT, column.size)
       label.horizontalAlign = column.align
+      label.node.getComponent(UITransform)?.setAnchorPoint(column.anchorX, 0.5)
+      capWidth(label, column.maxWidth)
     }
     return node
   }
@@ -419,8 +438,11 @@ export class TargetSearchView extends Component {
       graphics.clear()
       // 护盾行标灰而不是删掉：删掉就是客户端在做过滤，而过滤口径只能在服务端
       graphics.fillColor = row.shielded ? COLOR_ROW_SHIELDED : COLOR_ROW
+      graphics.strokeColor = COLOR_COPPER_GOLD
+      graphics.lineWidth = 1.5
       graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 6)
       graphics.fill()
+      graphics.stroke()
     }
     const name = node.children[0]?.getComponent(Label)
     const ratio = node.children[1]?.getComponent(Label)

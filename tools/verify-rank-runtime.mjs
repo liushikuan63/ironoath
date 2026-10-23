@@ -139,13 +139,15 @@ const LABEL_SNAPSHOT = `(() => {
   if (!panel) return null
   const out = []
   const ys = []
+  const textBounds = []
   const ownHorizontalBounds = node => {
     const ui = node.getComponent('cc.UITransform')
     const {width,height} = ui.contentSize, {x:ax,y:ay} = ui.anchorPoint
     const points = [[-ax*width,-ay*height],[(1-ax)*width,-ay*height],
       [-ax*width,(1-ay)*height],[(1-ax)*width,(1-ay)*height]]
       .map(([x,y])=>ui.convertToWorldSpaceAR(new window.cc.Vec3(x,y,0)))
-    return {left:Math.min(...points.map(p=>p.x)),right:Math.max(...points.map(p=>p.x))}
+    return {left:Math.min(...points.map(p=>p.x)),right:Math.max(...points.map(p=>p.x)),
+      bottom:Math.min(...points.map(p=>p.y)),top:Math.max(...points.map(p=>p.y))}
   }
   const walk = (node, dy) => {
     if (!node.activeInHierarchy) return
@@ -154,6 +156,10 @@ const LABEL_SNAPSHOT = `(() => {
     if (label && label.string) {
       out.push(label.string)
       ys.push(y)
+      const ui = node.getComponent('cc.UITransform')
+      const height = ui?.contentSize?.height ?? 0
+      const anchorY = ui?.anchorPoint?.y ?? 0.5
+      textBounds.push({text:label.string,bottom:y-anchorY*height,top:y+(1-anchorY)*height})
     }
     for (const child of node.children) walk(child, y)
   }
@@ -161,6 +167,7 @@ const LABEL_SNAPSHOT = `(() => {
   const rows = panel.node.children.filter(n => n.name === 'row' && n.activeInHierarchy).map(node => {
     const labels = []
     const cells = []
+    const graphics = node.getComponent('cc.Graphics')
     const visit = n => {
       if (!n.activeInHierarchy) return
       const label = n.getComponent('cc.Label')
@@ -171,15 +178,46 @@ const LABEL_SNAPSHOT = `(() => {
       n.children.forEach(visit)
     }
     visit(node)
-    return { labels, cells, y: node.getWorldPosition().y }
+    return { labels, cells, y: node.getWorldPosition().y,
+      frameStrokeWidth: graphics?.lineWidth ?? 0, frameStrokeAlpha: graphics?.strokeColor?.a ?? 0 }
   })
+  const tabs = panel.node.children.filter(n => n.name.startsWith('tab-') && n.activeInHierarchy).map(node => {
+    const graphics = node.getComponent('cc.Graphics')
+    return { key: node.name, frameStrokeWidth: graphics?.lineWidth ?? 0,
+      frameStrokeAlpha: graphics?.strokeColor?.a ?? 0 }
+  })
+  const hints = panel.node.children.filter(n => n.name === 'PanelHintLine' && n.activeInHierarchy).map(node => ({
+    x: node.getPosition().x, anchorX: node.getComponent('cc.UITransform')?.anchorPoint?.x ?? -1,
+  }))
   const transform = panel.node.getComponent('cc.UITransform')
+  const background = panel.node.getChildByName('background')
+  const backgroundTransform = background?.getComponent('cc.UITransform')
+  const surface = background?.getChildByName('PanelSurface')
+  const surfaceSprite = surface?.getComponent('cc.Sprite')
+  const fallback = background?.getChildByName('PanelSurfaceFallback')
+  const fallbackGraphics = fallback?.getComponent('cc.Graphics')
   return {
     active: panel.node.active,
     labels: out,
+    textBounds,
     rows,
+    tabs,
+    hints,
     // 宿主被布局器撑成全屏；真正画出的面板边缘属于background，不可拿宿主放宽边界。
     bounds: ownHorizontalBounds(panel.node.getChildByName('background')),
+    framedSurface: Boolean((surfaceSprite?.enabled && surfaceSprite.spriteFrame)
+      || (fallback?.active && fallbackGraphics?.enabled && fallbackGraphics.lineWidth >= 1)),
+    backgroundLayout: background ? {
+      height: backgroundTransform?.contentSize?.height,
+      positionY: background.getPosition().y,
+      anchorY: backgroundTransform?.anchorPoint?.y,
+      localBottom: background.getPosition().y - (backgroundTransform?.anchorPoint?.y ?? 0.5)
+        * (backgroundTransform?.contentSize?.height ?? 0),
+      localTop: background.getPosition().y + (1-(backgroundTransform?.anchorPoint?.y ?? 0.5))
+        * (backgroundTransform?.contentSize?.height ?? 0),
+      panelPositionY: panel.node.getPosition().y,
+      worldPositionY: background.getWorldPosition().y,
+    } : null,
     ys,
     halfHeight: transform ? transform.contentSize.height / 2 : -1,
   }
@@ -263,6 +301,14 @@ function checkInsidePanel(snapshot, where) {
   const inside = Math.abs(worst) <= halfHeight + 1
   check(`${where}：最靠边的一行仍在面板内（${worst.toFixed(1)} vs ±${halfHeight.toFixed(1)}）`,
     inside, true)
+  const frame = snapshot.backgroundLayout
+  const frameBottom = frame?.localBottom + frame?.panelPositionY
+  const frameTop = frame?.localTop + frame?.panelPositionY
+  const outsideText = frame === null ? snapshot.textBounds.length : snapshot.textBounds.filter(box =>
+    box.bottom < frameBottom + 4 || box.top > frameTop - 4)
+  const outsideSummary = outsideText.map(box => `${box.text.slice(0,12)}[${box.bottom.toFixed(1)},${box.top.toFixed(1)}]`).join('、')
+  check(`${where}：每个文字盒子都留在材质面板净区（外溢 ${outsideText.length}${outsideSummary ? `：${outsideSummary}` : ''}）`,
+    outsideText.length === 0, true)
 }
 
 /** 底部导航条的上沿。翻页控件落在它下面 = 玩家点不到（画出来了但没用的那一类）。 */
@@ -293,6 +339,17 @@ if (first === null || !first.active) {
   process.exit(1)
 }
 ok('战力页打开了')
+console.log(`  面板背景布局：${JSON.stringify(first.backgroundLayout)} bounds=${JSON.stringify(first.bounds)}`)
+check('战力面板有真实铁面底板与铜边框', first.framedSurface, true)
+const panelBottom = first.backgroundLayout?.panelPositionY + first.backgroundLayout?.localBottom
+check(`战力面板底边高于底部导航条（${panelBottom?.toFixed(1)} > ${NAV_TOP}）`,
+  first.backgroundLayout !== null && panelBottom > NAV_TOP + 8, true)
+check('战力明细每条数据行都有清晰铜边框', first.rows.length > 0
+  && first.rows.every(row => row.frameStrokeWidth >= 1.5 && row.frameStrokeAlpha > 0), true)
+check('所有排行榜页签都有可见边框', first.tabs.length === 7
+  && first.tabs.every(tab => tab.frameStrokeWidth >= 1.5 && tab.frameStrokeAlpha > 0), true)
+check('提示文字使用统一左锚点对齐', first.hints.length > 0
+  && first.hints.every(hint => hint.anchorX === 0 && hint.x === first.hints[0].x), true)
 
 // 验收：七个页签都在（明细 + 五类榜 + 赛季）。页签是点进榜的唯一入口，缺一个就有一张榜看不到
 // —— V18 加第五张榜（国战榜）时这一条就是它的入口判据：只改服务端发奖、页签没加上，

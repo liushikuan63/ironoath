@@ -89,7 +89,7 @@ const fixture = {
 
 const MEMBER = {
   id: 'p_probe_member', name: '周校', power: 18_400, role: 'MEMBER', contribution: 620,
-  lastActiveAt: SERVER_NOW() - 3_600_000, squadId: null,
+  lastActiveAt: SERVER_NOW() - 3_600_000, squadId: null, squadName: 'undefined',
 }
 /** 第二个成员：只用来把名单撑到"一屏画不下"，验那句截断提示（D 相）。 */
 const MEMBER2 = {
@@ -197,6 +197,7 @@ const ROWS = `(() => {
       }
       const button = pick('ActionButton')
       const second = pick('ActionButton2')
+      const plateGraphics = n.getComponent('cc.Graphics')
       const captionNode = button ? button.children.find((c) => c.name === 'Caption') : null
       const caption = captionNode ? captionNode.getComponent('cc.Label') : null
       const secondNode = second ? second.children.find((c) => c.name === 'Caption') : null
@@ -214,6 +215,8 @@ const ROWS = `(() => {
         caption2Text: caption2 && caption2.string ? caption2.string : '',
         color2: caption2 ? [caption2.color.r, caption2.color.g, caption2.color.b] : null,
         rowPlate: t ? { ...world(n), w: t.contentSize.width, h: t.contentSize.height } : null,
+        frameStrokeWidth: plateGraphics?.lineWidth ?? 0,
+        frameStrokeAlpha: plateGraphics?.strokeColor?.a ?? 0,
         buttonPlate: bt ? { ...world(button), w: bt.contentSize.width, h: bt.contentSize.height } : null,
         button2Plate: b2t ? { ...world(second), w: b2t.contentSize.width, h: b2t.contentSize.height } : null,
       })
@@ -458,6 +461,8 @@ check('A6 面板一次把两个 scope 各拉一次（服务端一次只回一个
 const tapA = await openAllianceTab()
 check('A7 联盟页签点得动（默认停在「小队」，不点过去根本读不到联盟行）', tapA, 'tapped')
 const snapA = await waitForRows((rows) => rows.length > 0)
+checkTrue('社交列表每个可见行卡片都有铜边框', (snapA?.rows ?? []).length > 0
+  && snapA.rows.every(row => row.frameStrokeWidth >= 1.5 && row.frameStrokeAlpha > 0))
 const donateA = (snapA?.rows ?? []).filter((r) => r.caption === '捐献')
 check('A8 未入盟时画不出捐献行（先把"幻影"排除，后面才谈得上"它亮了"）', donateA.length, 0)
 await shot('A-real-no-alliance')
@@ -608,6 +613,9 @@ await openAllianceTab()
 const snapB = await waitForRows((rows) => rows.some((r) => r.title === '免费捐献'))
 checkTrue('B1 已入盟的摘要进了面板（首行是联盟等级与人数）',
   (snapB?.rows ?? []).some((r) => r.title.startsWith('Lv3 ·')))
+checkTrue('B1b 成员行不把无效小队名占位符显示给玩家',
+  (snapB?.rows ?? []).filter((r) => r.title.includes('周校')).length === 1
+    && !(snapB?.rows ?? []).some((r) => /分队\s+(?:undefined|null)/.test(r.detail)))
 const donateB = (snapB?.rows ?? []).filter((r) => r.caption === '捐献')
 check('B2 三档捐献都摆出按钮（夹具给了 3 档上限、0 档已用）', donateB.length, 3)
 checkTrue('B3 三档捐献**全是亮的**：字色是 COLOR_TEXT 而不是置灰那档',

@@ -21,12 +21,11 @@ import type { WarSection } from '../game/nation/NationSections'
 import { NATION_TABS, SPEND_AMOUNT_PRESETS, TREASURY_LOG_ROWS, amountText, spendDraftBlocker, spendSinkOptions } from '../game/nation/NationPanel'
 import { applySystemUiFont } from './UiFont'
 import { applyContainedSprite, type StaticArtKey } from './ArtCatalog'
-import { applyDialogButton, createDialogScroll, dialogContentRect, DIALOG_SCRIM, observeDialogSize, paintCompactDialogFrame } from './DialogStyle'
+import { applyDialogButton, applyPanelSurface, createDialogScroll, dialogContentRect, DIALOG_SCRIM, observeDialogSize } from './DialogStyle'
 
 const { ccclass } = _decorator
 
 const COLOR_MASK = DIALOG_SCRIM
-const COLOR_CARD = new Color(28, 23, 20, 255)
 const COLOR_ROW = new Color(40, 33, 28, 255)
 const COLOR_FIELD = new Color(22, 18, 15, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
@@ -243,10 +242,6 @@ export class NationPanelView extends Component {
     node.layer = this.node.layer
     this.node.addChild(node)
     node.addComponent(UITransform).setContentSize(new Size(PANEL_WIDTH, cardHeight))
-    const graphics = node.addComponent(Graphics)
-    graphics.fillColor = COLOR_CARD
-    graphics.rect(-PANEL_WIDTH / 2, -cardHeight / 2, PANEL_WIDTH, cardHeight)
-    graphics.fill()
   }
 
   private refreshChrome(): void {
@@ -263,7 +258,7 @@ export class NationPanelView extends Component {
     const card = this.node.getChildByName('NationCard')
     if (card === null) return
     card.setPosition(new Vec3(0, area.y + area.height / 2, 0))
-    paintCompactDialogFrame(card, Math.min(PANEL_WIDTH, area.width - 24), area.height - 12)
+    applyPanelSurface(card, 'ui.panel.iron', Math.min(PANEL_WIDTH, area.width - 24), area.height - 12)
   }
 
   private redraw(): void {
@@ -384,9 +379,7 @@ export class NationPanelView extends Component {
     const actionWidth = 110
     section.rows.slice(0, TREASURY_LOG_ROWS).forEach(row => {
       const plate = this.surface(`TechRow-${row.key}`, 0, y - 14, innerWidth, 46)
-      plate.fillColor = COLOR_ROW
-      plate.rect(-innerWidth / 2, -23, innerWidth, 46)
-      plate.fill()
+      applyPanelSurface(plate.node, 'ui.plate.band', innerWidth, 46, 'RowSurface')
       this.label(row.titleText, COLOR_TEXT, 15, left + 10, y - 4, 'left')
       this.label(row.detailText, COLOR_DIM, 13, left + 10, y - 20, 'left')
       if (row.effectText !== null) {
@@ -855,8 +848,10 @@ export class NationPanelView extends Component {
       this.label('国库这一次没读到（与"账上没有流水"是两回事）', COLOR_WARN, 14, left, top - 10, 'left')
       return top - 34
     }
-    let y = top
-    this.label(`国库余额 ${box.balanceText} / ${box.capText}`, COLOR_GOLD, 16, left, y, 'left')
+    let y = top - 16
+    const balanceRow = this.surface('TreasuryBalanceRow', 0, y - 13, innerWidth, 28)
+    applyPanelSurface(balanceRow.node, 'ui.plate.band', innerWidth, 28, 'RowSurface')
+    this.label(`国库余额 ${box.balanceText} / ${box.capText}`, COLOR_GOLD, 16, left + 10, y - 13, 'left')
     y -= 26
     const visible = this.draft.armed ? Math.min(box.logs.length, LOG_ROWS_WHEN_ARMED) : box.logs.length
     if (box.emptyText !== null) {
@@ -870,9 +865,7 @@ export class NationPanelView extends Component {
       }
       const width = innerWidth
       const plate = this.surface(`LogRow-${row.key}`, 0, y - ROW_HEIGHT / 2 + 2, width, ROW_HEIGHT - 6)
-      plate.fillColor = COLOR_ROW
-      plate.rect(-width / 2, -(ROW_HEIGHT - 6) / 2, width, ROW_HEIGHT - 6)
-      plate.fill()
+      applyPanelSurface(plate.node, 'ui.plate.band', width, ROW_HEIGHT - 6, 'RowSurface')
       this.label(row.headText, COLOR_TEXT, 15, left + 10, y - 6, 'left')
       this.label(row.balanceText, COLOR_GOLD, 14, left + width - 10, y - 6, 'right')
       this.label(row.detailText, COLOR_DIM, 12, left + 10, y - 22, 'left')

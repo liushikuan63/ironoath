@@ -16,10 +16,11 @@
 import { Color, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import type { MarchComposeView } from '../game/session/AppRoot'
 import type { RallyField, RallyNumberRow, RallyScope, RallyScopeRow } from '../game/world/MarchCompose'
+import { dialogLayout } from '../game/ui/DialogLayout'
 import { applySystemUiFont } from './UiFont'
 import { applyContainedSprite, applySlicedSprite } from './ArtCatalog'
 import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
-import { DIALOG_SCRIM, applyDialogButton, fitExistingDialog } from './DialogStyle'
+import { DIALOG_SCRIM, applyDialogButton, dialogContentRect, fitExistingDialog, observeDialogSize } from './DialogStyle'
 
 const COLOR_MASK = new Color(12, 10, 9, 232)
 /** 整屏遮罩色，与 `AwakenPickOverlay` / `ComposePickOverlay` 同一份参数 */
@@ -87,6 +88,7 @@ function bandGroupLeft(index: number): number {
 
 export class MarchComposeOverlay {
   private readonly node: Node
+  private readonly crestNode: Node
   private readonly titleLabel: Label
   private readonly coordLabel: Label
   private readonly noticeLabel: Label
@@ -166,17 +168,18 @@ export class MarchComposeOverlay {
     // 出征/战斗语义顶饰（§一 映射表：战斗 → 交叉长枪），贴在顶带正中、挂在底板之后（否则被底板盖住）。
     // 顶带高 72 ⇒ 取 44×50 居中在 PANEL_HEIGHT/2 - 36，上下各留 11px 铜边；净区里的标题在
     // `top - 24` 那一档，两者不同带、不相压。
-    const crest = new Node('crest')
-    crest.layer = this.node.layer
-    crest.addComponent(UITransform).setContentSize(new Size(44, 50))
-    crest.setPosition(new Vec3(0, PANEL_HEIGHT / 2 - PANEL_IRON_INSET.top / 2, 0))
-    applyContainedSprite(crest, 'ui.crest.battle', 44, 50)
-    this.node.addChild(crest)
+    this.crestNode = new Node('crest')
+    this.crestNode.layer = this.node.layer
+    this.crestNode.addComponent(UITransform).setContentSize(new Size(44, 50))
+    this.crestNode.setPosition(new Vec3(0, PANEL_HEIGHT / 2 - PANEL_IRON_INSET.top / 2, 0))
+    applyContainedSprite(this.crestNode, 'ui.crest.battle', 44, 50)
+    this.node.addChild(this.crestNode)
 
     // 内容从铜边**内侧**起算（inset 48/36）：原先的 `PANEL_HEIGHT / 2 - 28` 会把标题压进铜帽带。
     const top = PANEL_HEIGHT / 2 - PANEL_IRON_INSET.top
     const bottom = -PANEL_HEIGHT / 2 + PANEL_IRON_INSET.bottom
     this.titleLabel = this.addLabel(0, top - 24, 22, COLOR_GOLD)
+    this.titleLabel.node.name = 'title'
     this.coordLabel = this.addLabel(0, top - 50, 15, COLOR_DIM)
     this.totalLabel = this.addLabel(0, bottom + 56, 17, COLOR_TEXT)
     this.noticeLabel = this.addLabel(0, bottom + 30, 15, COLOR_WARN)
@@ -261,10 +264,25 @@ export class MarchComposeOverlay {
       const label = node.children.find(child => child.getComponent(Label) !== null)?.getComponent(Label)
       if (label !== null && label !== undefined) label.color = COLOR_TEXT
     })
-    this.layoutDialog = fitExistingDialog(this.node, plate,
-      [crest, this.titleLabel.node, this.coordLabel.node, ...this.rowNodes, this.bandNode,
+    const applyLayout = fitExistingDialog(this.node, plate,
+      [this.crestNode, this.titleLabel.node, this.coordLabel.node, ...this.rowNodes, this.bandNode,
         this.totalLabel.node, this.noticeLabel.node], footer, 'ui.panel.iron', width, PANEL_HEIGHT,
       { flow: true })
+    this.layoutDialog = () => {
+      const area = dialogContentRect(this.node)
+      const compact = dialogLayout(area,
+        width - PANEL_IRON_INSET.left - PANEL_IRON_INSET.right,
+        PANEL_HEIGHT - PANEL_IRON_INSET.top - PANEL_IRON_INSET.bottom).compact
+      // 矮屏优先保留标题、坐标与兵种行；纹章是装饰，可让出首屏内容空间。
+      this.crestNode.active = !compact
+      applyLayout(false)
+      const title = this.titleForCurrentWidth()
+      if (title !== null && this.titleLabel.string !== title) {
+        this.titleLabel.string = title
+        applyLayout(false)
+      }
+    }
+    observeDialogSize(this.node, () => this.layoutDialog())
 
     this.node.active = false
   }
@@ -330,6 +348,20 @@ export class MarchComposeOverlay {
     this.confirmNode.active = !view.submitting
     this.confirmLabel.color = view.submitting ? COLOR_DIM : COLOR_TEXT
     this.layoutDialog()
+  }
+
+  /** 标题固定在首屏；目标名过长时由省略号明确提示，避免标题被正文滚动窗裁掉。 */
+  private titleForCurrentWidth(): string | null {
+    const view = this.view
+    if (view === null) return null
+    const prefix = `${view.mode === 'SCOUT' ? '侦察' : view.mode === 'RALLY' ? '集结' : '出征'}：`
+    const width = this.titleLabel.node.getComponent(UITransform)?.width ?? PANEL_WIDTH
+    const maxUnits = Math.max(Array.from(prefix).length + 1,
+      Math.floor(width / (this.titleLabel.fontSize * 1.1)))
+    const name = Array.from(view.targetName)
+    if (Array.from(prefix).length + name.length <= maxUnits) return prefix + view.targetName
+    const keep = Math.max(1, maxUnits - Array.from(prefix).length - 1)
+    return prefix + name.slice(0, keep).join('') + '…'
   }
 
 

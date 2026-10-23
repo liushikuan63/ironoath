@@ -21,6 +21,7 @@ import { RANK_TABS } from '../game/power/RankBoard'
 import type { RankBoardView, RankTabKey } from '../game/power/RankBoard'
 import type { SeasonPanelView } from '../game/season/SeasonPanel'
 import type { PowerDetailResp } from '../net/generated/Protocol'
+import { applyPanelSurface } from './DialogStyle'
 import { applySystemUiFont, capWidth } from './UiFont'
 
 const { ccclass } = _decorator
@@ -30,7 +31,6 @@ const { ccclass } = _decorator
  * 这是美术方向常量而不是游戏数值，所以可以写在代码里
  * （铁律 1 约束的是时间/产量/攻击/掉落/冷却这类会影响平衡的数）。
  */
-const COLOR_BACKGROUND = new Color(24, 20, 18, 255)
 const COLOR_ROW = new Color(40, 33, 28, 255)
 const COLOR_ROW_ALT = new Color(48, 39, 33, 255)
 const COLOR_TOTAL = new Color(62, 44, 26, 255)
@@ -42,8 +42,11 @@ const COLOR_TEXT_DIM = new Color(158, 146, 128, 255)
 const COLOR_HINT = new Color(120, 168, 196, 255)
 
 const PANEL_WIDTH = 520
-const PANEL_HEIGHT = 600
-const ROW_HEIGHT = 36
+// 留出底部导航：#2387 真实截图证实600高底板压到导航后方，复用表体的(-190)翻页基线时，
+// 480高面板上移40后底边为-200，导航上沿为-210，留10单位净空。
+const PANEL_HEIGHT = 480
+const PANEL_CENTER_Y = 40
+const ROW_HEIGHT = 32
 const PADDING = 20
 
 /**
@@ -108,6 +111,8 @@ export class PowerPanelView extends Component {
    * <p>三个数据源各存一份、每次重画都从它们合成：这样"榜回来了但明细还没回来"不会互相覆盖。
    */
   private redraw(): void {
+    const position = this.node.position
+    this.node.setPosition(new Vec3(position.x, PANEL_CENTER_Y, position.z))
     this.clearRows()
     this.drawBackground()
 
@@ -285,8 +290,11 @@ export class PowerPanelView extends Component {
     button.setPosition(new Vec3(x, y, 0))
     const graphics = button.addComponent(Graphics)
     graphics.fillColor = enabled ? COLOR_ROW : COLOR_ROW_ALT
-    graphics.rect(-60, -18, 120, 36)
+    graphics.strokeColor = COLOR_COPPER_GOLD
+    graphics.lineWidth = 1.5
+    graphics.roundRect(-60, -18, 120, 36, 4)
     graphics.fill()
+    graphics.stroke()
 
     const label = this.createLabel(text, enabled ? COLOR_TEXT : COLOR_TEXT_DIM, 18)
     button.addChild(label.node)
@@ -313,8 +321,11 @@ export class PowerPanelView extends Component {
         -(PANEL_WIDTH - PADDING * 2) / 2 + width * index + width / 2, y - 17, 0))
       const graphics = node.addComponent(Graphics)
       graphics.fillColor = tab.active ? COLOR_TOTAL : COLOR_ROW
-      graphics.rect(-(width - 4) / 2, -17, width - 4, 34)
+      graphics.strokeColor = COLOR_COPPER_GOLD
+      graphics.lineWidth = 1.5
+      graphics.roundRect(-(width - 4) / 2, -17, width - 4, 34, 4)
       graphics.fill()
+      graphics.stroke()
 
       const label = this.createLabel(tab.label, tab.active ? COLOR_COPPER_GOLD : COLOR_TEXT, 17)
       node.addChild(label.node)
@@ -338,10 +349,7 @@ export class PowerPanelView extends Component {
     const transform = background.addComponent(UITransform)
     transform.setContentSize(PANEL_WIDTH, PANEL_HEIGHT)
     transform.setAnchorPoint(0.5, 0.5)
-    const graphics = background.addComponent(Graphics)
-    graphics.fillColor = COLOR_BACKGROUND
-    graphics.rect(-PANEL_WIDTH / 2, -PANEL_HEIGHT / 2, PANEL_WIDTH, PANEL_HEIGHT)
-    graphics.fill()
+    applyPanelSurface(background, 'ui.panel.iron', PANEL_WIDTH, PANEL_HEIGHT)
     this.rows.push(background)
   }
 
@@ -373,8 +381,12 @@ export class PowerPanelView extends Component {
 
     const graphics = row.addComponent(Graphics)
     graphics.fillColor = background
-    graphics.rect(-(PANEL_WIDTH - PADDING * 2) / 2, -ROW_HEIGHT, PANEL_WIDTH - PADDING * 2, ROW_HEIGHT)
+    graphics.strokeColor = COLOR_COPPER_GOLD
+    graphics.lineWidth = 1.5
+    graphics.roundRect(-(PANEL_WIDTH - PADDING * 2) / 2, -ROW_HEIGHT,
+      PANEL_WIDTH - PADDING * 2, ROW_HEIGHT, 4)
     graphics.fill()
+    graphics.stroke()
 
     // 左右边缘锚定并预留列间距；自动宽度标签以中心贴边会把文字推出底板。
     const availableWidth = PANEL_WIDTH - PADDING * 2 - 24 - 12
@@ -396,7 +408,7 @@ export class PowerPanelView extends Component {
     capWidth(value, availableWidth - nameWidth)
 
     this.rows.push(row)
-    return y - ROW_HEIGHT - 4
+    return y - ROW_HEIGHT - 2
   }
 
   private drawSeparator(y: number): number {
@@ -427,9 +439,13 @@ export class PowerPanelView extends Component {
     }
     for (const line of lines) {
       const label = this.createLabel(line, COLOR_HINT, 17)
+      label.node.name = 'PanelHintLine'
       this.node.addChild(label.node)
-      label.node.setPosition(new Vec3(0, y - 12, 0))
-      label.horizontalAlign = Label.HorizontalAlign.CENTER
+      label.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+      label.node.setPosition(new Vec3(-PANEL_WIDTH / 2 + PADDING + 12, y - 12, 0))
+      label.horizontalAlign = Label.HorizontalAlign.LEFT
+      label.enableWrapText = false
+      capWidth(label, PANEL_WIDTH - PADDING * 2 - 24)
       this.rows.push(label.node)
       y -= 22
     }

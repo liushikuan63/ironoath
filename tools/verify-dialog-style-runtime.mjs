@@ -306,7 +306,13 @@ try {
         check(`${spec.host}/${name} 标题、坐标、正文行和说明自身框不相交`, geometry.bodyOverlaps.length === 0, geometry.bodyOverlaps)
         if (spec.host === 'MarchCompose') {
           check(`MarchCompose/${name} 条行自身框上锚与实际向下绘制一致`, geometry.bodyBoxes.filter(row => /^composeRow|^rallyBand$/.test(row.name)).every(row => row.anchorY === 1), geometry.bodyBoxes)
-          check(`MarchCompose/${name} 长标题真实内宽换行`, geometry.seen.some(row => row.text.startsWith('出征：') && row.box.height > 60), geometry.seen)
+          const title = geometry.seen.find(row => row.text.startsWith('出征：'))
+          check(`MarchCompose/${name} 长目标标题完整可见、单行收缩且以省略号说明截断`,
+            title !== undefined && title.visibleHeight >= title.box.height - 1 && title.box.height <= 40
+              && title.width <= geometry.clip.width + 1 && title.text.endsWith('…'), title)
+          const coord = geometry.seen.find(row => row.text.startsWith('坐标'))
+          check(`MarchCompose/${name} 坐标副标题完整留在首屏`,
+            coord !== undefined && coord.visibleHeight >= coord.box.height - 1, coord)
         }
       }
       if (spec.host === 'giftPopup') {
