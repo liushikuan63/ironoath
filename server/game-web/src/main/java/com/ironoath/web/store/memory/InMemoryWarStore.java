@@ -180,6 +180,19 @@ public final class InMemoryWarStore implements WarStore {
         return latestSnapshot().map(this::toDomain);
     }
 
+    @Override public synchronized Optional<WarScoreBoard> findByStartedAt(long startedAt) {
+        return Optional.ofNullable(byId.get(WarStore.documentIdOf(startedAt))).map(this::toDomain);
+    }
+
+    @Override public synchronized WarScoreBoard.BattleEvent recordBattleEvent(WarScoreBoard.BattleEvent event) {
+        if(event==null)throw new IllegalArgumentException("原战斗事件不得为空");
+        var original=byId.get(WarStore.documentIdOf(event.warStartedAt()));
+        if(original==null)throw new IllegalStateException("原战事缺失，不能推定原战斗已记账");
+        var board=toDomain(original);
+        if(board.applyBattleEvent(event))writeBound(board);
+        return event;
+    }
+
     /**
      * 惰性结算。<b>{@code synchronized} 不是装饰</b>：判到期、{@code settle()}、整份写回三步必须在
      * 本对象的同一把监视器里，与 {@link #insertIfNoneActive}／{@link #recordKills} 共用同一把锁 ——

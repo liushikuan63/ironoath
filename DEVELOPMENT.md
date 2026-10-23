@@ -388,3 +388,5 @@ B13战后行军投影（#2382）：March.applyStrategicSurvivors原子消费原c
 B13战报疲劳归属（#2383）：record按主人视角取本人伤兵，击杀仍取对方阵亡，不能共用一个反侧选择。BattleReportFatigueTest使用声明的伤亡服务夹具、真实BattleReportService与内存/Mongo WarStore，验证不对称及零本人伤兵、对称对照、仓储重建后归属和击杀不变；不是新内核平衡验收。此修复不提供record重放幂等性，恢复不能直接重调该累加入口。
 
 B13原目标赛季增量（#2384）：recordScopedIncrement在原season/board/player榜行原子保存分数与每source最近sequence的完整ScopedIncrement，重试只有原载荷完全一致才不加分，旧代次/换载荷/新代复用当前回执op拒绝，0增量也有凭据。调用者须持原季/成员/锁序与目标操作全员完成屏障，允许玩家未参与的序号间隔，不允许清季后恢复旧操作。普通report改为字段upsert保凭据，accumulate原累加语义保留；Mongo原score/receipt CAS有界重读，未知写确认独立完整读回、读回错保原异常，安全编码source字段并核原身份，写前防long溢出。旧无凭据BSON不读时回写，旧整行save二进制降级会丢凭据须迁移，按季清理随行删。无真实producer接线，不作稳定战报/War事件或攻占已验。
+
+B13原战事全成员事件（#2385）：WarScoreBoard.BattleEvent冻原source序号op/战事startedAt/时点/完整成员BattleImpact、原参战资格和本次3项记账系数，freeze口须使用同一捕获配置物化板；不从当前成员或规则重算旧效果，不替产品分配成员击杀。apply先全量校验/算术/复制再变更，晚成员溢出也不改早成员；原伤兵上限只限本次新增，不压低后续已提交高疲劳。recordBattleEvent/findByStartedAt显式原war、不走latest，全成员效果+每目标最近回执同快照CAS；原回执闭战仍可确认，缺war/闭战缺回执拒绝。保旧Snapshot14/12/11构造与BSON缺列不回写、March等所有普通写口/直接旧版本save冲突；未知确认独立精确读回、读回错保原异常。新二进制保字段，旧版降级须迁移。原目标全效果屏障与关战/赛季快照前排空待COMBAT尚待实际producer接线，本格不宣称真实攻占。

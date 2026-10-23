@@ -154,6 +154,8 @@ public final class WarScoreBoard {
     private final Map<String, Long> fatigue = new LinkedHashMap<>();
     /** 行军疲劳的永久回执：与疲劳同档，恢复出发时不再加第二次。 */
     private final Map<String, MarchFatigueReceipt> marchFatigueReceipts = new LinkedHashMap<>();
+    /** 每目标仅保最近一代的全成员原战斗回执，不按每场/每成员无限追加历史。 */
+    private final Map<String,BattleEvent> battleEvents = new LinkedHashMap<>();
     /**
      * 玩家 id → 这一场里他消灭的单位数。<b>赛季积分要按人发，所以"谁打的"必须留在这块板上</b>：
      * 只记国家维度的击杀，到了赛季结算就分不出该给谁加分，届时唯一的补救办法是回头翻战报 ——
@@ -608,6 +610,101 @@ public final class WarScoreBoard {
         return true;
     }
 
+    public record BattleImpact(String playerId,String nationId,long kills,long ownWounded) {
+        public BattleImpact {
+            if(playerId==null || playerId.isBlank() || nationId!=null && nationId.isBlank() || kills<0 || ownWounded<0)
+                throw new IllegalArgumentException("原成员国战贡献身份/数量无效");
+        }
+    }
+    /** 只冻结本次已发生效果所需系数，不冻结整块战事的现行规则。 */
+    public record ContributionRates(long killScorePerUnit,long fatiguePerWounded,long fatigueMax) {
+        public ContributionRates {
+            if(killScorePerUnit<=0 || fatiguePerWounded<0 || fatigueMax<=0)throw new IllegalArgumentException("原战斗记账系数无效");
+        }
+    }
+    public record BattleEffect(BattleImpact impact,boolean participant) {
+        public BattleEffect {
+            if(impact==null || participant && impact.nationId()==null)throw new IllegalArgumentException("原成员参战归属缺失");
+        }
+    }
+    /** 原战事/目标操作/全成员事实；载荷验证不是原成员授权，调用者仍须持目标操作屏障。 */
+    public record BattleEvent(String sourceId,long sequence,String operationId,long warStartedAt,long happenedAt,
+                              ContributionRates rates,List<BattleEffect> effects) {
+        public BattleEvent {
+            if(sourceId==null || sourceId.isBlank() || operationId==null || operationId.isBlank() || sequence<1
+                    || warStartedAt<0 || happenedAt<warStartedAt || rates==null || effects==null || effects.isEmpty())
+                throw new IllegalArgumentException("原战斗事件身份/时点/成员缺失");
+            effects=List.copyOf(effects);var players=new LinkedHashSet<String>();long kills=0;
+            for(var effect:effects) {
+                if(effect==null || !players.add(effect.impact().playerId()))throw new IllegalArgumentException("原战斗成员重复或缺失");
+                kills=Math.addExact(kills,effect.impact().kills());
+                if(effect.participant()) {
+                    Math.multiplyExact(effect.impact().kills(),rates.killScorePerUnit());
+                    Math.multiplyExact(effect.impact().ownWounded(),rates.fatiguePerWounded());
+                }
+            }
+        }
+    }
+
+    /** 必须从同一捕获配置物化的原战事冻结，不读取时钟/当前成员或数据库。 */
+    public BattleEvent freezeBattleEvent(String sourceId,long sequence,String operationId,long happenedAt,List<BattleImpact> impacts) {
+        if(happenedAt<startedAt)throw new IllegalArgumentException("战斗不能早于原战事");
+        requireSiegeOrPrep();
+        long deadline=phase==Phase.SIEGE?Math.addExact(siegeClockStartedAt(),rules.durationMillis()):preparationDeadlineAt();
+        if(happenedAt>=deadline)throw new IllegalStateException("原战事时点已结束，不能冻结新贡献");
+        if(impacts==null)throw new IllegalArgumentException("原战斗成员缺失");
+        var effects=new ArrayList<BattleEffect>();for(var impact:impacts){if(impact==null)throw new IllegalArgumentException("原战斗成员缺失");effects.add(new BattleEffect(impact,impact.nationId()!=null && scores.containsKey(impact.nationId())));}
+        return new BattleEvent(sourceId,sequence,operationId,startedAt,happenedAt,
+                new ContributionRates(rules.killScorePerUnit(),rules.fatiguePerWounded(),rules.fatigueMax()),effects);
+    }
+
+    public BattleEvent battleEvent(String sourceId) {
+        if(sourceId==null || sourceId.isBlank())throw new IllegalArgumentException("原目标来源缺失");
+        return battleEvents.get(sourceId);
+    }
+
+    /** 全成员算完且无溢出后一次变更；仓储须将所有效果与回执在同一CAS快照持久化。 */
+    public boolean applyBattleEvent(BattleEvent event) {
+        if(event==null || event.warStartedAt()!=startedAt)throw new IllegalArgumentException("原战斗不属于这场战事");
+        var previous=battleEvents.get(event.sourceId());
+        if(previous!=null) {
+            if(previous.sequence()==event.sequence()) {
+                if(!previous.equals(event))throw new IllegalStateException("同代次原战斗载荷冲突");
+                return false;
+            }
+            if(event.sequence()<previous.sequence() || event.operationId().equals(previous.operationId()))
+                throw new IllegalStateException("原战斗过期或新代复用了当前回执操作");
+        }
+        requireSiegeOrPrep();
+        var nextScores=new LinkedHashMap<String,long[]>();scores.forEach((id,parts)->nextScores.put(id,parts.clone()));
+        var nextPlayers=new LinkedHashMap<>(playerKills);var nextFatigue=new LinkedHashMap<>(fatigue);long nextTotal=totalKills;
+        for(var effect:event.effects()) {
+            var member=effect.impact();long kills=member.kills();
+            if(kills>0) {
+                nextTotal=Math.addExact(nextTotal,kills);nextPlayers.put(member.playerId(),Math.addExact(nextPlayers.getOrDefault(member.playerId(),0L),kills));
+                if(effect.participant()) {
+                    var parts=nextScores.get(member.nationId());if(parts==null)throw new IllegalStateException("原参战国家行缺失");
+                    parts[1]=Math.addExact(parts[1],Math.multiplyExact(kills,event.rates().killScorePerUnit()));
+                }
+            }
+            if(effect.participant()) {
+                if(!nextScores.containsKey(member.nationId()))throw new IllegalStateException("原参战国家行缺失");
+                if(member.ownWounded()>0) {
+                    long current=nextFatigue.getOrDefault(member.playerId(),0L),limit=event.rates().fatigueMax();
+                    if(current<0)throw new IllegalStateException("原玩家疲劳存档损坏");
+                    // 旧事件仅消耗原上限内剩余额度，不能抹掉后来已提交的更高疲劳。
+                    if(current<limit) {
+                        long delta=Math.multiplyExact(member.ownWounded(),event.rates().fatiguePerWounded());
+                        current=delta>=limit-current?limit:Math.addExact(current,delta);
+                    }
+                    nextFatigue.put(member.playerId(),current);
+                }
+            }
+        }
+        scores.clear();scores.putAll(nextScores);playerKills.clear();playerKills.putAll(nextPlayers);fatigue.clear();fatigue.putAll(nextFatigue);
+        totalKills=nextTotal;battleEvents.put(event.sourceId(),event);return true;
+    }
+
     /**
      * 落盘用的完整快照：除 {@code rules} 之外，{@link #restore} 要吃的每一项都在这里。
      *
@@ -645,7 +742,16 @@ public final class WarScoreBoard {
                            Map<String, Long> fatigue, Map<String, Long> playerKills,
                            List<String> goalClaimed, long totalKills,
                            List<MarchFatigueReceipt> marchFatigueReceipts, Long siegeStartedAt,
-                           Long preparationExpiresAt, Boolean abandonedWithoutSiege) {
+                           Long preparationExpiresAt, Boolean abandonedWithoutSiege,List<BattleEvent> battleEvents) {
+
+        /** 旧14字段快照：没有战略战斗回执，读时兼容，不迁移回写。 */
+        public Snapshot(long startedAt,Phase phase,String initiatorNationId,List<NationRow> nations,
+                        String capitalHolder,long capitalHeldSince,Map<String,Long> fatigue,Map<String,Long> playerKills,
+                        List<String> goalClaimed,long totalKills,List<MarchFatigueReceipt> marchFatigueReceipts,Long siegeStartedAt,
+                        Long preparationExpiresAt,Boolean abandonedWithoutSiege) {
+            this(startedAt,phase,initiatorNationId,nations,capitalHolder,capitalHeldSince,fatigue,playerKills,goalClaimed,
+                    totalKills,marchFatigueReceipts,siegeStartedAt,preparationExpiresAt,abandonedWithoutSiege,List.of());
+        }
 
         public Snapshot(long startedAt, Phase phase, String initiatorNationId,
                         List<NationRow> nations, String capitalHolder, long capitalHeldSince,
@@ -680,6 +786,7 @@ public final class WarScoreBoard {
             goalClaimed = List.copyOf(goalClaimed == null ? List.of() : goalClaimed);
             marchFatigueReceipts = List.copyOf(
                     marchFatigueReceipts == null ? List.of() : marchFatigueReceipts);
+            battleEvents=List.copyOf(battleEvents==null?List.of():battleEvents);
         }
     }
 
@@ -715,7 +822,7 @@ public final class WarScoreBoard {
         return new Snapshot(startedAt, phase, initiatorNationId, rows, capitalHolder, capitalHeldSince,
                 new LinkedHashMap<>(fatigue), new LinkedHashMap<>(playerKills),
                 List.copyOf(goalClaimed), totalKills, List.copyOf(marchFatigueReceipts.values()), siegeStartedAt,
-                preparationExpiresAt, abandonedWithoutSiege);
+                preparationExpiresAt, abandonedWithoutSiege,List.copyOf(battleEvents.values()));
     }
 
     /**
@@ -748,6 +855,10 @@ public final class WarScoreBoard {
             if (previous != null && !previous.equals(receipt)) {
                 throw new IllegalArgumentException("存档中同一 March ID 有相互冲突的疲劳回执");
             }
+        }
+        for(var event:snapshot.battleEvents()) {
+            if(event.warStartedAt()!=snapshot.startedAt() || board.battleEvents.putIfAbsent(event.sourceId(),event)!=null)
+                throw new IllegalArgumentException("存档原战斗回执战事不匹配或目标来源重复");
         }
         return board;
     }

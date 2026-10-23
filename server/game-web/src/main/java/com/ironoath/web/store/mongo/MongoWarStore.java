@@ -149,6 +149,36 @@ public final class MongoWarStore implements WarStore {
         return Optional.ofNullable(latestDocument()).map(this::toDomain);
     }
 
+    @Override public Optional<WarScoreBoard> findByStartedAt(long startedAt) {
+        var doc=mongo.findById(WarStore.documentIdOf(startedAt),WarDocument.class,WarDocument.COLLECTION);
+        if(doc==null)return Optional.empty();
+        if(doc.state()==null || doc.startedAt()!=startedAt || doc.state().startedAt()!=startedAt)
+            throw new IllegalStateException("原战事存档身份损坏");
+        return Optional.of(toDomain(doc));
+    }
+
+    @Override public WarScoreBoard.BattleEvent recordBattleEvent(WarScoreBoard.BattleEvent event) {
+        if(event==null)throw new IllegalArgumentException("原战斗事件不得为空");
+        String id=WarStore.documentIdOf(event.warStartedAt());
+        synchronized(activeLock) {
+            for(int attempt=0;attempt<MAX_ATTEMPTS;attempt++) {
+                var doc=mongo.findById(id,WarDocument.class,WarDocument.COLLECTION);
+                if(doc==null || doc.state()==null)throw new IllegalStateException("原战事缺失，不能推定原战斗已记账");
+                if(doc.startedAt()!=event.warStartedAt() || doc.state().startedAt()!=event.warStartedAt())throw new IllegalStateException("原战事存档身份损坏");
+                var board=toDomain(doc);if(!board.applyBattleEvent(event))return event;
+                try {if(replace(doc,board))return event;}
+                catch(RuntimeException uncertain) {
+                    try {
+                        var persisted=findByStartedAt(event.warStartedAt());
+                        if(persisted.isPresent() && event.equals(persisted.get().battleEvent(event.sourceId())))return event;
+                    }catch(RuntimeException readFailure){uncertain.addSuppressed(readFailure);}
+                    throw uncertain;
+                }
+            }
+            throw conflict();
+        }
+    }
+
     @Override
     public Optional<WarStore.Settlement> settleIfExpired(long now) {
         synchronized (activeLock) {

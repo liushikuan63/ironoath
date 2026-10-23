@@ -40,8 +40,19 @@ public interface WarStore {
         if (board == null) {
             throw new IllegalArgumentException("board 不得为 null：没有板子就推不出主键");
         }
-        return "war_" + board.startedAt();
+        return documentIdOf(board.startedAt());
     }
+
+    static String documentIdOf(long startedAt) { return "war_"+startedAt; }
+
+    /** 明确原战事读取，不能用latest替代原COMBAT的战事身份。 */
+    Optional<WarScoreBoard> findByStartedAt(long startedAt);
+
+    /**
+     * 全成员原击杀/本人伤兵效果与每目标最新事件回执同一快照CAS持久化。
+     * 原季/成员/目标操作屏障及关战前恢复仍由调用者建立；缺战事或已关战且无原回执须拒绝。
+     */
+    WarScoreBoard.BattleEvent recordBattleEvent(WarScoreBoard.BattleEvent event);
 
     /**
      * 原子地建档：<b>只在没有人写过这一场时</b>插入（{@code _id} 唯一约束）。
