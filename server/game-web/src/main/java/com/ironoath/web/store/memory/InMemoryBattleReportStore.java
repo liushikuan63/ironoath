@@ -42,6 +42,14 @@ public final class InMemoryBattleReportStore implements BattleReportStore {
         byId.putIfAbsent(report.reportId(), report);
     }
 
+    @Override public BattleReport saveExact(BattleReport report) {
+        if(report==null)throw new IllegalArgumentException("原战报不得为空");
+        var previous=byId.putIfAbsent(report.reportId(),report);
+        if(previous==null)return report;
+        if(!previous.equals(report))throw new IllegalStateException("同战报ID的原载荷冲突");
+        return previous;
+    }
+
     @Override
     public Optional<BattleReport> findById(String reportId) {
         return Optional.ofNullable(reportId == null ? null : byId.get(reportId));

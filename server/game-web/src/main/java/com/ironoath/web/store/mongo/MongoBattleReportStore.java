@@ -52,6 +52,25 @@ public final class MongoBattleReportStore implements BattleReportStore {
         }
     }
 
+    @Override public BattleReport saveExact(BattleReport report) {
+        if(report==null)throw new IllegalArgumentException("原战报不得为空");
+        RuntimeException writeFailure=null;
+        try{mongo.insert(BattleReportDocument.fromDomain(report),BattleReportDocument.COLLECTION);}
+        catch(RuntimeException failure){writeFailure=failure;}
+        Optional<BattleReport> persisted;
+        try{persisted=findById(report.reportId());}
+        catch(RuntimeException readFailure) {
+            if(writeFailure==null)throw readFailure;
+            if(readFailure!=writeFailure)writeFailure.addSuppressed(readFailure);
+            throw writeFailure;
+        }
+        // 包括表面成功的插入也独立读回完整事实，不把未确认写或被清理后的缺档当成功。
+        if(persisted.isPresent() && persisted.get().equals(report))return persisted.get();
+        if(writeFailure!=null && !(writeFailure instanceof DuplicateKeyException && persisted.isPresent()))throw writeFailure;
+        if(persisted.isPresent())throw new IllegalStateException("原战报ID读回与待确认的完整载荷不一致",writeFailure);
+        throw new IllegalStateException("原战报尚未完整确认，保留原操作待恢复");
+    }
+
     @Override
     public Optional<BattleReport> findById(String reportId) {
         if (reportId == null) {

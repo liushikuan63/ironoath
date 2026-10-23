@@ -66,6 +66,23 @@ public record BattleReport(String reportId,
         }
     }
 
+    /** 原操作与主人共同决定ID；长度分帧避免分隔符歧义，不读时钟/配置或随机数。 */
+    public static String idForOperation(String operationId,String ownerId) {
+        requireText(operationId,"operationId");requireText(ownerId,"ownerId");
+        var utf8=java.nio.charset.StandardCharsets.UTF_8.newEncoder();
+        if(!utf8.canEncode(operationId) || !utf8.canEncode(ownerId))
+            throw new IllegalArgumentException("原操作/主人ID必须是有效Unicode，不能以替换字节生成战报ID");
+        try {
+            var digest=java.security.MessageDigest.getInstance("SHA-256");
+            digest.update("PROJECT_IRON_OATH/battle-report/v1".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            for(String value:List.of(operationId,ownerId)) {
+                byte[] bytes=value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                digest.update(java.nio.ByteBuffer.allocate(Integer.BYTES).putInt(bytes.length).array());digest.update(bytes);
+            }
+            return "battle_"+java.util.HexFormat.of().formatHex(digest.digest());
+        }catch(java.security.NoSuchAlgorithmException impossible){throw new IllegalStateException(impossible);}
+    }
+
     /** 是否已过期。过期的战报不下发详情，只等惰性清理。 */
     public boolean expired(long now) {
         return now >= expiresAt;

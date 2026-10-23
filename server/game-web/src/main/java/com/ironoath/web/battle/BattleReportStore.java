@@ -21,6 +21,13 @@ public interface BattleReportStore {
     /** 写入一份战报。同一 reportId 重复写入视为幂等（不覆盖）。 */
     void save(BattleReport report);
 
+    /**
+     * 严格确认完整原战报：同ID内容不同须拒绝，不覆盖首份及分享元数据。
+     * 返回完整存储事实；未知写确认须独立精确读回，缺失不能猜完成。
+     * 不发击杀/疲劳/奖励，原操作权责及原TTL由调用者冻结；保留旧save兼容语义。
+     */
+    BattleReport saveExact(BattleReport report);
+
     Optional<BattleReport> findById(String reportId);
 
     /** 某玩家的全部战报，按生成时刻倒序（最新的在前）。 */
