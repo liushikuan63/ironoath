@@ -23,7 +23,10 @@ import com.ironoath.web.season.SeasonBoardStore;
 public final class InMemorySeasonBoardStore implements SeasonBoardStore {
 
     /** seasonId → board → (id → entry) */
-    private final Map<String, Map<SeasonSettlement.Board, Map<String, SeasonSettlement.Entry>>> boards =
+    private record Row(SeasonSettlement.Entry entry,Map<String,ScopedIncrement> receipts) {
+        private Row { receipts=Map.copyOf(receipts); }
+    }
+    private final Map<String, Map<SeasonSettlement.Board, Map<String, Row>>> boards =
             new ConcurrentHashMap<>();
     /** seasonId:board → 快照。key 拼法与 mongo 实现的 _id 同一条，便于两边对着读 */
     private final Map<String, SeasonSettlement.Snapshot> snapshots = new ConcurrentHashMap<>();
@@ -43,10 +46,10 @@ public final class InMemorySeasonBoardStore implements SeasonBoardStore {
         if (entry == null) {
             throw new IllegalArgumentException("entry 不得为 null");
         }
-        Map<String, SeasonSettlement.Entry> rows = boards
+        Map<String, Row> rows = boards
                 .computeIfAbsent(seasonId, k -> new ConcurrentHashMap<>())
                 .computeIfAbsent(board, k -> new ConcurrentHashMap<>());
-        rows.put(entry.id(), entry);
+        rows.compute(entry.id(),(id,old)->new Row(entry,old==null?Map.of():old.receipts()));
     }
 
     @Override
@@ -59,13 +62,32 @@ public final class InMemorySeasonBoardStore implements SeasonBoardStore {
         if (delta < 0) {
             throw new IllegalArgumentException("累加型上报的增量不得为负，实际=" + delta);
         }
-        Map<String, SeasonSettlement.Entry> rows = boards
+        Map<String, Row> rows = boards
                 .computeIfAbsent(seasonId, k -> new ConcurrentHashMap<>())
                 .computeIfAbsent(board, k -> new ConcurrentHashMap<>());
         // compute 的原子性由 ConcurrentHashMap 保证：同一格上的并发累加不会丢一笔
-        rows.compute(entry.id(), (id, old) -> old == null
-                ? new SeasonSettlement.Entry(id, entry.name(), delta)
-                : new SeasonSettlement.Entry(id, entry.name(), old.score() + delta));
+        rows.compute(entry.id(), (id, old) -> new Row(new SeasonSettlement.Entry(id,entry.name(),
+                old==null?delta:old.entry().score()+delta),old==null?Map.of():old.receipts()));
+    }
+
+    @Override public ScopedIncrement recordScopedIncrement(String seasonId,SeasonSettlement.Board board,ScopedIncrement increment) {
+        SeasonBoardStore.requireKey(seasonId,board);
+        if(increment==null)throw new IllegalArgumentException("原事件不得为空");
+        var rows=boards.computeIfAbsent(seasonId,k->new ConcurrentHashMap<>()).computeIfAbsent(board,k->new ConcurrentHashMap<>());
+        rows.compute(increment.playerId(),(id,old)->{
+            var previous=old==null?null:old.receipts().get(increment.sourceId());
+            if(SeasonBoardStore.isScopedReplay(previous,increment))return old;
+            long score=Math.addExact(old==null?0:old.entry().score(),increment.delta());
+            var receipts=new java.util.LinkedHashMap<String,ScopedIncrement>(old==null?Map.of():old.receipts());receipts.put(increment.sourceId(),increment);
+            return new Row(new SeasonSettlement.Entry(id,increment.name(),score),receipts);
+        });
+        return increment;
+    }
+
+    @Override public java.util.Optional<ScopedIncrement> scopedIncrementOf(String seasonId,SeasonSettlement.Board board,String playerId,String sourceId) {
+        SeasonBoardStore.requireKey(seasonId,board);SeasonBoardStore.requireText(playerId,"playerId");SeasonBoardStore.requireText(sourceId,"sourceId");
+        var row=boards.getOrDefault(seasonId,Map.of()).getOrDefault(board,Map.of()).get(playerId);
+        return java.util.Optional.ofNullable(row==null?null:row.receipts().get(sourceId));
     }
 
     @Override
@@ -137,10 +159,10 @@ public final class InMemorySeasonBoardStore implements SeasonBoardStore {
     @Override
     public int purgeSeason(String seasonId) {
         int removed = 0;
-        Map<SeasonSettlement.Board, Map<String, SeasonSettlement.Entry>> boardsOfSeason =
+        Map<SeasonSettlement.Board, Map<String, Row>> boardsOfSeason =
                 boards.remove(seasonId);
         if (boardsOfSeason != null) {
-            for (Map<String, SeasonSettlement.Entry> rows : boardsOfSeason.values()) {
+            for (Map<String, Row> rows : boardsOfSeason.values()) {
                 removed += rows.size();
             }
         }
@@ -184,11 +206,11 @@ public final class InMemorySeasonBoardStore implements SeasonBoardStore {
     }
 
     /** 榜单排序的唯一实现（与领域层的口径逐字一致：分数降序、同分按 id 升序）。 */
-    static List<SeasonSettlement.Entry> sorted(Map<String, SeasonSettlement.Entry> rows) {
+    private static List<SeasonSettlement.Entry> sorted(Map<String, Row> rows) {
         if (rows == null || rows.isEmpty()) {
             return List.of();
         }
-        List<SeasonSettlement.Entry> out = new ArrayList<>(rows.values());
+        List<SeasonSettlement.Entry> out = new ArrayList<>();rows.values().forEach(row->out.add(row.entry()));
         out.sort(Comparator.comparingLong(SeasonSettlement.Entry::score).reversed()
                 .thenComparing(SeasonSettlement.Entry::id));
         return List.copyOf(out);

@@ -29,6 +29,42 @@ import com.ironoath.core.season.SeasonSettlement;
  */
 public interface SeasonBoardStore {
 
+    /** 原目标操作的一次增量；调用者须持原季/原成员归属与单目标连续操作屏障，不从当前赛季推导。 */
+    record ScopedIncrement(String sourceId,long sequence,String operationId,String playerId,String name,long delta) {
+        public ScopedIncrement {
+            requireText(sourceId,"sourceId");requireText(operationId,"operationId");requireText(playerId,"playerId");
+            if(sequence<1 || delta<0)throw new IllegalArgumentException("原事件代次须为正，增量不得为负");
+        }
+    }
+
+    /**
+     * 分数与原事件凭据同一行原子更新。每source只留最近代次；原操作全员完成后才可推进下一操作。
+     * 同代次完整原载荷重试不加分；旧代次/换载荷/新代次复用旧操作ID拒绝。0增量也记原确认。
+     * 不提供原季/锁序/玩家归属授权，不可在未完成旧目标操作时跨代调用。
+     */
+    ScopedIncrement recordScopedIncrement(String seasonId,SeasonSettlement.Board board,ScopedIncrement increment);
+
+    /** 独立读回当前source原凭据；缺档不是已完成。 */
+    java.util.Optional<ScopedIncrement> scopedIncrementOf(String seasonId,SeasonSettlement.Board board,String playerId,String sourceId);
+
+    static void requireText(String value,String field) {
+        if(value==null || value.isBlank())throw new IllegalArgumentException(field+"不得为空");
+    }
+
+    /** 两套仓储同一进度判定，完整相等才是原回执；不能用总分/序号猜幂等。 */
+    static boolean isScopedReplay(ScopedIncrement previous,ScopedIncrement next) {
+        if(previous==null)return false;
+        if(!previous.sourceId().equals(next.sourceId()) || !previous.playerId().equals(next.playerId()))
+            throw new IllegalStateException("原事件凭据归属冲突");
+        if(previous.sequence()==next.sequence()) {
+            if(!previous.equals(next))throw new IllegalStateException("同代次原事件载荷冲突");
+            return true;
+        }
+        if(next.sequence()<previous.sequence() || next.operationId().equals(previous.operationId()))
+            throw new IllegalStateException("原事件过期或新代次复用了旧操作");
+        return false;
+    }
+
     /**
      * 上报一条（同季、同榜、同 id 覆盖；分数是累计量，不累加）。
      *

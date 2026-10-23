@@ -386,3 +386,5 @@ B13最终医院结果（#2381）：StrategicBattleHospitalSettlement.fromReceipt
 B13战后行军投影（#2382）：March.applyStrategicSurvivors原子消费原currentMembers/冻结survivors，正余兵HOLD或RETURN，返程保实际份额让现returnRallyTroops按当前兵权退款；先核成员/兵种/总兵/时点和加时溢出，保全局unitId排序。StrategicBattleMarchOutcome存原COMBAT/侧/具体after，绑定beforeVersion，NPC无玩家投影，全灭为ANNIHILATED+after=null版本删除意图。真实March仅五态，拒0兵出发/fromSnapshot保持不变，无FINISHED；此前0兵终态草案已纠正。私有配置max1/drawgap1的实际kernel夹具覆盖DRAW，不改产品配置或当默认平衡。投影仍无生产执行器，不写owner/NPC/队列/战报，不替代原权责/准入/所有国家→所有集结→目标锁。
 
 B13战报疲劳归属（#2383）：record按主人视角取本人伤兵，击杀仍取对方阵亡，不能共用一个反侧选择。BattleReportFatigueTest使用声明的伤亡服务夹具、真实BattleReportService与内存/Mongo WarStore，验证不对称及零本人伤兵、对称对照、仓储重建后归属和击杀不变；不是新内核平衡验收。此修复不提供record重放幂等性，恢复不能直接重调该累加入口。
+
+B13原目标赛季增量（#2384）：recordScopedIncrement在原season/board/player榜行原子保存分数与每source最近sequence的完整ScopedIncrement，重试只有原载荷完全一致才不加分，旧代次/换载荷/新代复用当前回执op拒绝，0增量也有凭据。调用者须持原季/成员/锁序与目标操作全员完成屏障，允许玩家未参与的序号间隔，不允许清季后恢复旧操作。普通report改为字段upsert保凭据，accumulate原累加语义保留；Mongo原score/receipt CAS有界重读，未知写确认独立完整读回、读回错保原异常，安全编码source字段并核原身份，写前防long溢出。旧无凭据BSON不读时回写，旧整行save二进制降级会丢凭据须迁移，按季清理随行删。无真实producer接线，不作稳定战报/War事件或攻占已验。

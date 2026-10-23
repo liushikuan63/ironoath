@@ -39,8 +39,77 @@ public final class MongoSeasonBoardStore implements SeasonBoardStore {
         if (entry == null) {
             throw new IllegalArgumentException("entry 不得为 null");
         }
-        // save 走 _id upsert：同一个人重复上报只改自己那一行（写路径是热调用，不做整榜重写）
-        mongo.save(SeasonBoardDocument.of(seasonId, board, entry), SeasonBoardDocument.COLLECTION);
+        // 只替换原榜值，不整行save：否则会擦掉已经提交的战略事件回执，旧事件重试会再加一次。
+        mongo.upsert(Query.query(Criteria.where("_id").is(SeasonBoardDocument.keyOf(seasonId,board,entry.id()))),
+                new Update().set("score",entry.score()).set("name",entry.name())
+                        .setOnInsert("seasonId",seasonId).setOnInsert("board",board.name()).setOnInsert("playerId",entry.id()),
+                SeasonBoardDocument.class,SeasonBoardDocument.COLLECTION);
+    }
+
+    @Override public ScopedIncrement recordScopedIncrement(String seasonId,SeasonSettlement.Board board,ScopedIncrement increment) {
+        SeasonBoardStore.requireKey(seasonId,board);
+        if(increment==null)throw new IllegalArgumentException("原事件不得为空");
+        String id=SeasonBoardDocument.keyOf(seasonId,board,increment.playerId());String slot=scopedSlot(increment.sourceId());
+        for(int attempt=0;attempt<16;attempt++) {
+            var row=mongo.findById(id,org.bson.Document.class,SeasonBoardDocument.COLLECTION);
+            validateRow(row,seasonId,board,increment.playerId());
+            var previous=readScoped(row,increment.playerId(),increment.sourceId());
+            if(SeasonBoardStore.isScopedReplay(previous,increment))return increment;
+            long score=Math.addExact(row==null?0:exactLong(row.get("score")),increment.delta());
+            var criteria=Criteria.where("_id").is(id);
+            if(row==null)criteria.and("score").exists(false);else criteria.and("score").is(row.get("score"));
+            if(previous==null)criteria.and(slot).exists(false);else criteria.and(slot).is(scopedDocument(previous));
+            var update=new Update().set("score",score).set("name",increment.name()).set(slot,scopedDocument(increment))
+                    .setOnInsert("seasonId",seasonId).setOnInsert("board",board.name()).setOnInsert("playerId",increment.playerId());
+            try {
+                var result=mongo.upsert(Query.query(criteria),update,SeasonBoardDocument.class,SeasonBoardDocument.COLLECTION);
+                if(!result.wasAcknowledged())throw new IllegalStateException("原事件写入未确认");
+                if(result.getMatchedCount()==1 || result.getUpsertedId()!=null)return increment;
+            } catch(DuplicateKeyException concurrentChange) {
+                // 同一行被另一个source或既有report/accumulate改过。重读原回执/总分，不覆盖新值。
+            } catch(RuntimeException uncertain) {
+                // 写后失去确认只认独立完整回执；读回失败保原错误，不把缺档当完成或从零重写。
+                try {if(scopedIncrementOf(seasonId,board,increment.playerId(),increment.sourceId()).filter(increment::equals).isPresent())return increment;}
+                catch(RuntimeException readFailure){uncertain.addSuppressed(readFailure);}
+                throw uncertain;
+            }
+        }
+        throw new IllegalStateException("原事件榜行并发冲突，未确认写入");
+    }
+
+    @Override public java.util.Optional<ScopedIncrement> scopedIncrementOf(String seasonId,SeasonSettlement.Board board,String playerId,String sourceId) {
+        SeasonBoardStore.requireKey(seasonId,board);SeasonBoardStore.requireText(playerId,"playerId");SeasonBoardStore.requireText(sourceId,"sourceId");
+        var row=mongo.findById(SeasonBoardDocument.keyOf(seasonId,board,playerId),org.bson.Document.class,SeasonBoardDocument.COLLECTION);
+        validateRow(row,seasonId,board,playerId);return java.util.Optional.ofNullable(readScoped(row,playerId,sourceId));
+    }
+
+    private static String scopedSlot(String sourceId) {
+        try{return "scopedIncrements."+java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(sourceId.getBytes(java.nio.charset.StandardCharsets.UTF_8)));}
+        catch(java.security.NoSuchAlgorithmException impossible){throw new IllegalStateException(impossible);}
+    }
+    private static org.bson.Document scopedDocument(ScopedIncrement value) {
+        return new org.bson.Document("sourceId",value.sourceId()).append("sequence",value.sequence()).append("operationId",value.operationId())
+                .append("playerId",value.playerId()).append("name",value.name()).append("delta",value.delta());
+    }
+    private static long exactLong(Object value) {
+        if(value instanceof Long n)return n;if(value instanceof Integer n)return n.longValue();
+        throw new IllegalStateException("原榜值/回执整数形状损坏");
+    }
+    private static void validateRow(org.bson.Document row,String seasonId,SeasonSettlement.Board board,String playerId) {
+        if(row==null)return;
+        if(!seasonId.equals(row.get("seasonId")) || !board.name().equals(row.get("board")) || !playerId.equals(row.get("playerId")) || exactLong(row.get("score"))<0)
+            throw new IllegalStateException("原榜行归属/分数损坏");
+    }
+    private static ScopedIncrement readScoped(org.bson.Document row,String playerId,String sourceId) {
+        if(row==null || !row.containsKey("scopedIncrements"))return null;
+        if(!(row.get("scopedIncrements") instanceof org.bson.Document receipts))throw new IllegalStateException("原事件回执容器损坏");
+        String hash=scopedSlot(sourceId).substring("scopedIncrements.".length());
+        if(!receipts.containsKey(hash))return null;
+        if(!(receipts.get(hash) instanceof org.bson.Document d) || !d.keySet().equals(java.util.Set.of("sourceId","sequence","operationId","playerId","name","delta"))
+                || d.get("name")!=null && !(d.get("name") instanceof String))throw new IllegalStateException("原事件回执形状损坏");
+        var receipt=new ScopedIncrement(d.getString("sourceId"),exactLong(d.get("sequence")),d.getString("operationId"),d.getString("playerId"),d.getString("name"),exactLong(d.get("delta")));
+        if(!receipt.sourceId().equals(sourceId) || !receipt.playerId().equals(playerId))throw new IllegalStateException("原事件回执归属损坏");
+        return receipt;
     }
 
     @Override
