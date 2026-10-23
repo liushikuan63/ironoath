@@ -459,6 +459,48 @@ class NationStoreEquivalenceTest {
 
     // ---------- 夹具 ----------
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"ratio","slots","minimum"})
+    void capturedPolicyLazySettlementUsesCapturedRulesOnBothStores(String change)throws Exception {
+        requireMongo();
+        var local=ConfigRegistry.loadFromDirectory(locateConfigDir());
+        var localRules=new NationRulesAssembler(local);long day=24*3600_000L;
+        var social=org.mockito.Mockito.mock(com.ironoath.web.social.SocialStore.class);
+        var alliance=org.mockito.Mockito.mock(com.ironoath.core.social.Alliance.class);
+        org.mockito.Mockito.when(alliance.id()).thenReturn("owned-policy-alliance");
+        org.mockito.Mockito.when(social.allianceOf("owned-policy-king")).thenReturn(java.util.Optional.of(alliance));
+        for(NationStore store:List.of(new InMemoryNationStore(localRules),new MongoNationStore(db.template(),localRules))) {
+            var nation=Nation.found("owned-policy-N","国策物化夹具","owned-policy-king","owned-policy-alliance",10,10,0,localRules.rules());
+            nation.propose("p1","np_cavalry_t1","owned-policy-king",true,1);
+            nation.propose("p2","np_fortress","owned-policy-king",true,2);nation.settlePolicy(day+1);
+            for(String proposal:List.of("p1","p2")) {
+                nation.vote(proposal,"v1",true,day+2);nation.vote(proposal,"v2",false,day+2);
+            }
+            assertThat(store.insertIfAbsent(nation)).isTrue();var before=store.findById(nation.id()).orElseThrow().snapshot();
+            var leaders=new com.ironoath.web.nation.NationLeaders(social,org.mockito.Mockito.mock(com.ironoath.web.bot.BotRegistry.class));
+            var bonuses=new com.ironoath.web.nation.NationPolicyBonuses(local,social,store,leaders,new com.ironoath.web.battle.BattleArmyFactory(local));
+            var captured=bonuses.usingConfiguration(local.readOnlySnapshot());long at=2*day+2;
+            var original=captured.combatBonusForAt("owned-policy-king",at);assertThat(original.policyAttackFor(com.ironoath.battle.UnitType.CAVALRY)).isPositive();
+            String table=change.equals("slots")?"nation_config":"global";
+            String id=switch(change){case "slots"->"nation_lv1";case "ratio"->"NATION_POLICY_PASS_RATIO";default->"NATION_POLICY_MIN_VOTERS_PER_ALLIANCE";};
+            var mapper=new com.fasterxml.jackson.databind.ObjectMapper();
+            var json=(com.fasterxml.jackson.databind.node.ObjectNode)mapper.readTree(Files.readString(locateConfigDir().resolve(table+".json")));
+            for(var row:json.get("rows"))if(row.get("id").asText().equals(id)) {
+                var object=(com.fasterxml.jackson.databind.node.ObjectNode)row;
+                switch(change){case "slots"->object.put("policySlotCount",2);case "ratio"->object.put("value","0.75");default->object.put("value",3);}
+            }
+            if(change.equals("slots"))local.reload(table,com.ironoath.config.cfg.NationConfigCfg.class,json.toString());
+            else local.reload(table,com.ironoath.config.model.GlobalCfg.class,json.toString());
+            assertThat(captured.combatBonusForAt("owned-policy-king",at)).as(store.getClass().getSimpleName()).isEqualTo(original);
+            var fresh=bonuses.usingConfiguration(local.readOnlySnapshot()).combatBonusForAt("owned-policy-king",at);
+            if(change.equals("slots"))assertThat(fresh.policyDefense()).isPositive();else assertThat(fresh.isZero()).isTrue();
+            assertThat(store.findById(nation.id()).orElseThrow().snapshot()).isEqualTo(before);
+            // 下一种仓储仍从原配置起步；不改国家快照，也不将只读结算副本写回。
+            if(change.equals("slots"))local.reload(table,com.ironoath.config.cfg.NationConfigCfg.class,Files.readString(locateConfigDir().resolve(table+".json")));
+            else local.reload(table,com.ironoath.config.model.GlobalCfg.class,Files.readString(locateConfigDir().resolve(table+".json")));
+        }
+    }
+
     private List<NationStore> bothStores() {
         requireMongo();
         return List.of(new InMemoryNationStore(rules), newMongoStore());

@@ -40,13 +40,19 @@ public final class StrategicTargetDefender {
     }
 
     public Defender read(WorldTargets.Target target) {
+        return readFromConfiguration(target,configs);
+    }
+
+    /** 捕获准备将同一只读视图贯穿目标定义、NPC兵种选择与后续物理输入；不授予战斗写入权。 */
+    public Defender readFromConfiguration(WorldTargets.Target target,ConfigRegistry configuration) {
         Objects.requireNonNull(target,"战略目标不得为空");
+        Objects.requireNonNull(configuration,"原配置视图不得为空");
         var id=target.definition().id();var owner=owner(id);var neutral=neutral(id);
         if(neutral!=null)requireNeutralAnchor(target,neutral);
         if(owner==null) {
             if(neutral!=null && neutral.phase()==NeutralTargetGarrisonStore.Phase.RETIRED)
                 throw new IllegalStateException("目标已退出中立但归属档缺失，拒绝恢复配置守军");
-            var input=new Defender(null,null,null,neutral==null?initialTroops(target):neutral.troops(),neutral==null,neutral);
+            var input=new Defender(null,null,null,neutral==null?initialTroops(target,configuration):neutral.troops(),neutral==null,neutral);
             requireSameState(id,null,neutral);return input;
         }
         if(neutral!=null && neutral.phase()!=NeutralTargetGarrisonStore.Phase.RETIRED)
@@ -120,9 +126,9 @@ public final class StrategicTargetDefender {
                 || snapshot.y()!=target.coord().y() || !snapshot.kind().name().equals(target.definition().kind().name()))
             throw new IllegalStateException("中立守军目标被移位、改类型或移除，须先制定迁移："+snapshot.targetId());
     }
-    private Map<String,Long> initialTroops(WorldTargets.Target target) {
+    private Map<String,Long> initialTroops(WorldTargets.Target target,ConfigRegistry configuration) {
         var row=target.defender();Map<String,Long> troops=new LinkedHashMap<>();
-        var units=configs.all(UnitCfg.class);
+        var units=configuration.all(UnitCfg.class);
         for(var type:UnitCfg.Type.values()) {
             long count=switch(type) {
                 case INFANTRY -> row.infantryCount();case CAVALRY -> row.cavalryCount();

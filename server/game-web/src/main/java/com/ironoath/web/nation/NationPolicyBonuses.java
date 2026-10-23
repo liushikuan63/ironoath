@@ -45,6 +45,7 @@ public class NationPolicyBonuses {
     private final SocialStore social;
     private final NationStore nations;
     private final NationLeaders leaders;
+    private final NationRulesAssembler capturedNationRules;
     /**
      * id → 兵种折算就这一份。
      *
@@ -54,14 +55,25 @@ public class NationPolicyBonuses {
      */
     private final BattleArmyFactory armyFactory;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public NationPolicyBonuses(ConfigRegistry configs, SocialStore social,
                                NationStore nations, NationLeaders leaders,
                                BattleArmyFactory armyFactory) {
+        this(configs,social,nations,leaders,armyFactory,null);
+    }
+
+    private NationPolicyBonuses(ConfigRegistry configs,SocialStore social,NationStore nations,
+                                NationLeaders leaders,BattleArmyFactory armyFactory,NationRulesAssembler capturedNationRules) {
         this.configs = configs;
         this.social = social;
         this.nations = nations;
         this.leaders = leaders;
         this.armyFactory = armyFactory;
+        this.capturedNationRules = capturedNationRules;
+    }
+
+    public NationPolicyBonuses usingConfiguration(ConfigRegistry view) {
+        return new NationPolicyBonuses(view,social,nations,leaders,new BattleArmyFactory(view),new NationRulesAssembler(view));
     }
 
     /**
@@ -76,11 +88,21 @@ public class NationPolicyBonuses {
      * 压成一个数会让 +15% × 5 = +75% 打给<b>所有</b>兵种。这条在 A 格改形状时踩过一次。
      */
     public OrgBonus combatBonusFor(String playerId) {
-        Nation nation = nationOf(playerId);
+        return combatBonus(playerId,null);
+    }
+
+    /** 原战斗时点固定；新准备口不把所属国家读取失败降成无加成，既有普通入口宽容语义不变。 */
+    public OrgBonus combatBonusForAt(String playerId,long happenedAt) {
+        if(happenedAt<0)throw new IllegalArgumentException("战斗时点不得为负");
+        return combatBonus(playerId,happenedAt);
+    }
+
+    private OrgBonus combatBonus(String playerId,Long happenedAt) {
+        Nation nation = happenedAt==null?nationOf(playerId):lookupNation(playerId,null);
         if (nation == null) {
             return OrgBonus.none();
         }
-        List<NationPolicyCfg> active = activeRows(nation);
+        List<NationPolicyCfg> active = happenedAt==null?activeRows(nation):activeRows(nation,happenedAt);
         if (active.isEmpty()) {
             return OrgBonus.none();
         }
@@ -151,7 +173,10 @@ public class NationPolicyBonuses {
      * 而那一行本来只是失效。同一条宽容读法也写在 {@code Nation.fromSnapshot} 的注释里。
      */
     private List<NationPolicyCfg> activeRows(Nation nation) {
-        long now = System.currentTimeMillis();
+        return activeRows(nation,System.currentTimeMillis());
+    }
+
+    private List<NationPolicyCfg> activeRows(Nation nation,long now) {
         List<NationPolicyCfg> out = new ArrayList<>();
         for (Nation.ActivePolicy active : nation.activePolicies(now)) {
             if (!configs.rawTable("nation_policy").has(active.policyId())) {
@@ -178,14 +203,20 @@ public class NationPolicyBonuses {
             return null;
         }
         try {
-            java.util.function.Supplier<Nation> lookup = () -> social.allianceOf(playerId)
-                    .flatMap(alliance -> nations.findByAlliance(alliance.id()))
-                    .map(leaders::bind)
-                    .orElse(null);
-            return scope == null ? lookup.get() : scope.resolve(playerId, lookup);
+            return lookupNation(playerId,scope);
         } catch (RuntimeException e) {
             LOG.warn("国策加成读不到所属国家，按 0 计 playerId={} 原因={}", playerId, e.toString());
             return null;
         }
+    }
+
+    private Nation lookupNation(String playerId,NationOutputReadScope scope) {
+        if(playerId==null || playerId.isBlank())return null;
+        java.util.function.Supplier<Nation> lookup=()->social.allianceOf(playerId)
+                .flatMap(alliance->nations.findByAlliance(alliance.id()))
+                // 仓储返回副本仍带父配置规则；到期投票在activePolicies里惰性结算，必须先换成捕获规则再绑定盟主。
+                .map(nation->capturedNationRules==null?nation:Nation.fromSnapshot(nation.snapshot(),capturedNationRules.rules()))
+                .map(leaders::bind).orElse(null);
+        return scope==null?lookup.get():scope.resolve(playerId,lookup);
     }
 }

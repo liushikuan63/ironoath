@@ -39,6 +39,10 @@ public class BattleTechBonuses {
         this.players = players;
     }
 
+    BattleTechBonuses usingConfiguration(com.ironoath.config.ConfigRegistry view) {
+        return new BattleTechBonuses(allianceBonuses.usingConfiguration(view),new TechEffects(view),players);
+    }
+
     /**
      * 这个玩家的乘区 B 总加成。读不到存档（Bot 未建档、战报重建时的历史玩家）时退回联盟那一份，
      * 而不是抛 —— 战斗装配跑在读路径上，而"少一份个人科技"比"这场仗打不起来"更接近事实。

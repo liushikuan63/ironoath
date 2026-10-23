@@ -655,27 +655,7 @@ public class PlayerCityBattleService {
      * （{@code BattleParamsResolver.bareArmy(..., bonus)}）。
      */
     private OrgBonus rallyBonus(March march) {
-        if (!march.isRallyMarch()) {
-            return OrgBonus.none();
-        }
-        long bonus = configs.fixedParam("RALLY_ATTACK_BONUS_FIXED");
-        if (bonus == 0L) {
-            return OrgBonus.none();
-        }
-        Map<UnitType, Long> byUnit = new EnumMap<>(UnitType.class);
-        for (Map.Entry<String, Long> entry : march.units().entrySet()) {
-            if (entry.getValue() == null || entry.getValue() <= 0L) {
-                continue;
-            }
-            // **id → 兵种走 BattleArmyFactory 那一份**，不自己再折一次：
-            // 行军里带的是 unit_cavalry_t1 这类 id，折算要查 `unit` 表拿 type，
-            // 这里抄第二份的话，改了表就会有一处对一处不对。
-            UnitType type = armyFactory.unitTypeOf(entry.getKey());
-            if (type != null) {
-                byUnit.put(type, bonus);
-            }
-        }
-        return byUnit.isEmpty() ? OrgBonus.none() : new OrgBonus(byUnit, 0L, 0L);
+        return armyFactory.rallyBonus(march);
     }
 
     /** 攻方战损：损失从行军里扣，伤兵进攻方自己的医院，超容量的部分死亡。 */

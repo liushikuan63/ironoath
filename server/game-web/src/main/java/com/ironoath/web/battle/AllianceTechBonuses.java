@@ -49,6 +49,10 @@ public class AllianceTechBonuses {
         this.configs = configs;
     }
 
+    AllianceTechBonuses usingConfiguration(ConfigRegistry view) {
+        return new AllianceTechBonuses(social,view);
+    }
+
     /** 某个玩家的攻击/防御科技加成。没有联盟就是「无加成」而不是抛错 —— 打野与 PVE 不该被联盟绑住。 */
     public TechBonus forPlayer(String playerId) {
         if (playerId == null || playerId.isBlank()) {

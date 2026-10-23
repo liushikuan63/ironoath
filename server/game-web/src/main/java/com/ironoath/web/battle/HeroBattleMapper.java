@@ -14,6 +14,7 @@ import com.ironoath.core.hero.HeroCalculator;
 import com.ironoath.core.hero.HeroInstance;
 import com.ironoath.core.hero.HeroRoster;
 import com.ironoath.core.hero.HeroRepository;
+import com.ironoath.core.social.Rally;
 import com.ironoath.core.march.March;
 import com.ironoath.web.social.SocialStore;
 import com.ironoath.web.hero.EquipLedger;
@@ -69,6 +70,11 @@ public class HeroBattleMapper {
         this.socials = socials;
     }
 
+    /** 一场原战斗输入同时固定技能表和属性计算器，不能只替换外层configs。存档端口仍由调用者锁定。 */
+    HeroBattleMapper usingConfiguration(ConfigRegistry view) {
+        return new HeroBattleMapper(view,new HeroStatsService(view),equipLedgers.usingConfiguration(view),heroes,socials);
+    }
+
     /** 合并行军只归队长调度；随军武将的养成与装备仍归报名成员。 */
     public List<HeroSnapshot> snapshotsForMarch(March march) {
         if (march.heroes().isEmpty()) return List.of();
@@ -78,9 +84,16 @@ public class HeroBattleMapper {
         }
         var rally = socials.rallyOf(march.rallyId()).orElseThrow(
                 () -> new IllegalStateException("随军武将的集结归属不存在"));
-        if (!rally.initiatorId().equals(march.playerId())) {
+        return snapshotsForMarch(march,rally);
+    }
+
+    /** 捕获准备使用已冻结原名单，避免在准备后另读一份集结；普通入口仍按原方式查询。 */
+    List<HeroSnapshot> snapshotsForMarch(March march,Rally rally) {
+        if(rally==null || !march.isRallyMarch() || !march.rallyId().equals(rally.rallyId())
+                || !rally.initiatorId().equals(march.playerId())) {
             throw new IllegalStateException("合并行军与集结发起人不一致");
         }
+        if(march.heroes().isEmpty())return List.of();
         // 出发时的选择已经持久化；热更后的上限只约束新编队，不重选在途武将。
         var selected = rally.heroSlots(march.heroes().size())
                 .stream().filter(slot -> slot.selected()).toList();

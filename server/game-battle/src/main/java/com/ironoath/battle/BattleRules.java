@@ -107,9 +107,9 @@ public record BattleRules(
 
         Map<UnitType, Set<UnitType>> matrix = new EnumMap<>(UnitType.class);
         for (Map.Entry<UnitType, Set<UnitType>> e : counterMatrix.entrySet()) {
-            matrix.put(e.getKey(), e.getValue().isEmpty()
+            matrix.put(e.getKey(), Collections.unmodifiableSet(e.getValue().isEmpty()
                     ? EnumSet.noneOf(UnitType.class)
-                    : EnumSet.copyOf(e.getValue()));
+                    : EnumSet.copyOf(e.getValue())));
         }
         counterMatrix = Collections.unmodifiableMap(matrix);
         terrainAttackBonus = copyTerrain(terrainAttackBonus, "terrainAttackBonus");

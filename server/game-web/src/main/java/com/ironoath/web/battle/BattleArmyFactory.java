@@ -64,6 +64,19 @@ public class BattleArmyFactory {
         this.configs = configs;
     }
 
+    /** 集结乘区与unitId折算共用本视图；普通战斗和捕获输入均只调用这一处公式。 */
+    public OrgBonus rallyBonus(March march) {
+        if(!march.isRallyMarch())return OrgBonus.none();
+        long bonus=configs.fixedParam("RALLY_ATTACK_BONUS_FIXED");
+        if(bonus==0L)return OrgBonus.none();
+        Map<UnitType,Long> byUnit=new EnumMap<>(UnitType.class);
+        for(var entry:march.units().entrySet()) {
+            if(entry.getValue()==null || entry.getValue()<=0L)continue;
+            UnitType type=unitTypeOf(entry.getKey());if(type!=null)byUnit.put(type,bonus);
+        }
+        return byUnit.isEmpty()?OrgBonus.none():new OrgBonus(byUnit,0L,0L);
+    }
+
     /**
      * 折算结果。
      *
@@ -317,14 +330,20 @@ public class BattleArmyFactory {
     public StrategicRallyCasualties freezeStrategicCasualties(March march,long marchVersion,Rally rally,
             BattleResult result,StrategicRallyCasualties.Side side,Map<String,Long> hospitalCapacities) {
         // 同一隔离视图内取类型与展开损失。原simulate仍须由producer使用同一预先捕获视图。
-        return new BattleArmyFactory(configs.readOnlySnapshot()).freezeFromView(march,marchVersion,rally,result,side,hospitalCapacities);
+        return freezeStrategicCasualtiesFromIdentity(march,marchVersion,
+                StrategicRallyCasualties.RallyIdentity.freeze(rally),result,side,hospitalCapacities);
     }
 
-    private StrategicRallyCasualties freezeFromView(March march,long marchVersion,Rally rally,
+    public StrategicRallyCasualties freezeStrategicCasualtiesFromIdentity(March march,long marchVersion,
+            StrategicRallyCasualties.RallyIdentity identity,BattleResult result,StrategicRallyCasualties.Side side,
+            Map<String,Long> hospitalCapacities) {
+        return new BattleArmyFactory(configs.readOnlySnapshot()).freezeFromView(march,marchVersion,identity,result,side,hospitalCapacities);
+    }
+
+    private StrategicRallyCasualties freezeFromView(March march,long marchVersion,StrategicRallyCasualties.RallyIdentity identity,
             BattleResult result,StrategicRallyCasualties.Side side,Map<String,Long> hospitalCapacities) {
-        if(march==null || marchVersion<0 || side==null)throw new IllegalArgumentException("战略战损行军/版本缺失");
+        if(march==null || marchVersion<0 || side==null || identity==null)throw new IllegalArgumentException("战略战损行军/版本/原集结缺失");
         var frozen=March.fromSnapshot(march.snapshot());
-        var identity=StrategicRallyCasualties.RallyIdentity.freeze(rally);
         var types=new LinkedHashMap<String,UnitType>();frozen.units().keySet().forEach(id->types.put(id,unitTypeOf(id)));
         StrategicRallyCasualties.requirePhysics(frozen.units(),types,result,side);
         var counts=StrategicRallyCasualties.countsByType(frozen.units(),types);
@@ -341,7 +360,7 @@ public class BattleArmyFactory {
         if(side==StrategicRallyCasualties.Side.DEFENDER)current.putAll(frozen.garrisonTroopsByPlayer());
         else identity.participants().forEach((player,p)->current.put(player,p.troops()));
         var allocation=GarrisonLossAllocation.plan(current,losses);var casualties=allocation.withWounded(wounds);
-        // 医院仍按原战斗兵种顺序收容。核心分配器的字典序仅用于算份额，不能暗改床位优先级。
+        // 新战略载荷按各成员兵种伤兵比例收容；保留原顺序供旧format1载荷恢复，不能借重排改变历史床位结果。
         var orderedWounds=new LinkedHashMap<String,Map<String,Long>>();
         casualties.woundedByPlayer().forEach((player,values)->{
             var ordered=new LinkedHashMap<String,Long>();

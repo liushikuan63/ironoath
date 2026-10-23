@@ -52,15 +52,7 @@ public record StrategicRallyCasualties(int formatVersion,Side side,long marchVer
         if(formatVersion!=1 || side==null || marchVersion<0 || march==null || rally==null || result==null)
             throw invalid("冻结战损版本/输入缺失");
         var original=March.fromSnapshot(march);march=original.snapshot();
-        if(original.targetType()!=March.TargetType.STRATEGIC_TARGET || original.action()!=March.Action.ATTACK
-                || !original.isRallyMarch() || !original.rallyId().equals(rally.rallyId())
-                || !original.playerId().equals(rally.initiatorId())
-                || original.to().x()!=rally.targetX() || original.to().y()!=rally.targetY()
-                || original.startAt()<rally.departure().departAt())throw invalid("行军与原集结身份/目标不一致");
-        if(side==Side.ATTACKER && (original.status()!=March.Status.FIGHTING || original.hasGarrisonOwnership()))
-            throw invalid("进攻输入必须是首次到达的战略集结");
-        if(side==Side.DEFENDER && (original.status()!=March.Status.STATIONED || !original.hasGarrisonOwnership()))
-            throw invalid("守备输入必须是当前实际驻军");
+        requireOriginalMarch(original,rally,side);
         currentMembers=members(currentMembers,false);lossesByPlayer=members(lossesByPlayer,false);
         survivorsByPlayer=members(survivorsByPlayer,false);woundedByPlayer=members(woundedByPlayer,true);
         deadByPlayer=members(deadByPlayer,false);hospitalCapacities=capacities(hospitalCapacities);
@@ -155,6 +147,24 @@ public record StrategicRallyCasualties(int formatVersion,Side side,long marchVer
         var result=new LinkedHashMap<String,Long>();members.values().forEach(u->u.forEach((id,n)->result.merge(id,n,Math::addExact)));return result;
     }
     private static long total(Map<String,Long> counts){long n=0;for(long count:counts.values())n=Math.addExact(n,count);return n;}
+    /** 准备与解码共用原身份/状态约束，不在模拟后重新选择成员或改出兵份额。 */
+    public static void requireOriginalMarch(March original,RallyIdentity rally,Side side) {
+        if(original==null || rally==null || side==null)throw invalid("原行军/集结身份缺失");
+        if(original.targetType()!=March.TargetType.STRATEGIC_TARGET || original.action()!=March.Action.ATTACK
+                || !original.isRallyMarch() || !original.rallyId().equals(rally.rallyId())
+                || !original.playerId().equals(rally.initiatorId())
+                || original.to().x()!=rally.targetX() || original.to().y()!=rally.targetY()
+                || original.startAt()<rally.departure().departAt())throw invalid("行军与原集结身份/目标不一致");
+        if(side==Side.ATTACKER && (original.status()!=March.Status.FIGHTING || original.hasGarrisonOwnership()))
+            throw invalid("进攻输入必须是首次到达的战略集结");
+        if(side==Side.DEFENDER && (original.status()!=March.Status.STATIONED || !original.hasGarrisonOwnership()))
+            throw invalid("守备输入必须是当前实际驻军");
+        if(side==Side.ATTACKER && !original.units().equals(rally.departure().mergedTroops()))throw invalid("进攻兵权与原出发承诺不一致");
+        if(side==Side.DEFENDER)for(var player:original.garrisonTroopsByPlayer().entrySet()) {
+            var participant=rally.participants().get(player.getKey());if(participant==null)throw invalid("当前兵权出现非原集结成员");
+            for(var unit:player.getValue().entrySet())if(unit.getValue()>participant.troops().getOrDefault(unit.getKey(),0L))throw invalid("当前兵权超过原承诺");
+        }
+    }
     private static void text(String value){if(value==null || value.isBlank())throw invalid("身份/单位标识缺失");}
     private static IllegalArgumentException invalid(String reason){return new IllegalArgumentException(reason);}
 }

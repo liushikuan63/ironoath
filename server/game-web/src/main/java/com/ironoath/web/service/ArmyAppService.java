@@ -655,10 +655,20 @@ public class ArmyAppService {
     }
 
     private long hospitalCapacity(CityState city, Supplier<PlayerSave> loadPlayer) {
-        long exponent = configs.curve("BUILDING_OUTPUT").exponentFixed();
+        return hospitalCapacityFrom(configs,techEffects,city,loadPlayer);
+    }
+
+    /** 原战斗准备复用同一医院公式和已冻结科技；不读取玩家档，也不改变普通入口的惰性取档。 */
+    public static long hospitalCapacityFromCapturedConfig(ConfigRegistry view,CityState city,PlayerSave save) {
+        return hospitalCapacityFrom(view,new com.ironoath.web.tech.TechEffects(view),city,()->save);
+    }
+
+    private static long hospitalCapacityFrom(ConfigRegistry view,com.ironoath.web.tech.TechEffects effects,
+                                             CityState city,Supplier<PlayerSave> loadPlayer) {
+        long exponent = view.curve("BUILDING_OUTPUT").exponentFixed();
         long capacity = 0L;
         for (BuildingInstance b : city.buildings()) {
-            BuildingCfg cfg = configs.get(BuildingCfg.class, b.configId());
+            BuildingCfg cfg = view.get(BuildingCfg.class, b.configId());
             if (cfg.woundedCapBase() <= 0L || b.level() <= 0 || b.isUpgrading()) {
                 continue;   // 升级中的医院不提供容量，与「升级中的建筑不产资源」同一口径
             }
@@ -669,7 +679,7 @@ public class ArmyAppService {
             return 0L;
         }
         PlayerSave knownSave = loadPlayer.get();
-        long percentFixed = knownSave == null ? 0L : techEffects.hospitalPercent(knownSave.tech());
+        long percentFixed = knownSave == null ? 0L : effects.hospitalPercent(knownSave.tech());
         return Rates.scaleUp(capacity, percentFixed);
     }
 

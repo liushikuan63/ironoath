@@ -5,7 +5,8 @@ import com.ironoath.config.ConfigRegistry;
 import com.ironoath.web.battle.BattleArmyFactory;
 import com.ironoath.web.battle.BattleRulesAssembler;
 import com.ironoath.web.service.WorldTargets;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -13,15 +14,18 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** 候选防守的无武将/无科技平原基线采样；这是内核模拟，不是集结生产链或最终平衡验收。 */
+/** PVE3代表1080场/54复算，SIEGE全部13目标4680场/234复算；确定性样本不是5000在线或真实争夺验收。 */
 class WorldTargetDefenseSimulationTest {
-    @Test void sampleCandidateGarrisonsWithIndependentAttackerAndDefenderStats() {
+    @ParameterizedTest @EnumSource(value=BattleType.class,names={"PVE","SIEGE"})
+    void sampleCandidateGarrisonsWithIndependentAttackerAndDefenderStats(BattleType type) {
         var configs = ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
         var factory = new BattleArmyFactory(configs);
         var rules = new BattleRulesAssembler(configs).rules();
         var catalog = WorldTargets.from(configs);
-        for (String id : List.of("fortress_ne_1", "gate_north", "capital_center")) {
-            var target = catalog.targets().stream().filter(t -> t.definition().id().equals(id)).findFirst().orElseThrow();
+        var targets=type==BattleType.SIEGE?catalog.targets():catalog.targets().stream()
+                .filter(t->List.of("fortress_ne_1","gate_north","capital_center").contains(t.definition().id())).toList();
+        for (var target : targets) {
+            String id=target.definition().id();
             var d = target.defender();
             var defense = factory.fold(Map.of("unit_infantry_t"+d.unitTier(),d.infantryCount(),
                     "unit_cavalry_t"+d.unitTier(),d.cavalryCount(),"unit_archer_t"+d.unitTier(),d.archerCount(),
@@ -33,7 +37,7 @@ class WorldTargetDefenseSimulationTest {
                 var attacker = factory.toSide("sample-attacker",offense,List.of(),0L,TechBonus.none(),total);
                 int wins=0; long losses=0;
                 for (long seed=1; seed<=20; seed++) {
-                    var input = new BattleInput(attacker,defender,TerrainType.PLAIN,seed,BattleType.PVE,
+                    var input = new BattleInput(attacker,defender,TerrainType.PLAIN,seed,type,
                             BattleModifier.none(),BattleModifier.none(),offense.stats(),defense.stats(),rules,null);
                     var result = BattleSimulator.simulate(input);
                     if (result.winner()==Winner.ATTACKER) wins++;
@@ -42,8 +46,8 @@ class WorldTargetDefenseSimulationTest {
                     losses += total-survivor;
                     if (seed==1) assertThat(BattleSimulator.simulate(input)).isEqualTo(result);
                 }
-                System.out.printf("TARGET_SIM,%s,T%d,%d,wins=%d/20,meanLoss=%d,defenderTroops=%d,power=%d%n",
-                        id,tier,total,wins,losses/20,target.troops(),d.power());
+                System.out.printf("TARGET_SIM,%s,%s,T%d,%d,wins=%d/20,meanLoss=%d,defenderTroops=%d,power=%d%n",
+                        type,id,tier,total,wins,losses/20,target.troops(),d.power());
             }
         }
     }

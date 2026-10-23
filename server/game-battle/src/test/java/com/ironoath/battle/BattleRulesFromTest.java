@@ -122,4 +122,13 @@ class BattleRulesFromTest {
             assertThat(rules.terrainDefense(terrain)).isZero();
         }
     }
+
+    @Test void counterTargetsCannotBeRewrittenThroughNestedSetAccessors() {
+        var rules=BattleRules.from(new Params(realMatrix()));
+        assertThat(rules.counters(UnitType.INFANTRY,UnitType.CAVALRY)).isTrue();
+        assertThatThrownBy(()->rules.counterMatrix().get(UnitType.INFANTRY).clear()).isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(()->rules.counterMatrix().get(UnitType.SIEGE).add(UnitType.INFANTRY)).isInstanceOf(UnsupportedOperationException.class);
+        assertThat(rules.counters(UnitType.INFANTRY,UnitType.CAVALRY)).isTrue();
+        assertThat(rules.counters(UnitType.SIEGE,UnitType.INFANTRY)).isFalse();
+    }
 }

@@ -28,6 +28,10 @@ public class EquipLedgers {
         this.configs = configs;
     }
 
+    public EquipLedgers usingConfiguration(ConfigRegistry view) {
+        return new EquipLedgers(inventories,view);
+    }
+
     /**
      * 这个玩家的装备快照。没有背包记录 = 一件也没有（新号在未初始化之前也会走到这里，
      * 那不是错误，所以不抛）。
