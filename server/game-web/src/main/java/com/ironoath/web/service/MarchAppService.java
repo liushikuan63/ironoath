@@ -140,6 +140,7 @@ public class MarchAppService {
     private final com.ironoath.web.nation.WarStore wars;
     private final com.ironoath.web.nation.NationMembership membership;
     private final com.ironoath.web.world.StrategicGarrisonWithdrawal garrisonWithdrawal;
+    private final StrategicTargetMarchAdvancer strategicTargetMarchAdvancer;
 
     public MarchAppService(ConfigRegistry configs, MarchRepository marches, MarchDueQueue dueQueue,
                            WorldRepository world, ArmyRepository armies,
@@ -161,7 +162,8 @@ public class MarchAppService {
                               com.ironoath.web.nation.NationPolicyBonuses policyBonuses,
                           com.ironoath.web.nation.WarStore wars,
                           com.ironoath.web.nation.NationMembership membership,
-                          com.ironoath.web.world.StrategicGarrisonWithdrawal garrisonWithdrawal) {
+                          com.ironoath.web.world.StrategicGarrisonWithdrawal garrisonWithdrawal,
+                          StrategicTargetMarchAdvancer strategicTargetMarchAdvancer) {
         this.configs = configs;
         this.marches = marches;
         this.dueQueue = dueQueue;
@@ -190,6 +192,7 @@ public class MarchAppService {
         this.wars = wars;
         this.membership = membership;
         this.garrisonWithdrawal = garrisonWithdrawal;
+        this.strategicTargetMarchAdvancer = strategicTargetMarchAdvancer;
     }
 
     // ---------- 出征 ----------
@@ -912,11 +915,12 @@ public class MarchAppService {
 
     private boolean advanceDueMarch(String marchId, long now) {
         March observed = marches.findById(marchId).orElse(null);
+        if(observed!=null && observed.targetType()==March.TargetType.STRATEGIC_TARGET) {
+            return strategicTargetMarchAdvancer.advance(observed,now,()->advanceDueMarchLocked(marchId,now));
+        }
         if (observed != null && observed.isRallyMarch()) {
             return socialAppService.runRallyDepartureLocked(observed.rallyId(),
-                    () -> observed.targetType()==March.TargetType.STRATEGIC_TARGET
-                            ? garrisonWithdrawal.runMarchLocked(observed,()->advanceDueMarchLocked(marchId,now))
-                            : advanceDueMarchLocked(marchId, now));
+                    () -> advanceDueMarchLocked(marchId, now));
         }
         return advanceDueMarchLocked(marchId, now);
     }
