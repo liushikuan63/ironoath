@@ -5,6 +5,7 @@ import com.ironoath.core.march.March;
 import com.ironoath.core.march.MarchRepository;
 import com.ironoath.web.world.StrategicGarrisonWithdrawal;
 import com.ironoath.web.world.StrategicTargetDefender;
+import com.ironoath.web.world.TargetOperationStore;
 import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.Objects;
@@ -23,6 +24,7 @@ public final class StrategicTargetMarchAdvancer {
     private final StrategicTargetDefender defenders;
     private final SocialAppService social;
     private final StrategicGarrisonWithdrawal targetOperations;
+    private final TargetOperationStore operations;
 
     private static final class TargetContextChanged extends RuntimeException {
         private static final long serialVersionUID=1L;
@@ -30,10 +32,10 @@ public final class StrategicTargetMarchAdvancer {
 
     public StrategicTargetMarchAdvancer(ConfigRegistry configs,MarchRepository marches,
             StrategicTargetDefender defenders,SocialAppService social,
-            StrategicGarrisonWithdrawal targetOperations) {
+            StrategicGarrisonWithdrawal targetOperations,TargetOperationStore operations) {
         this.configs=Objects.requireNonNull(configs);this.marches=Objects.requireNonNull(marches);
         this.defenders=Objects.requireNonNull(defenders);this.social=Objects.requireNonNull(social);
-        this.targetOperations=Objects.requireNonNull(targetOperations);
+        this.targetOperations=Objects.requireNonNull(targetOperations);this.operations=Objects.requireNonNull(operations);
     }
 
     public boolean advance(March observed,long now,Supplier<Boolean> advance) {
@@ -44,9 +46,12 @@ public final class StrategicTargetMarchAdvancer {
             March original=marches.findById(observed.id()).orElse(null);
             if(original==null)return false;
             requireSameTargetRoute(observed,original);
-            var captured=needsPlayerDefenderLock(original,now)?readTarget(original):null;
+            var slot=operations.findByTargetId(original.targetId()).orElse(null);
+            var captured=slot!=null && !slot.completed()?pendingContext(original,slot)
+                    :needsPlayerDefenderLock(original,now)?readTarget(original):null;
             var rallyIds=new TreeSet<String>();rallyIds.add(requireRally(original));
-            if(captured!=null && captured.defender().march()!=null)
+            if(slot!=null && !slot.completed())addPendingRallies(rallyIds,slot);
+            else if(captured!=null && captured.defender()!=null && captured.defender().march()!=null)
                 rallyIds.add(requireRally(March.fromSnapshot(captured.defender().march())));
             try {
                 return social.runRalliesDepartureLocked(List.copyOf(rallyIds),()->{
@@ -54,8 +59,12 @@ public final class StrategicTargetMarchAdvancer {
                     if(lockedMarch==null)return false;
                     requireSameTargetRoute(original,lockedMarch);
                     return targetOperations.runMarchLocked(lockedMarch,()->{
-                        if(captured!=null && !captured.equals(readTarget(lockedMarch)))
+                        if(!Objects.equals(slot,operations.findByTargetId(lockedMarch.targetId()).orElse(null)))
                             throw new TargetContextChanged();
+                        if(slot==null || slot.completed()) {
+                            if(captured!=null && !captured.equals(readTarget(lockedMarch)))
+                                throw new TargetContextChanged();
+                        }
                         return advance.get();
                     });
                 });
@@ -82,6 +91,33 @@ public final class StrategicTargetMarchAdvancer {
                 com.ironoath.core.world.WorldGenerator.EntityType.valueOf(target.definition().kind().name()),
                 target.coord().x(),target.coord().y());
         return new TargetContext(anchor,defender);
+    }
+
+    private static TargetContext pendingContext(March march,TargetOperationStore.Snapshot slot) {
+        var anchor=slot.anchor();
+        if(!slot.targetId().equals(march.targetId()) || march.to().x()!=anchor.x() || march.to().y()!=anchor.y())
+            throw new IllegalStateException("待恢复目标操作与当前战略行军锚点不一致");
+        if(slot.kind()==TargetOperationStore.Kind.WITHDRAWAL) {
+            var stationed=March.fromSnapshot(slot.plan().stationed());
+            if(!slot.targetId().equals(stationed.targetId()) || !march.to().equals(stationed.to()))
+                throw new IllegalStateException("待恢复撤防操作与当前目标锚点不一致");
+            return new TargetContext(anchor,null);
+        }
+        var battle=slot.combatPlan().battle();
+        if(!battle.target().targetId().equals(march.targetId())
+                || battle.target().x()!=anchor.x() || battle.target().y()!=anchor.y())
+            throw new IllegalStateException("待恢复COMBAT目标与当前战略行军锚点不一致");
+        return new TargetContext(anchor,null);
+    }
+
+    private static void addPendingRallies(java.util.Set<String> rallyIds,TargetOperationStore.Snapshot slot) {
+        if(slot.kind()==TargetOperationStore.Kind.WITHDRAWAL) {
+            rallyIds.add(requireRally(March.fromSnapshot(slot.plan().stationed())));return;
+        }
+        var battle=slot.combatPlan().battle();
+        rallyIds.add(requireRally(March.fromSnapshot(battle.attacker().march())));
+        if(battle.defender().march()!=null)
+            rallyIds.add(requireRally(March.fromSnapshot(battle.defender().march())));
     }
 
     private static String requireRally(March march) {

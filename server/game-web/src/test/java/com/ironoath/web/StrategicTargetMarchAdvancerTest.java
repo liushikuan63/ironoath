@@ -68,10 +68,11 @@ class StrategicTargetMarchAdvancerTest {
                 order.add(key);return delegateLock.runLocked(key,timeout,action);
             }
         };
-        var targetOperations=new StrategicGarrisonWithdrawal(configs,new InMemoryTargetOperationStore(),occupations,
+        var operationStore=new InMemoryTargetOperationStore();
+        var targetOperations=new StrategicGarrisonWithdrawal(configs,operationStore,occupations,
                 marches,mock(com.ironoath.core.march.MarchDueQueue.class),readers,attackRally,lock);
 
-        var advancer=new StrategicTargetMarchAdvancer(configs,marches,readers,attackRally,targetOperations);
+        var advancer=new StrategicTargetMarchAdvancer(configs,marches,readers,attackRally,targetOperations,operationStore);
         assertThat(advancer.advance(attacker,120,()->true)).isTrue();
         assertThat(order).containsExactly("nation+rallies:owned-attacker-rally,owned-defender-rally",
                 "@strategic-target:gate_north");
@@ -106,10 +107,10 @@ class StrategicTargetMarchAdvancerTest {
             if(changed.compareAndSet(false,true))assertThat(occupations.compareAndSet(newOwner,1)).isTrue();
             return ((Supplier<?>)call.getArgument(1)).get();
         });
-        var lock=new InJvmPlayerLock();var operations=new StrategicGarrisonWithdrawal(configs,
-                new InMemoryTargetOperationStore(),occupations,marches,mock(com.ironoath.core.march.MarchDueQueue.class),
-                defenderReader,social,lock);
-        var advancer=new StrategicTargetMarchAdvancer(configs,marches,defenderReader,social,operations);
+        var lock=new InJvmPlayerLock();var operationStore=new InMemoryTargetOperationStore();
+        var operations=new StrategicGarrisonWithdrawal(configs,operationStore,occupations,marches,
+                mock(com.ironoath.core.march.MarchDueQueue.class),defenderReader,social,lock);
+        var advancer=new StrategicTargetMarchAdvancer(configs,marches,defenderReader,social,operations,operationStore);
 
         assertThat(advancer.advance(attacker,120,()->true)).isTrue();
 
@@ -130,9 +131,10 @@ class StrategicTargetMarchAdvancerTest {
             var ids=(List<String>)call.getArgument(0);assertThat(ids).containsExactly("owned-npc-attacker-rally");
             return ((Supplier<?>)call.getArgument(1)).get();
         });
-        var operations=new StrategicGarrisonWithdrawal(configs,new InMemoryTargetOperationStore(),occupations,
+        var operationStore=new InMemoryTargetOperationStore();
+        var operations=new StrategicGarrisonWithdrawal(configs,operationStore,occupations,
                 marches,mock(com.ironoath.core.march.MarchDueQueue.class),defenderReader,social,new InJvmPlayerLock());
-        var advancer=new StrategicTargetMarchAdvancer(configs,marches,defenderReader,social,operations);
+        var advancer=new StrategicTargetMarchAdvancer(configs,marches,defenderReader,social,operations,operationStore);
         assertThat(advancer.advance(attacker,120,()->true)).isTrue();
         verify(social).runRalliesDepartureLocked(anyCollection(),any());
     }
