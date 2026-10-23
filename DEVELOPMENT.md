@@ -384,3 +384,5 @@ B13目标操作载荷（#2380）：TargetOperationStore.Snapshot保留旧plan字
 B13最终医院结果（#2381）：StrategicBattleHospitalSettlement.fromReceipts绑定原COMBAT与每原成员的实际Army回执，严格校验目标/操作/代次/原伤兵/医院最大容量；零伤兵成员也须回执，NPC不得伪带玩家医院，同一玩家不能消费攻守两份同目标回执。结果只汇总实际admitted/overflow，保原rounds/seed/幸存兵/loot；既有LEGACY_ORDERED顺序和实际收容保留，治疗后仍消费旧回执，不按当前空床重算。无医院NPC沿既有0容量规则将原伤兵转溢出死亡，不变实际余兵。JSON仅接原计划与回执，不接任意外部final Result；调用方仍须独立读回Army与持原权责。组件无生产调用者，稳定战报/击杀事件幂等与真实跨文档恢复/攻占仍须后接。
 
 B13战后行军投影（#2382）：March.applyStrategicSurvivors原子消费原currentMembers/冻结survivors，正余兵HOLD或RETURN，返程保实际份额让现returnRallyTroops按当前兵权退款；先核成员/兵种/总兵/时点和加时溢出，保全局unitId排序。StrategicBattleMarchOutcome存原COMBAT/侧/具体after，绑定beforeVersion，NPC无玩家投影，全灭为ANNIHILATED+after=null版本删除意图。真实March仅五态，拒0兵出发/fromSnapshot保持不变，无FINISHED；此前0兵终态草案已纠正。私有配置max1/drawgap1的实际kernel夹具覆盖DRAW，不改产品配置或当默认平衡。投影仍无生产执行器，不写owner/NPC/队列/战报，不替代原权责/准入/所有国家→所有集结→目标锁。
+
+B13战报疲劳归属（#2383）：record按主人视角取本人伤兵，击杀仍取对方阵亡，不能共用一个反侧选择。BattleReportFatigueTest使用声明的伤亡服务夹具、真实BattleReportService与内存/Mongo WarStore，验证不对称及零本人伤兵、对称对照、仓储重建后归属和击杀不变；不是新内核平衡验收。此修复不提供record重放幂等性，恢复不能直接重调该累加入口。

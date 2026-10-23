@@ -135,7 +135,7 @@ public class BattleReportService {
         // 写在任何一条 service 里都会漏掉另外三条。**只算伤兵**（治得回来，但那一轮出了力），
         // 与"击杀只算阵亡"刻意对称：阵亡进击杀账、伤兵进疲劳账，两笔账各记各的。
         // 按主人视角取自己这一方的伤兵（战报攻守双方各一份，与上面那条三目同一条口径）。
-        long wounded = ownerId.equals(attackerId) ? result.defWounded() : result.atkWounded();
+        long wounded = ownerId.equals(attackerId) ? result.atkWounded() : result.defWounded();
         com.ironoath.web.nation.WarStore.FatigueResult fatigueResult =
                 wars.addFatigue(membership.nationIdOf(ownerId), ownerId, 0L, wounded);
         if (LOG.isDebugEnabled()
