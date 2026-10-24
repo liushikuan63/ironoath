@@ -193,6 +193,15 @@ public final class InMemoryWarStore implements WarStore {
         return event;
     }
 
+    @Override public synchronized void captureGateForBattle(WarScoreBoard.BattleReservation reservation,
+            String winnerNationId,String expectedPreviousNationId) {
+        if(reservation==null)throw new IllegalArgumentException("原War reservation缺失，不能记录关卡归属");
+        var original=byId.get(WarStore.documentIdOf(reservation.warStartedAt()));
+        if(original==null)throw new IllegalStateException("原War存档缺失，不能记录COMBAT关卡归属");
+        var board=toDomain(original);
+        if(WarStore.applyGateCaptureForBattle(board,reservation,winnerNationId,expectedPreviousNationId))writeBound(board);
+    }
+
     @Override public synchronized Optional<WarScoreBoard.BattleReservation> reserveBattle(String sourceId,long sequence,
             String operationId,long happenedAt,List<WarScoreBoard.BattleMember> members) {
         var snapshot=latestSnapshot().orElse(null);

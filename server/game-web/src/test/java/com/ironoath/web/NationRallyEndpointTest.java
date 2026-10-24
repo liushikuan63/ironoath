@@ -166,7 +166,8 @@ class NationRallyEndpointTest {
             var board=wars.findByStartedAt(activeTestWarStartedAt).orElse(null);
             if(board!=null && board.phase()!=com.ironoath.core.nation.WarScoreBoard.Phase.SETTLED
                     && !board.hasPendingBattleReservations()) {
-                board.settle(board.siegeStartedAt());
+                if(board.phase()==com.ironoath.core.nation.WarScoreBoard.Phase.SIEGE)board.settle(board.siegeStartedAt());
+                else board.expirePreparation(board.preparationDeadlineAt());
                 wars.save(board);
             }
             activeTestWarStartedAt=null;
@@ -822,8 +823,13 @@ class NationRallyEndpointTest {
                     .filter(row->row.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.GATE)
                     .map(row->row.definition().id()).sorted().toList();
             assertThat(gateIds).hasSize(warRules.rules().gateCount());
-            gateIds.forEach(gateId->war.captureGate(attacker.nationId,gateId));
-            war.beginSiege(warStartedAt+1L);wars.save(war);
+            assertThat(gateIds).contains(targetId);
+            gateIds.stream().filter(gateId->!gateId.equals(targetId))
+                    .forEach(gateId->war.captureGate(attacker.nationId,gateId));
+            war.captureGate(defender.nationId,targetId);
+            assertThat(war.gateCount(attacker.nationId)).isEqualTo(warRules.rules().gateCount()-1);
+            assertThat(war.gateCount(defender.nationId)).isEqualTo(1);
+            wars.save(war);
             activeTestWarStartedAt=warStartedAt;
         } finally {
             configs.reload("global",com.ironoath.config.model.GlobalCfg.class,originalGlobal);
@@ -914,6 +920,9 @@ class NationRallyEndpointTest {
         var recordedWar=wars.findByStartedAt(reservation.warStartedAt()).orElseThrow();
         assertThat(recordedWar.battleEvent(targetId)).isEqualTo(warRecovery.event());
         assertThat(wars.pendingBattleReservation(reservation.warStartedAt(),reservation.operationId())).isEmpty();
+        assertThat(recordedWar.gateCount(attacker.nationId)).isEqualTo(warRules.rules().gateCount());
+        assertThat(recordedWar.gateCount(defender.nationId)).isZero();
+        assertThat(recordedWar.phase()).isEqualTo(com.ironoath.core.nation.WarScoreBoard.Phase.SIEGE);
         var eventKills=warRecovery.event().effects().stream().collect(java.util.stream.Collectors.toMap(
                 effect->effect.impact().playerId(),effect->effect.impact().kills()));
         assertThat(eventKills).isEqualTo(engineKillsFor(pending.combatPlan().battle()));

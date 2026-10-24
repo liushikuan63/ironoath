@@ -829,6 +829,63 @@ class WarStoreEquivalenceTest {
         }
     }
 
+    @Test
+    @DisplayName("COMBAT夺下最后一关后同War快照转移关卡并进入Siege，重放不重复加建筑分")
+    void combatGateCaptureTransfersOwnershipAndStartsSiegeOnBothStores() {
+        for(WarStore store:bothStores()) {
+            String label=store.getClass().getSimpleName();
+            var board=pair(T0,"n1","n2");
+            for(int i=1;i<rules.rules().gateCount();i++)board.captureGate("n1","gate_"+i);
+            String gateId="gate_"+rules.rules().gateCount();board.captureGate("n2",gateId);
+            assertThat(store.insertIfNoneActive(board)).isTrue();
+            var reservation=store.reserveBattle(gateId,1,"battle-gate-capture",T0+100L,
+                    List.of(new WarScoreBoard.BattleMember("P1","n1",7L))).orElseThrow();
+            var event=store.findByStartedAt(T0).orElseThrow()
+                    .freezeReservedBattleEvent(reservation.operationId(),java.util.Map.of("P1",0L));
+            assertThat(store.recordBattleEvent(event)).isEqualTo(event);
+
+            store.captureGateForBattle(reservation,"n1","n2");
+            var captured=store.findByStartedAt(T0).orElseThrow();
+            assertThat(captured.phase()).as("%s 最后一关由COMBAT获胜方取得后应启动Siege",label)
+                    .isEqualTo(WarScoreBoard.Phase.SIEGE);
+            assertThat(captured.gateCount("n1")).isEqualTo(rules.rules().gateCount());
+            assertThat(captured.gateCount("n2")).isZero();
+            long score=captured.toSnapshot().nations().stream().filter(row->row.nationId().equals("n1"))
+                    .findFirst().orElseThrow().score().buildingScore();
+            assertThat(score).isEqualTo(rules.rules().buildingScorePerCapture()*rules.rules().gateCount());
+
+            store.captureGateForBattle(reservation,"n1","n2");
+            var replay=store.findByStartedAt(T0).orElseThrow();
+            assertThat(replay.toSnapshot()).isEqualTo(captured.toSnapshot());
+            assertThat(store.completeBattleOperation(T0,reservation.operationId())).isTrue();
+            var released=store.findByStartedAt(T0).orElseThrow();
+            store.captureGateForBattle(reservation,"n1","n2");
+            assertThat(store.findByStartedAt(T0).orElseThrow().toSnapshot()).isEqualTo(released.toSnapshot());
+        }
+    }
+
+    @Test
+    @DisplayName("COMBAT首次攻占空关卡也能准确记分并在最后一关进入Siege")
+    void combatCapturesUnownedFinalGateOnBothStores() {
+        for(WarStore store:bothStores()) {
+            var board=pair(T0,"n1","n2");
+            for(int i=1;i<rules.rules().gateCount();i++)board.captureGate("n1","gate_"+i);
+            String lastGate="gate_"+rules.rules().gateCount();
+            assertThat(store.insertIfNoneActive(board)).isTrue();
+            var reservation=store.reserveBattle(lastGate,1,"battle-unowned-gate",T0+200L,
+                    List.of(new WarScoreBoard.BattleMember("P1","n1",3L))).orElseThrow();
+            var event=store.findByStartedAt(T0).orElseThrow()
+                    .freezeReservedBattleEvent(reservation.operationId(),java.util.Map.of("P1",0L));
+            assertThat(store.recordBattleEvent(event)).isEqualTo(event);
+
+            store.captureGateForBattle(reservation,"n1",null);
+            var captured=store.findByStartedAt(T0).orElseThrow();
+            assertThat(captured.phase()).isEqualTo(WarScoreBoard.Phase.SIEGE);
+            assertThat(captured.gateOwnerOf(lastGate)).isEqualTo("n1");
+            assertThat(captured.gateCount("n1")).isEqualTo(rules.rules().gateCount());
+        }
+    }
+
     // ---------- 夹具 ----------
 
     private List<WarStore> bothStores() {

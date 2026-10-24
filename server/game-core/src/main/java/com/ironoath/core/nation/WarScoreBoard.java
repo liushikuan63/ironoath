@@ -547,6 +547,17 @@ public final class WarScoreBoard {
         return held == null ? 0 : held.size();
     }
 
+    /** 读取唯一持有关卡的国家；无归属返回 null，重复归属属于破损快照。 */
+    public String gateOwnerOf(String gateId) {
+        if(gateId==null || gateId.isBlank())throw new IllegalArgumentException("gateId不得为空");
+        String owner=null;
+        for(var entry:gates.entrySet())if(entry.getValue().contains(gateId)) {
+            if(owner!=null)throw new IllegalStateException("同一关卡被多个国家同时持有："+gateId);
+            owner=entry.getKey();
+        }
+        return owner;
+    }
+
     /** 某一方是否有进攻资格（同国持有全部关卡；门槛来自 Rules.gateCount）。 */
     public boolean isQualified(String nationId) {
         return gateCount(nationId) == rules.gateCount();

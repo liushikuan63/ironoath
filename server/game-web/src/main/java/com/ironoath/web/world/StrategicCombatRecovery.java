@@ -245,6 +245,10 @@ public final class StrategicCombatRecovery {
                 .orElseThrow(()->new IllegalStateException("WarEvent写后原战事读回缺失"));
         if(!event.equals(recorded.battleEvent(reservation.sourceId())))
             throw new IllegalStateException("WarEvent完整读回与COMBAT冻结事件不一致");
+        var battle=slot.combatPlan().battle();
+        if(battle.result().winner()==com.ironoath.battle.Winner.ATTACKER
+                && battle.target().kind()==com.ironoath.core.world.WorldGenerator.EntityType.GATE)
+            recoverGateCapture(slot,battle.target().defender().occupation());
         try {wars.completeBattleOperation(reservation.warStartedAt(),plan.operationId());}
         catch(RuntimeException unknown) {
             if(!warBarrierReleased(reservation,event))throw unknown;
@@ -404,6 +408,22 @@ public final class StrategicCombatRecovery {
         } catch(RuntimeException unknown) {
             if(!ownerMatchesCapture(currentOwner(slot.targetId()),slot,ownerBefore,nationId,marchId,expected))throw unknown;
         }
+    }
+
+    /** Persist B13 gate ownership after the target CAS; the COMBAT reservation binds the original War across retries. */
+    private void recoverGateCapture(TargetOperationStore.Snapshot slot,TargetOccupationStore.Snapshot ownerBefore) {
+        var battle=slot.combatPlan().battle();
+        if(battle.target().kind()!=com.ironoath.core.world.WorldGenerator.EntityType.GATE)return;
+        var warPlan=slot.combatPlan().warRecovery();
+        if(warPlan==null || warPlan.reservation()==null)return;
+        if(wars==null)throw new IllegalStateException("关卡攻占WarStore未装配，保留COMBAT pending");
+        var reservation=warPlan.reservation();
+        if(!reservation.sourceId().equals(slot.targetId()) || !reservation.operationId().equals(slot.operationId())
+                || reservation.sequence()!=slot.sequence())
+            throw new IllegalStateException("关卡攻占与原COMBAT War reservation身份不一致");
+        wars.captureGateForBattle(reservation,battle.attacker().rally().nationId(),
+                ownerBefore==null?null:ownerBefore.nationId());
+        requireCurrentPending(slot);
     }
 
     private TargetOccupationStore.Snapshot currentOwner(String targetId) {

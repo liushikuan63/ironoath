@@ -1,5 +1,6 @@
 package com.ironoath.web.nation;
 
+import java.util.Objects;
 import java.util.Optional;
 
 import com.ironoath.core.nation.WarScoreBoard;
@@ -53,6 +54,48 @@ public interface WarStore {
      * 原季/成员/目标操作屏障及关战前恢复仍由调用者建立；缺战事或已关战且无原回执须拒绝。
      */
     WarScoreBoard.BattleEvent recordBattleEvent(WarScoreBoard.BattleEvent event);
+
+    /** Apply the gate ownership frozen by an attacker-winning COMBAT reservation in the same War snapshot. */
+    void captureGateForBattle(WarScoreBoard.BattleReservation reservation,String winnerNationId,
+            String expectedPreviousNationId);
+
+    /** Shared domain transition used by memory and Mongo stores; ownership itself is the replay receipt. */
+    static boolean applyGateCaptureForBattle(WarScoreBoard board,WarScoreBoard.BattleReservation reservation,
+            String winnerNationId,String expectedPreviousNationId) {
+        Objects.requireNonNull(board,"原War板不得为空");Objects.requireNonNull(reservation,"原COMBAT War reservation不得为空");
+        if(winnerNationId==null || winnerNationId.isBlank())throw new IllegalArgumentException("关卡攻方国家缺失");
+        if(board.startedAt()!=reservation.warStartedAt())throw new IllegalStateException("War关卡捕获与原战事startedAt不一致");
+        String gateId=reservation.sourceId();
+        var pending=board.pendingBattleReservation(reservation.operationId());
+        var event=board.battleEvent(gateId);
+        boolean completedReplay=event!=null && event.sourceId().equals(reservation.sourceId())
+                && event.sequence()==reservation.sequence() && event.operationId().equals(reservation.operationId())
+                && event.warStartedAt()==reservation.warStartedAt() && event.happenedAt()==reservation.happenedAt()
+                && event.rates().equals(reservation.rates());
+        if(pending.isPresent() && !pending.get().equals(reservation))
+            throw new IllegalStateException("COMBAT War关卡预留与原冻结身份不一致");
+        if(!completedReplay)throw new IllegalStateException("War关卡捕获须先有精确WarEvent回执");
+        String currentOwner=board.gateOwnerOf(gateId);
+        if(pending.isEmpty()) {
+            if(winnerNationId.equals(currentOwner))return false;
+            throw new IllegalStateException("War闭战reservation已释放，但COMBAT关卡归属回执不完整");
+        }
+        if(board.phase()==WarScoreBoard.Phase.SETTLED) {
+            throw new IllegalStateException("已结算国战缺少原关卡捕获回执");
+        }
+        if(winnerNationId.equals(currentOwner)) {
+            if(board.phase()==WarScoreBoard.Phase.PREPARATION && board.isQualified(winnerNationId)) {
+                board.beginSiege(reservation.happenedAt());return true;
+            }
+            return false;
+        }
+        if(!Objects.equals(currentOwner,expectedPreviousNationId))
+            throw new IllegalStateException("War关卡原持有人与冻结目标归属不一致");
+        board.captureGate(winnerNationId,gateId);
+        if(board.phase()==WarScoreBoard.Phase.PREPARATION && board.isQualified(winnerNationId))
+            board.beginSiege(reservation.happenedAt());
+        return true;
+    }
 
     /** 在同一War快照冻结原战事、系数与成员参战资格；无适用活跃战事时返回empty。 */
     Optional<WarScoreBoard.BattleReservation> reserveBattle(String sourceId,long sequence,String operationId,

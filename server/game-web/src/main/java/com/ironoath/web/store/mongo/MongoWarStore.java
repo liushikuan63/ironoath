@@ -180,6 +180,32 @@ public final class MongoWarStore implements WarStore {
         }
     }
 
+    @Override public void captureGateForBattle(WarScoreBoard.BattleReservation reservation,String winnerNationId,
+            String expectedPreviousNationId) {
+        if(reservation==null)throw new IllegalArgumentException("原War reservation缺失，不能记录关卡归属");
+        String id=WarStore.documentIdOf(reservation.warStartedAt());
+        synchronized(activeLock) {
+            for(int attempt=0;attempt<MAX_ATTEMPTS;attempt++) {
+                var doc=mongo.findById(id,WarDocument.class,WarDocument.COLLECTION);
+                if(doc==null || doc.state()==null)throw new IllegalStateException("原War存档缺失，不能记录COMBAT关卡归属");
+                if(doc.startedAt()!=reservation.warStartedAt() || doc.state().startedAt()!=reservation.warStartedAt())
+                    throw new IllegalStateException("原War存档startedAt与COMBAT reservation不一致");
+                var board=toDomain(doc);
+                if(!WarStore.applyGateCaptureForBattle(board,reservation,winnerNationId,expectedPreviousNationId))return;
+                try {if(replace(doc,board))return;}
+                catch(RuntimeException uncertain) {
+                    try {
+                        var current=findByStartedAt(reservation.warStartedAt()).orElse(null);
+                        if(current!=null && !WarStore.applyGateCaptureForBattle(current,reservation,
+                                winnerNationId,expectedPreviousNationId))return;
+                    } catch(RuntimeException readFailure) {if(readFailure!=uncertain)uncertain.addSuppressed(readFailure);}
+                    throw uncertain;
+                }
+            }
+            throw conflict();
+        }
+    }
+
     @Override public Optional<WarScoreBoard.BattleReservation> reserveBattle(String sourceId,long sequence,
             String operationId,long happenedAt,List<WarScoreBoard.BattleMember> members) {
         synchronized(activeLock) {
