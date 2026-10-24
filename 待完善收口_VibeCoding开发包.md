@@ -8200,3 +8200,6 @@ TEST_EXIT=0
 
 
 | #2394 原锁域COMBAT持久发布与独立确认边界 | 本格原子本地提交，未推送 | 只在已持原国家/攻守Rally锁后取target锁，核原March/Rally/守军后CAS pending槽，完整读回确认与原载荷重放；新15与相关70/0/0/0，真实锁集另20/0/0/0；有效mutant：源版本2跑1行为失败1冗余防线通过，锁域1/1失败、读回1/1失败，均0错误0跳；源码SHA精确恢复；check51/harness52/client1415/tools73全过；build.sh含全量test.sh通过，模块实数见receipt | D:/tmp/ironoath-2394-receipt.json、counterfactuals.json及v2.json、mutant-v2-source-version.log、publisher-related-final.log、lockset-related.log、check.log、build.log；只读审查0Critical/0Important/1Minor证据口径已更正，原补丁SHA与修后SHA另存 | 初始缺类编译仅PREREQ；原源版本第二失败只是消息断言，原日志保留。无实际到达caller/完整准入源事实装配/有序恢复/任何战后效果，入口继续关。独立审查发现BASE既有NPC pending预检空指针，下一格#2395先有效RED再修；地形方案已推荐待选。全国收益/B19/军值坐标/真实运行验收仍未完，原库不写/5000不跑/不推送。|
+
+
+| #2395 NPC pending COMBAT不解引用玩家守方 | 本格原子本地提交，未推送 | 有效RED2/1/0/0，NPC精确空指针且玩家对照通过；只对真实玩家侧追加Rally锁，NPC不造锁。修后双分支准确锁集/原pending槽/不读live守方与明确unsupported屏障，相关九类92/0/0/0、check51/harness52/client1415/tools73全过，独立只读审查无Critical/Important/Minor | D:/tmp/ironoath-2395-npc-pending-red.log、npc-pending-related-green.log、check.log、review.patch、receipt.json | 只修锁预检，COMBAT恢复owner/效果仍未做。本格未重复全量build，最近全量为5f1c6719主3425+balance7/client1415；不冒充当前新全量结果。原Goal/全国收益/B19/数值坐标/真实运行仍开放；地形待选，不推/原库不写/5000不跑。|

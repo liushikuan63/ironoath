@@ -19,7 +19,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -31,9 +32,9 @@ import static org.mockito.Mockito.when;
 
 /** Pending COMBAT retries must use frozen battle rallies before reading partially written target state. */
 class StrategicCombatPendingLockRecoveryTest {
-    @Test
-    void pendingCombatUsesFrozenRalliesAndStopsAtUnsupportedRecoveryBarrier() {
-        var battle=StrategicCombatSlotTest.battle(2391,true);
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void pendingCombatUsesFrozenRalliesAndStopsAtUnsupportedRecoveryBarrier(boolean playerDefender) {
+        var battle=StrategicCombatSlotTest.battle(2391,playerDefender);
         var plan=TargetOperationStore.CombatPlan.create(battle,1);
         var slot=TargetOperationStore.Snapshot.combat(1,false,plan);
         var operations=new InMemoryTargetOperationStore();assertThat(operations.compareAndSet(slot,0)).isTrue();
@@ -54,8 +55,10 @@ class StrategicCombatPendingLockRecoveryTest {
 
         assertThatThrownBy(()->advancer.advance(attacker,battle.happenedAt(),()->true))
                 .isInstanceOf(BizException.class).hasMessageContaining("战略战斗操作尚未确认恢复");
-        assertThat(lockSets).containsExactly(List.of(
-                battle.attacker().march().rallyId(),battle.defender().march().rallyId()).stream().sorted().toList());
+        var expected=new ArrayList<String>();expected.add(battle.attacker().march().rallyId());
+        if(playerDefender)expected.add(battle.defender().march().rallyId());
+        assertThat(lockSets).containsExactly(expected.stream().sorted().toList());
+        assertThat(operations.findByTargetId(slot.targetId())).contains(slot);
         verify(defenders,never()).read(any());
     }
 }

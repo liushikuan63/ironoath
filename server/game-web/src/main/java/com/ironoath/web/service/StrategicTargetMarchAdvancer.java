@@ -116,7 +116,8 @@ public final class StrategicTargetMarchAdvancer {
         }
         var battle=slot.combatPlan().battle();
         rallyIds.add(requireRally(March.fromSnapshot(battle.attacker().march())));
-        if(battle.defender().march()!=null)
+        // NPC只在target.defender中带原守军事实，没有玩家Casualties/Rally，不能解引用或造锁。
+        if(battle.defender()!=null)
             rallyIds.add(requireRally(March.fromSnapshot(battle.defender().march())));
     }
 
