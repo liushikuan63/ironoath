@@ -96,6 +96,7 @@ import com.ironoath.web.store.memory.InMemoryPlayerStore;
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Import(NationRallyEndpointTest.DeterministicBattleSeedTestConfig.class)
+@DirtiesContext(classMode=DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class NationRallyEndpointTest {
 
     @TestConfiguration(proxyBeanMethods=false)
@@ -869,14 +870,15 @@ class NationRallyEndpointTest {
         marchAppService.processDue(attacker.king,frozen.arriveAt());
 
         var pending=targetOperations.findByTargetId(targetId).orElseThrow();
-        assertThat(pending.completed()).isFalse();
-        assertThat(pending.sequence()).isEqualTo(2L);
+        assertThat(pending.sequence()).as("同一目标第二场战斗必须发布独立的递增COMBAT计划").isEqualTo(2L);
         assertThat(pending.combatPlan().battle().defender()).as("第二场COMBAT必须读取实际玩家驻军").isNotNull();
         assertThat(pending.combatPlan().battle().result().winner())
                 .as("冻结玩家守军输入应复现指定的真实胜负方向")
                 .isEqualTo(expectedWinner);
         assertThat(pending.combatPlan().battle().defender().currentMembers()).containsKey(defender.king);
-        strategicRecovery.recoverPending();
+        // 本用例验最终次序与效果，允许同一请求的后续恢复入口已完成该槽；
+        // pending门本身由StrategicCombatPendingLockRecoveryTest独立验证。
+        if(!pending.completed())strategicRecovery.recoverPending();
 
         var completed=targetOperations.findByTargetId(targetId).orElseThrow();
         assertThat(completed.completed()).isTrue();
@@ -985,6 +987,100 @@ class NationRallyEndpointTest {
         var eventKills=warRecovery.event().effects().stream().collect(java.util.stream.Collectors.toMap(
                 effect->effect.impact().playerId(),effect->effect.impact().kills()));
         assertThat(eventKills).isEqualTo(engineKillsFor(pending.combatPlan().battle()));
+    }
+
+    @Test
+    @DirtiesContext(methodMode=DirtiesContext.MethodMode.AFTER_METHOD)
+    @DisplayName("活跃War四座关卡都由真实不同发起人的国家集结到达并记录Capture")
+    void activeWarCapturesFourGatesFromRealNpcBattlesWithoutGateOwnershipFixtures() throws Exception {
+        DeterministicBattleSeedTestConfig.seed=2384L;
+        Nation attacker=nation(4),defender=nation(2);
+        post200("/nation/appoint",attacker.king,new NationAppointReq(
+                newRequestId(),attacker.mates.get(0),NationOffice.PRIME_MINISTER));
+        post200("/nation/appoint",attacker.king,new NationAppointReq(
+                newRequestId(),attacker.mates.get(1),NationOffice.GENERAL));
+        post200("/nation/appoint",attacker.king,new NationAppointReq(
+                newRequestId(),attacker.mates.get(2),NationOffice.GENERAL));
+        doNothing().when(strategicTargetCircleGuard).guardRallyStart(
+                org.mockito.ArgumentMatchers.anyString(),org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyInt());
+        doNothing().when(strategicTargetCircleGuard).guardArrival(org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyInt());
+
+        Path globalConfig=locateConfigDir().resolve("global.json");
+        String originalGlobal=Files.readString(globalConfig);
+        long warNow=System.currentTimeMillis();
+        long openSeason=DayKey.startOfDayPlusDays(warNow,-30L);
+        var warRules=new com.ironoath.web.nation.WarRulesAssembler(configs);
+        configs.reload("global",com.ironoath.config.model.GlobalCfg.class,withSeasonStart(originalGlobal,openSeason));
+        long warStartedAt=-1L;
+        try {
+            post200("/nation/war/declare",attacker.king,new WarDeclareReq(newRequestId(),defender.nationId));
+            var war=wars.findLatest().orElseThrow();warStartedAt=war.startedAt();
+            activeTestWarStartedAt=warStartedAt;
+            var gates=WorldTargets.from(configs).targets().stream()
+                    .filter(row->row.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.GATE)
+                    .sorted(java.util.Comparator.comparing(row->row.definition().id())).toList();
+            assertThat(gates).hasSize(warRules.rules().gateCount());
+            assertThat(war.gateCount(attacker.nationId)).isZero();
+            assertThat(war.gateCount(defender.nationId)).isZero();
+        } finally {
+            configs.reload("global",com.ironoath.config.model.GlobalCfg.class,originalGlobal);
+        }
+
+        var gates=WorldTargets.from(configs).targets().stream()
+                .filter(row->row.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.GATE)
+                .sorted(java.util.Comparator.comparing(row->row.definition().id())).toList();
+        var initiators=new ArrayList<String>();initiators.add(attacker.king);initiators.addAll(attacker.mates);
+        for(int i=0;i<gates.size();i++) {
+            String leader=initiators.get(i);
+            String joiner=i==0?attacker.mates.get(0):attacker.king;
+            giveTroops(leader,"unit_cavalry_t4",100_000L);
+            giveTroops(joiner,"unit_cavalry_t4",100_000L);
+            var target=gates.get(i);var coord=target.coord();
+            String rallyId=post200("/rally/nation",leader,new NationRallyReq(newRequestId(),
+                    new SocialCoord(coord.x(),coord.y()),SocialTargetType.STRATEGIC_TARGET,4,10,
+                    List.of(new RallyTroop("unit_cavalry_t4",50_000L)),List.of()))
+                    .get("rally").get("rallyId").asText();
+            post200("/rally/join",joiner,new RallyJoinReq(newRequestId(),rallyId,
+                    List.of(new RallyTroop("unit_cavalry_t4",50_000L)),List.of()));
+            var rally=socialStore.rallyOf(rallyId).orElseThrow();
+            marchAppService.processDue(leader,rally.prepareUntil()+1L);
+            String marchId="march_rally_"+rallyId;
+            var march=marchRepository.findById(marchId).orElseThrow().snapshot();
+            marchAppService.processDue(leader,march.arriveAt());
+
+            var slot=targetOperations.findByTargetId(target.definition().id()).orElseThrow();
+            assertThat(slot.combatPlan().battle().result().winner())
+                    .as("each configured gate must be won through the real HTTP arrival path, gate=%s",
+                            target.definition().id())
+                    .isEqualTo(com.ironoath.battle.Winner.ATTACKER);
+            assertThat(slot.combatPlan().battle().input().terrain()).isEqualTo(target.battleTerrain());
+            strategicRecovery.recoverPending();
+            var completed=targetOperations.findByTargetId(target.definition().id()).orElseThrow();
+            assertThat(completed.completed()).isTrue();
+            var warRecovery=completed.combatPlan().warRecovery();
+            assertThat(warRecovery.event()).isNotNull();
+            assertThat(wars.pendingBattleReservation(warStartedAt,
+                    warRecovery.reservation().operationId())).isEmpty();
+            var owner=targetOccupations.findByTargetIds(List.of(target.definition().id())).get(target.definition().id());
+            assertThat(owner.nationId()).isEqualTo(attacker.nationId);
+            assertThat(owner.garrison()).isEqualTo(
+                    com.ironoath.web.world.TargetOccupationStore.Garrison.stationed(marchId));
+            assertThat(battleReports.reportsOf(leader)).hasSize(1);
+            var recorded=wars.findByStartedAt(warStartedAt).orElseThrow();
+            assertThat(recorded.battleEvent(target.definition().id())).isEqualTo(warRecovery.event());
+            assertThat(recorded.battleEvent(target.definition().id()).sequence()).isEqualTo(1L);
+            assertThat(recorded.gateCount(attacker.nationId)).isEqualTo(i+1);
+            assertThat(recorded.gateCount(defender.nationId)).isZero();
+            assertThat(recorded.phase()).isEqualTo(i+1==gates.size()
+                    ?com.ironoath.core.nation.WarScoreBoard.Phase.SIEGE
+                    :com.ironoath.core.nation.WarScoreBoard.Phase.PREPARATION);
+        }
+        var finalWar=wars.findByStartedAt(warStartedAt).orElseThrow();
+        assertThat(finalWar.gateCount(attacker.nationId)).isEqualTo(warRules.rules().gateCount());
+        assertThat(finalWar.gateCount(defender.nationId)).isZero();
+        assertThat(finalWar.phase()).isEqualTo(com.ironoath.core.nation.WarScoreBoard.Phase.SIEGE);
     }
 
     // ---------- 加入 ----------
