@@ -235,6 +235,12 @@ public final class StrategicGarrisonWithdrawal {
         return WorldTargets.from(configs).targets().stream().filter(t->t.definition().id().equals(id)).findFirst()
                 .orElseThrow(()->state("战略目标目录缺失，须先处理原驻军迁移"));
     }
+    /** 发布者已验证原攻守国家/集结锁；只授予目标临界区，不越过待完成操作或代做恢复。 */
+    public <T> T runCombatPublicationLocked(String id,Supplier<T> publication) {
+        if(id==null || id.isBlank() || publication==null)throw new IllegalArgumentException("目标发布上下文不得为空");
+        return withTarget(id,publication);
+    }
+
     private <T> T withTarget(String id,Supplier<T> action){
         var prior=targetScope.get();
         if(prior!=null && !prior.equals(id))throw new IllegalStateException("目标锁内禁止转入另一目标");

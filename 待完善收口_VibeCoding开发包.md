@@ -8197,3 +8197,6 @@ TEST_EXIT=0
 
 
 | #2393 战略到达先持久保全交战兵权 | 本格原子本地提交，未推送 | successor首工具compact0/唯一写者及旧线程归档读回通过；原RED1/1/0/0，补实际到期路径有效RED2/2/0/0；修后相关六类55/0/0/0含随机Mongo，check静态51/harness52通过，build.sh含全量test.sh通过（精确模块计数见build-counts.json） | D:/tmp/ironoath-successor-receipt-20261024.json、ironoath-2393-arrival-red-successor-20261024.log、boundary-red-valid.log、boundary-green.log、check.log、build.log、build-counts.json；实际到达/复扫均保留FIGHTING、原兵、版本和到期事件 | 首轮新增夹具缺configs导致NPE，修夹具后两例业务RED均为应抛未抛；此笔仅保全边界，未发布COMBAT或执行战后效果，入口继续关闭。下一格持久发布/有序恢复；真实攻占/全国收益/B19/军值坐标未完，无真实玩家库写入、无5000新准入、不推送。|
+
+
+| #2394 原锁域COMBAT持久发布与独立确认边界 | 本格原子本地提交，未推送 | 只在已持原国家/攻守Rally锁后取target锁，核原March/Rally/守军后CAS pending槽，完整读回确认与原载荷重放；新15与相关70/0/0/0，真实锁集另20/0/0/0；有效mutant：源版本2跑1行为失败1冗余防线通过，锁域1/1失败、读回1/1失败，均0错误0跳；源码SHA精确恢复；check51/harness52/client1415/tools73全过；build.sh含全量test.sh通过，模块实数见receipt | D:/tmp/ironoath-2394-receipt.json、counterfactuals.json及v2.json、mutant-v2-source-version.log、publisher-related-final.log、lockset-related.log、check.log、build.log；只读审查0Critical/0Important/1Minor证据口径已更正，原补丁SHA与修后SHA另存 | 初始缺类编译仅PREREQ；原源版本第二失败只是消息断言，原日志保留。无实际到达caller/完整准入源事实装配/有序恢复/任何战后效果，入口继续关。独立审查发现BASE既有NPC pending预检空指针，下一格#2395先有效RED再修；地形方案已推荐待选。全国收益/B19/军值坐标/真实运行验收仍未完，原库不写/5000不跑/不推送。|

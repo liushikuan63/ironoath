@@ -3068,6 +3068,22 @@ public class SocialAppService {
         throw new IllegalStateException("集结归属持续变化，保留原状态后重试");
     }
 
+    /** COMBAT发布只消费已持有的原国家/集结锁；不能在目标锁内补拿另一个国家或集结。 */
+    public void requireNationalRalliesLocked(java.util.Map<String,String> originalNations) {
+        if(originalNations==null || originalNations.isEmpty())
+            throw new IllegalArgumentException("原国家集结锁身份不得为空");
+        var held=heldRallyContexts.get();
+        if(held==null || !held.keySet().containsAll(originalNations.keySet()))
+            throw new IllegalStateException("COMBAT发布前必须持有原攻守全部国家和集结锁");
+        for(var entry:originalNations.entrySet()) {
+            var context=held.get(entry.getKey());
+            if(context.scope()!=Rally.Scope.NATION || !java.util.Objects.equals(context.groupId(),entry.getValue()))
+                throw new IllegalStateException("COMBAT原国家与已持集结锁上下文不一致");
+        }
+        requireRallyLockContexts(List.copyOf(originalNations.keySet()),
+                originalNations.keySet().stream().collect(java.util.stream.Collectors.toMap(id->id,held::get)));
+    }
+
     private java.util.Map<String,RallyLockContext> rallyLockContexts(List<String> ids) {
         var contexts=new java.util.LinkedHashMap<String,RallyLockContext>();
         for(String id:ids) {
