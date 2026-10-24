@@ -124,6 +124,9 @@ class NationRallyEndpointTest {
     @Autowired private com.ironoath.web.world.TargetOccupationStore targetOccupations;
     @Autowired private com.ironoath.web.world.NeutralTargetGarrisonStore neutralGarrisons;
     @Autowired private com.ironoath.web.battle.BattleReportStore battleReports;
+    @Autowired private com.ironoath.core.march.MarchDueQueue marchDue;
+    @Autowired private com.ironoath.web.season.SeasonBoardStore seasonBoards;
+    @Autowired private com.ironoath.web.nation.WarStore wars;
 
     /** 联盟名/标签与国名的序号：同一轮里要建好几个组织，重名会在 NAME_TAKEN 上报错而测不到逻辑。 */
     private int seq;
@@ -815,6 +818,54 @@ class NationRallyEndpointTest {
                 com.ironoath.web.world.TargetOccupationStore.Garrison.stationed(attackerMarchId));
         assertThat(battleReports.reportsOf(attacker.king)).hasSize(1);
         assertThat(battleReports.reportsOf(defender.king)).hasSize(1);
+
+        var marchRecovery=completed.combatPlan().marchRecovery();
+        assertThat(marchRecovery).isNotNull();
+        var attackerIntent=marchRecovery.attacker();
+        if(attackerIntent.disposition()==com.ironoath.web.battle.StrategicBattleMarchOutcome.Disposition.ANNIHILATED) {
+            assertThat(marchRepository.findById(attackerMarchId)).isEmpty();
+        } else {
+            assertThat(marchRepository.findById(attackerMarchId)).map(com.ironoath.core.march.March::snapshot)
+                    .contains(attackerIntent.after());
+            if(attackerIntent.disposition()==com.ironoath.web.battle.StrategicBattleMarchOutcome.Disposition.RETURN)
+                assertThat(marchDue.dueBefore(attackerIntent.after().returnArriveAt(),100)).contains(attackerMarchId);
+            else assertThat(attackerIntent.after().status()).isEqualTo(com.ironoath.core.march.March.Status.STATIONED);
+        }
+        var defenderIntent=marchRecovery.defender();assertThat(defenderIntent).isNotNull();
+        if(defenderIntent.disposition()==com.ironoath.web.battle.StrategicBattleMarchOutcome.Disposition.ANNIHILATED)
+            assertThat(marchRepository.findById(defenderIntent.marchId())).isEmpty();
+        else {
+            assertThat(marchRepository.findById(defenderIntent.marchId()).map(com.ironoath.core.march.March::snapshot))
+                    .contains(defenderIntent.after());
+            assertThat(defenderIntent.disposition()).isEqualTo(com.ironoath.web.battle.StrategicBattleMarchOutcome.Disposition.RETURN);
+            assertThat(marchDue.dueBefore(defenderIntent.after().returnArriveAt(),100)).contains(defenderIntent.marchId());
+        }
+
+        var killPlan=completed.combatPlan().killPlan();
+        assertThat(killPlan).isNotNull();
+        assertThat(killPlan.active()).as("测试时点必须处在活跃赛季，才能验收引擎成员击杀的持久回执").isTrue();
+        if(killPlan.active()) {
+            var engineKills=new java.util.HashMap<String,Long>(pending.combatPlan().battle().result().atkKillsByMember());
+            engineKills.putAll(pending.combatPlan().battle().result().defKillsByMember());
+            var plannedKills=killPlan.members().stream().collect(java.util.stream.Collectors.toMap(
+                    com.ironoath.web.battle.StrategicBattleKillPlan.Member::playerId,
+                    com.ironoath.web.battle.StrategicBattleKillPlan.Member::kills));
+            assertThat(plannedKills).isEqualTo(engineKills);
+            for(var member:killPlan.members())if(member.leaderboardEligible())
+                assertThat(seasonBoards.scopedIncrementOf(killPlan.seasonId(),
+                        com.ironoath.core.season.SeasonSettlement.Board.KILL,member.playerId(),killPlan.sourceId()))
+                        .contains(new com.ironoath.web.season.SeasonBoardStore.ScopedIncrement(killPlan.sourceId(),
+                                killPlan.sequence(),killPlan.operationId(),member.playerId(),member.displayName(),member.kills()));
+        }
+
+        var warRecovery=completed.combatPlan().warRecovery();
+        if(warRecovery!=null && warRecovery.reservation()!=null) {
+            var reservation=warRecovery.reservation();
+            assertThat(warRecovery.event()).isNotNull();
+            assertThat(wars.findByStartedAt(reservation.warStartedAt()).orElseThrow()
+                    .battleEvent(targetId)).isEqualTo(warRecovery.event());
+            assertThat(wars.pendingBattleReservation(reservation.warStartedAt(),reservation.operationId())).isEmpty();
+        }
     }
 
     // ---------- 加入 ----------
