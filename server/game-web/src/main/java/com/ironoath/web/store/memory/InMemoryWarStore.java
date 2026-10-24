@@ -193,6 +193,30 @@ public final class InMemoryWarStore implements WarStore {
         return event;
     }
 
+    @Override public synchronized Optional<WarScoreBoard.BattleReservation> reserveBattle(String sourceId,long sequence,
+            String operationId,long happenedAt,List<WarScoreBoard.BattleMember> members) {
+        var snapshot=latestSnapshot().orElse(null);
+        if(snapshot==null)return Optional.empty();
+        var board=toDomain(snapshot);
+        var previous=board.pendingBattleReservation(operationId);
+        var reservation=board.reserveBattle(sourceId,sequence,operationId,happenedAt,members);
+        if(reservation.isPresent() && previous.isEmpty())writeBound(board);
+        return reservation;
+    }
+
+    @Override public synchronized Optional<WarScoreBoard.BattleReservation> pendingBattleReservation(long warStartedAt,String operationId) {
+        var stored=byId.get(WarStore.documentIdOf(warStartedAt));
+        return stored==null?Optional.empty():toDomain(stored).pendingBattleReservation(operationId);
+    }
+
+    @Override public synchronized boolean completeBattleOperation(long warStartedAt,String operationId) {
+        var stored=byId.get(WarStore.documentIdOf(warStartedAt));
+        if(stored==null)return false;
+        var board=toDomain(stored);
+        if(!board.completeBattleOperation(operationId))return false;
+        writeBound(board);return true;
+    }
+
     /**
      * 惰性结算。<b>{@code synchronized} 不是装饰</b>：判到期、{@code settle()}、整份写回三步必须在
      * 本对象的同一把监视器里，与 {@link #insertIfNoneActive}／{@link #recordKills} 共用同一把锁 ——
@@ -207,6 +231,8 @@ public final class InMemoryWarStore implements WarStore {
         }
         WarScoreBoard board = toDomain(stored);
         boolean settledNow = WarStore.dueToSettle(board, now);
+        if(settledNow && board.hasPendingBattleReservations())
+            return Optional.of(WarStore.Settlement.notSettled(board));
         WarScoreBoard.Result result = null;
         if (settledNow) {
             if (board.phase() == WarScoreBoard.Phase.PREPARATION) {

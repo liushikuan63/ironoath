@@ -54,6 +54,16 @@ public interface WarStore {
      */
     WarScoreBoard.BattleEvent recordBattleEvent(WarScoreBoard.BattleEvent event);
 
+    /** 在同一War快照冻结原战事、系数与成员参战资格；无适用活跃战事时返回empty。 */
+    Optional<WarScoreBoard.BattleReservation> reserveBattle(String sourceId,long sequence,String operationId,
+            long happenedAt,java.util.List<WarScoreBoard.BattleMember> members);
+
+    /** 恢复器读回闭战屏障；用原startedAt避免把计划绑定到后来新开的战事。 */
+    Optional<WarScoreBoard.BattleReservation> pendingBattleReservation(long warStartedAt,String operationId);
+
+    /** 只有精确WarEvent已记账后才能释放预留；CAS写失败必须保留预留。 */
+    boolean completeBattleOperation(long warStartedAt,String operationId);
+
     /**
      * 原子地建档：<b>只在没有人写过这一场时</b>插入（{@code _id} 唯一约束）。
      *

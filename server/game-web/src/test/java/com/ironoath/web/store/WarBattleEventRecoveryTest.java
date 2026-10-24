@@ -3,6 +3,9 @@ package com.ironoath.web.store;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.core.nation.WarScoreBoard;
 import com.ironoath.web.nation.*;
+import com.ironoath.web.world.TargetOperationStore;
+import com.ironoath.web.store.memory.InMemoryTargetOperationStore;
+import com.ironoath.web.store.memory.InMemoryWarStore;
 import com.ironoath.web.store.mongo.*;
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.json.JsonMapper;
@@ -78,6 +81,51 @@ class WarBattleEventRecoveryTest {
   var old12=new WarScoreBoard.Snapshot(snap.startedAt(),snap.phase(),snap.initiatorNationId(),snap.nations(),snap.capitalHolder(),snap.capitalHeldSince(),snap.fatigue(),snap.playerKills(),snap.goalClaimed(),snap.totalKills(),snap.marchFatigueReceipts(),snap.siegeStartedAt());
   var old11=new WarScoreBoard.Snapshot(snap.startedAt(),snap.phase(),snap.initiatorNationId(),snap.nations(),snap.capitalHolder(),snap.capitalHeldSince(),snap.fatigue(),snap.playerKills(),snap.goalClaimed(),snap.totalKills(),snap.marchFatigueReceipts());
   for(var old:List.of(old14,old12,old11)){assertThat(old.battleEvents()).isEmpty();assertThat(WarScoreBoard.fromSnapshot(old,rules.rules()).totalKills()).isEqualTo(14);}
+ }
+ @Test void pendingPreDeadlineCombatReservationMustBlockLazyWarAbandonment() {
+  var battle=StrategicCombatSlotTest.battle(2398,false,true);
+  assertThat(battle.happenedAt()).isBetween(101L,299L);
+  var plan=TargetOperationStore.CombatPlan.create(battle,1);
+  var operations=new InMemoryTargetOperationStore();
+  assertThat(operations.compareAndSet(TargetOperationStore.Snapshot.combat(1,false,plan),0)).isTrue();
+
+  var wars=new InMemoryWarStore(rules);var board=new WarScoreBoard(rules.rules(),100,"owned-N",300L);
+  board.registerNation("owned-N");board.registerNation("owned-opponent");
+  assertThat(wars.insertIfNoneActive(board)).isTrue();
+  assertThat(wars.reserveBattle("gate_north",1,plan.operationId(),battle.happenedAt(),
+          List.of(new WarScoreBoard.BattleMember("owned-attacker","owned-N",1))))
+          .isPresent().get().extracting(WarScoreBoard.BattleReservation::operationId).isEqualTo(plan.operationId());
+  var settlement=wars.settleIfExpired(300L).orElseThrow();
+
+  assertThat(settlement.settledNow())
+          .as("the pending target COMBAT happened inside this War window and must recover before expiry is committed")
+          .isFalse();
+  assertThat(settlement.board().phase()).isEqualTo(WarScoreBoard.Phase.PREPARATION);
+  assertThat(operations.findByTargetId("gate_north")).isPresent()
+          .get().extracting(TargetOperationStore.Snapshot::completed).isEqualTo(false);
+ }
+ @Test void pendingBattleReservationSurvivesMongoRestartAndReleasesOnlyAfterExactWarEvent() {
+  var base=original(rules);actual().insertIfAbsent(base);
+  var reservation=actual().reserveBattle("gate_north",1,"owned-op-1",T0+1,
+          List.of(new WarScoreBoard.BattleMember("owned-A","owned-NA",11),
+                  new WarScoreBoard.BattleMember("owned-B","owned-NB",3))).orElseThrow();
+
+  var restarted=new MongoWarStore(db.template(),rules);
+  assertThat(restarted.pendingBattleReservation(T0,"owned-op-1")).contains(reservation);
+  var blocked=restarted.settleIfExpired(T0+1000).orElseThrow();
+  assertThat(blocked.settledNow()).isFalse();
+  assertThat(blocked.board().phase()).isEqualTo(WarScoreBoard.Phase.PREPARATION);
+  assertThatThrownBy(()->restarted.completeBattleOperation(T0,"owned-op-1"))
+          .hasMessageContaining("WarEvent");
+  assertThat(restarted.pendingBattleReservation(T0,"owned-op-1")).contains(reservation);
+
+  var event=restarted.findByStartedAt(T0).orElseThrow().freezeReservedBattleEvent("owned-op-1",
+          Map.of("owned-A",2L,"owned-B",7L));
+  assertThat(restarted.recordBattleEvent(event)).isEqualTo(event);
+  assertThat(restarted.completeBattleOperation(T0,"owned-op-1")).isTrue();
+  assertThat(restarted.completeBattleOperation(T0,"owned-op-1")).isTrue();
+  assertThat(restarted.pendingBattleReservation(T0,"owned-op-1")).isEmpty();
+  assertThat(restarted.settleIfExpired(T0+1000).orElseThrow().abandonedNow()).isTrue();
  }
  @Test void firstPersistentApplicationUsesCapturedRatesRatherThanCurrentStoreMaterialization(){
   var current=rules.rules();var captured=new WarScoreBoard.Rules(current.durationMillis(),current.gateCount(),current.occupyScorePerMinute(),current.killScorePerUnit()+1,current.buildingScorePerCapture(),current.fatiguePerMarch(),current.fatiguePerWounded()+1,current.fatigueMax(),current.serverGoalKills());

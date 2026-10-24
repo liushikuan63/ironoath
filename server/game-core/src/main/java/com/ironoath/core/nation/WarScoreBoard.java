@@ -6,6 +6,8 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -156,6 +158,7 @@ public final class WarScoreBoard {
     private final Map<String, MarchFatigueReceipt> marchFatigueReceipts = new LinkedHashMap<>();
     /** 每目标仅保最近一代的全成员原战斗回执，不按每场/每成员无限追加历史。 */
     private final Map<String,BattleEvent> battleEvents = new LinkedHashMap<>();
+    private final Map<String,BattleReservation> pendingBattleReservations = new LinkedHashMap<>();
     /**
      * 玩家 id → 这一场里他消灭的单位数。<b>赛季积分要按人发，所以"谁打的"必须留在这块板上</b>：
      * 只记国家维度的击杀，到了赛季结算就分不出该给谁加分，届时唯一的补救办法是回头翻战报 ——
@@ -236,6 +239,7 @@ public final class WarScoreBoard {
 
     /** 窗口终点仍未进入围城：只关闭战事，不产生赢家或任何赛季分结算结果。 */
     public void expirePreparation(long now) {
+        if(hasPendingBattleReservations())throw new IllegalStateException("仍有原COMBAT事件待恢复，不能关闭筹备战事");
         if (phase != Phase.PREPARATION || now < preparationDeadlineAt()) {
             throw new IllegalStateException("筹备尚未到本季王城战窗口终点，不能作废");
         }
@@ -454,6 +458,7 @@ public final class WarScoreBoard {
 
     /** 结束国战并结算（验收 6）。 */
     public Result settle(long now) {
+        if(hasPendingBattleReservations())throw new IllegalStateException("仍有原COMBAT事件待恢复，不能结算围城战事");
         if (phase == Phase.SETTLED) {
             throw new IllegalStateException("国战已经结算过了，重复结算会让积分被算两遍");
         }
@@ -616,6 +621,36 @@ public final class WarScoreBoard {
                 throw new IllegalArgumentException("原成员国战贡献身份/数量无效");
         }
     }
+    /** 预留时已知的成员战果身份；医院准入后的伤兵数在完成事件时补入。 */
+    public record BattleMember(String playerId,String nationId,long kills) {
+        public BattleMember {
+            if(playerId==null || playerId.isBlank() || nationId!=null && nationId.isBlank() || kills<0)
+                throw new IllegalArgumentException("原战斗预留成员身份/击杀无效");
+        }
+    }
+    public record ReservedBattleEffect(BattleMember member,boolean participant) {
+        public ReservedBattleEffect {
+            if(member==null || participant && member.nationId()==null)
+                throw new IllegalArgumentException("原战斗预留参战归属缺失");
+        }
+    }
+    /**
+     * 持久闭战屏障。它在目标 COMBAT 操作写入前落在同一份 War 快照里，冻结原战事、系数和参战资格；
+     * 到达事件的医院 admitted-wounds 数量随后补齐。只要预留未被最终 COMBAT 恢复显式释放，战事不得关闭。
+     */
+    public record BattleReservation(String sourceId,long sequence,String operationId,long warStartedAt,long happenedAt,
+                                    ContributionRates rates,List<ReservedBattleEffect> effects) {
+        public BattleReservation {
+            if(sourceId==null || sourceId.isBlank() || operationId==null || operationId.isBlank() || sequence<1
+                    || warStartedAt<0 || happenedAt<warStartedAt || rates==null || effects==null || effects.isEmpty())
+                throw new IllegalArgumentException("原战斗预留身份/时点/成员缺失");
+            effects=List.copyOf(effects);var players=new LinkedHashSet<String>();
+            for(var effect:effects) {
+                if(effect==null || !players.add(effect.member().playerId()))throw new IllegalArgumentException("原战斗预留成员重复或缺失");
+                Math.multiplyExact(effect.member().kills(),rates.killScorePerUnit());
+            }
+        }
+    }
     /** 只冻结本次已发生效果所需系数，不冻结整块战事的现行规则。 */
     public record ContributionRates(long killScorePerUnit,long fatiguePerWounded,long fatigueMax) {
         public ContributionRates {
@@ -663,6 +698,80 @@ public final class WarScoreBoard {
         return battleEvents.get(sourceId);
     }
 
+    public Optional<BattleReservation> pendingBattleReservation(String operationId) {
+        if(operationId==null || operationId.isBlank())return Optional.empty();
+        return pendingBattleReservations.values().stream().filter(r->r.operationId().equals(operationId)).findFirst();
+    }
+
+    public List<BattleReservation> pendingBattleReservations() {
+        return List.copyOf(pendingBattleReservations.values());
+    }
+
+    /** 同一 War 快照内冻结 COMBAT 的原成员资格与系数；重复调用必须是完全相同的计划。 */
+    public Optional<BattleReservation> reserveBattle(String sourceId,long sequence,String operationId,long happenedAt,
+                                                     List<BattleMember> members) {
+        if(happenedAt<startedAt)return Optional.empty();
+        if(phase==Phase.SETTLED) {
+            long closedAt=abandonedWithoutSiege?preparationDeadlineAt():Math.addExact(siegeClockStartedAt(),rules.durationMillis());
+            if(happenedAt<closedAt)throw new IllegalStateException("原战斗发生在已闭战窗口内但没有预留回执，拒绝发布COMBAT");
+            return Optional.empty();
+        }
+        long deadline=phase==Phase.SIEGE?Math.addExact(siegeClockStartedAt(),rules.durationMillis()):preparationDeadlineAt();
+        if(happenedAt>=deadline)return Optional.empty();
+        if(members==null || members.isEmpty())throw new IllegalArgumentException("原战斗预留成员缺失");
+        var effects=new ArrayList<ReservedBattleEffect>();
+        for(var member:members) {
+            if(member==null)throw new IllegalArgumentException("原战斗预留成员缺失");
+            effects.add(new ReservedBattleEffect(member,member.nationId()!=null && scores.containsKey(member.nationId())));
+        }
+        var reservation=new BattleReservation(sourceId,sequence,operationId,startedAt,happenedAt,
+                new ContributionRates(rules.killScorePerUnit(),rules.fatiguePerWounded(),rules.fatigueMax()),effects);
+        var old=pendingBattleReservations.get(sourceId);
+        if(old!=null) {
+            if(!old.equals(reservation))throw new IllegalStateException("同一目标原战斗预留载荷冲突");
+            return Optional.of(old);
+        }
+        if(battleEvents.containsKey(sourceId))throw new IllegalStateException("已记账战斗不能重新建立闭战预留");
+        if(pendingBattleReservations.values().stream().anyMatch(r->r.operationId().equals(operationId)))
+            throw new IllegalStateException("原战斗操作已在其他目标预留");
+        requireSiegeOrPrep();pendingBattleReservations.put(sourceId,reservation);return Optional.of(reservation);
+    }
+
+    /** 仅在对应 WarEvent 已完整记账后释放屏障；精确重放安全。 */
+    public boolean completeBattleOperation(String operationId) {
+        var reservation=pendingBattleReservation(operationId).orElse(null);
+        if(reservation==null)return hasBattleOperationReceipt(operationId);
+        var event=battleEvents.get(reservation.sourceId());
+        if(event==null || event.sequence()!=reservation.sequence() || !event.operationId().equals(operationId)
+                || event.warStartedAt()!=reservation.warStartedAt() || !matches(reservation,event))
+            throw new IllegalStateException("原COMBAT未有精确WarEvent回执，不能释放闭战屏障");
+        pendingBattleReservations.remove(reservation.sourceId());return true;
+    }
+
+    public boolean hasBattleOperationReceipt(String operationId) {
+        if(operationId==null || operationId.isBlank())return false;
+        return battleEvents.values().stream().anyMatch(event->event.operationId().equals(operationId));
+    }
+
+    public boolean hasPendingBattleReservations() { return !pendingBattleReservations.isEmpty(); }
+
+    /** 只从持久预留还原 WarEvent；伤兵口必须给出医院实际 admitted-wounds，资格与系数绝不重读当前战事。 */
+    public BattleEvent freezeReservedBattleEvent(String operationId,Map<String,Long> admittedWounds) {
+        var reservation=pendingBattleReservation(operationId)
+                .orElseThrow(()->new IllegalStateException("原COMBAT闭战预留缺失，不能重算War贡献"));
+        if(admittedWounds==null)throw new IllegalArgumentException("医院准入伤兵回执缺失");
+        var expected=new LinkedHashSet<String>();reservation.effects().forEach(e->expected.add(e.member().playerId()));
+        if(!admittedWounds.keySet().equals(expected))throw new IllegalArgumentException("医院准入伤兵成员与原COMBAT预留不一致");
+        var effects=new ArrayList<BattleEffect>();
+        for(var reserved:reservation.effects()) {
+            var member=reserved.member();var wounds=admittedWounds.get(member.playerId());
+            if(wounds==null || wounds<0)throw new IllegalArgumentException("医院准入伤兵数量无效");
+            effects.add(new BattleEffect(new BattleImpact(member.playerId(),member.nationId(),member.kills(),wounds),reserved.participant()));
+        }
+        return new BattleEvent(reservation.sourceId(),reservation.sequence(),reservation.operationId(),
+                reservation.warStartedAt(),reservation.happenedAt(),reservation.rates(),effects);
+    }
+
     /** 全成员算完且无溢出后一次变更；仓储须将所有效果与回执在同一CAS快照持久化。 */
     public boolean applyBattleEvent(BattleEvent event) {
         if(event==null || event.warStartedAt()!=startedAt)throw new IllegalArgumentException("原战斗不属于这场战事");
@@ -675,6 +784,9 @@ public final class WarScoreBoard {
             if(event.sequence()<previous.sequence() || event.operationId().equals(previous.operationId()))
                 throw new IllegalStateException("原战斗过期或新代复用了当前回执操作");
         }
+        var reservation=pendingBattleReservations.get(event.sourceId());
+        if(reservation!=null && !matches(reservation,event))
+            throw new IllegalStateException("原WarEvent与持久COMBAT预留的身份/系数/成员来源不一致");
         requireSiegeOrPrep();
         var nextScores=new LinkedHashMap<String,long[]>();scores.forEach((id,parts)->nextScores.put(id,parts.clone()));
         var nextPlayers=new LinkedHashMap<>(playerKills);var nextFatigue=new LinkedHashMap<>(fatigue);long nextTotal=totalKills;
@@ -703,6 +815,22 @@ public final class WarScoreBoard {
         }
         scores.clear();scores.putAll(nextScores);playerKills.clear();playerKills.putAll(nextPlayers);fatigue.clear();fatigue.putAll(nextFatigue);
         totalKills=nextTotal;battleEvents.put(event.sourceId(),event);return true;
+    }
+
+    private static boolean matches(BattleReservation reservation,BattleEvent event) {
+        if(!reservation.sourceId().equals(event.sourceId()) || reservation.sequence()!=event.sequence()
+                || !reservation.operationId().equals(event.operationId()) || reservation.warStartedAt()!=event.warStartedAt()
+                || reservation.happenedAt()!=event.happenedAt() || !reservation.rates().equals(event.rates())
+                || reservation.effects().size()!=event.effects().size())return false;
+        var byPlayer=new LinkedHashMap<String,ReservedBattleEffect>();
+        reservation.effects().forEach(e->byPlayer.put(e.member().playerId(),e));
+        for(var effect:event.effects()) {
+            var prior=byPlayer.get(effect.impact().playerId());if(prior==null)return false;
+            var member=prior.member();
+            if(!Objects.equals(member.nationId(),effect.impact().nationId()) || member.kills()!=effect.impact().kills()
+                    || prior.participant()!=effect.participant())return false;
+        }
+        return true;
     }
 
     /**
@@ -742,7 +870,17 @@ public final class WarScoreBoard {
                            Map<String, Long> fatigue, Map<String, Long> playerKills,
                            List<String> goalClaimed, long totalKills,
                            List<MarchFatigueReceipt> marchFatigueReceipts, Long siegeStartedAt,
-                           Long preparationExpiresAt, Boolean abandonedWithoutSiege,List<BattleEvent> battleEvents) {
+                           Long preparationExpiresAt, Boolean abandonedWithoutSiege,List<BattleEvent> battleEvents,
+                           List<BattleReservation> pendingBattleReservations) {
+
+        /** 旧战略回执快照：没有闭战预留，读时兼容，不迁移回写。 */
+        public Snapshot(long startedAt,Phase phase,String initiatorNationId,List<NationRow> nations,
+                        String capitalHolder,long capitalHeldSince,Map<String,Long> fatigue,Map<String,Long> playerKills,
+                        List<String> goalClaimed,long totalKills,List<MarchFatigueReceipt> marchFatigueReceipts,Long siegeStartedAt,
+                        Long preparationExpiresAt,Boolean abandonedWithoutSiege,List<BattleEvent> battleEvents) {
+            this(startedAt,phase,initiatorNationId,nations,capitalHolder,capitalHeldSince,fatigue,playerKills,goalClaimed,
+                    totalKills,marchFatigueReceipts,siegeStartedAt,preparationExpiresAt,abandonedWithoutSiege,battleEvents,List.of());
+        }
 
         /** 旧14字段快照：没有战略战斗回执，读时兼容，不迁移回写。 */
         public Snapshot(long startedAt,Phase phase,String initiatorNationId,List<NationRow> nations,
@@ -750,7 +888,7 @@ public final class WarScoreBoard {
                         List<String> goalClaimed,long totalKills,List<MarchFatigueReceipt> marchFatigueReceipts,Long siegeStartedAt,
                         Long preparationExpiresAt,Boolean abandonedWithoutSiege) {
             this(startedAt,phase,initiatorNationId,nations,capitalHolder,capitalHeldSince,fatigue,playerKills,goalClaimed,
-                    totalKills,marchFatigueReceipts,siegeStartedAt,preparationExpiresAt,abandonedWithoutSiege,List.of());
+                    totalKills,marchFatigueReceipts,siegeStartedAt,preparationExpiresAt,abandonedWithoutSiege,List.of(),List.of());
         }
 
         public Snapshot(long startedAt, Phase phase, String initiatorNationId,
@@ -787,6 +925,12 @@ public final class WarScoreBoard {
             marchFatigueReceipts = List.copyOf(
                     marchFatigueReceipts == null ? List.of() : marchFatigueReceipts);
             battleEvents=List.copyOf(battleEvents==null?List.of():battleEvents);
+            pendingBattleReservations=List.copyOf(pendingBattleReservations==null?List.of():pendingBattleReservations);
+            var sources=new LinkedHashSet<String>();var operations=new LinkedHashSet<String>();
+            for(var reservation:pendingBattleReservations) {
+                if(reservation==null || reservation.warStartedAt()!=startedAt || !sources.add(reservation.sourceId())
+                        || !operations.add(reservation.operationId()))throw new IllegalArgumentException("存档原COMBAT闭战预留身份重复或不属于本战事");
+            }
         }
     }
 
@@ -822,7 +966,7 @@ public final class WarScoreBoard {
         return new Snapshot(startedAt, phase, initiatorNationId, rows, capitalHolder, capitalHeldSince,
                 new LinkedHashMap<>(fatigue), new LinkedHashMap<>(playerKills),
                 List.copyOf(goalClaimed), totalKills, List.copyOf(marchFatigueReceipts.values()), siegeStartedAt,
-                preparationExpiresAt, abandonedWithoutSiege,List.copyOf(battleEvents.values()));
+                preparationExpiresAt, abandonedWithoutSiege,List.copyOf(battleEvents.values()),List.copyOf(pendingBattleReservations.values()));
     }
 
     /**
@@ -859,6 +1003,11 @@ public final class WarScoreBoard {
         for(var event:snapshot.battleEvents()) {
             if(event.warStartedAt()!=snapshot.startedAt() || board.battleEvents.putIfAbsent(event.sourceId(),event)!=null)
                 throw new IllegalArgumentException("存档原战斗回执战事不匹配或目标来源重复");
+        }
+        for(var reservation:snapshot.pendingBattleReservations()) {
+            if(board.pendingBattleReservations.putIfAbsent(reservation.sourceId(),reservation)!=null
+                    || board.pendingBattleReservations.values().stream().filter(r->r.operationId().equals(reservation.operationId())).count()>1)
+                throw new IllegalArgumentException("存档原COMBAT闭战预留来源或操作重复");
         }
         return board;
     }

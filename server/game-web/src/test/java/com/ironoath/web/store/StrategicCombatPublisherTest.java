@@ -9,10 +9,14 @@ import com.ironoath.web.battle.CapturedStrategicBattle;
 import com.ironoath.web.battle.StrategicRallyCasualties;
 import com.ironoath.web.lock.InJvmPlayerLock;
 import com.ironoath.web.nation.NationOperationLock;
+import com.ironoath.web.nation.WarRulesAssembler;
+import com.ironoath.web.nation.WarStore;
+import com.ironoath.core.nation.WarScoreBoard;
 import com.ironoath.web.service.SocialAppService;
 import com.ironoath.web.social.SocialStore;
 import com.ironoath.web.store.memory.*;
 import com.ironoath.web.store.mongo.MongoTargetOperationStore;
+import com.ironoath.web.store.mongo.MongoWarStore;
 import com.ironoath.web.world.*;
 import java.nio.file.Path;
 import java.util.*;
@@ -39,6 +43,7 @@ class StrategicCombatPublisherTest {
         final SocialAppService social=mock(SocialAppService.class,CALLS_REAL_METHODS);
         final StrategicGarrisonWithdrawal targetLocks;
         final StrategicTargetDefender defenders;
+        final WarStore wars;
         final TargetOperationStore operations;
         final StrategicCombatPublisher publisher;
         Fixture(boolean mongo,boolean player) {
@@ -46,6 +51,11 @@ class StrategicCombatPublisherTest {
             operations=mongo?new MongoTargetOperationStore(db.template()):new InMemoryTargetOperationStore();
             if(mongo)db.template().remove(new org.springframework.data.mongodb.core.query.Query(),"world_target_operation");
             var lock=new InJvmPlayerLock();
+            var warRules=new WarRulesAssembler(cfg);wars=mongo?new MongoWarStore(db.template(),warRules):new InMemoryWarStore(warRules);
+            wars.clear();
+            var board=new WarScoreBoard(warRules.rules(),100,"owned-N",300L);
+            board.registerNation("owned-N");board.registerNation(player?"owned-defender-N":"owned-opponent");
+            assertThat(wars.insertIfNoneActive(board)).isTrue();
             ReflectionTestUtils.setField(social,"store",store);
             ReflectionTestUtils.setField(social,"armies",mock(ArmyRepository.class));
             ReflectionTestUtils.setField(social,"playerLock",lock);
@@ -56,10 +66,10 @@ class StrategicCombatPublisherTest {
                 assertThat(owners.compareAndSet(battle.target().defender().occupation(),0)).isTrue();
             defenders=new StrategicTargetDefender(cfg,owners,marches,store,new InMemoryNeutralTargetGarrisonStore());
             targetLocks=new StrategicGarrisonWithdrawal(cfg,operations,owners,marches,mock(MarchDueQueue.class),defenders,social,lock);
-            publisher=new StrategicCombatPublisher(cfg,operations,marches,defenders,store,social,targetLocks);
+            publisher=new StrategicCombatPublisher(cfg,operations,marches,defenders,store,social,targetLocks,wars);
         }
         StrategicCombatPublisher publisherWith(TargetOperationStore port) {
-            return new StrategicCombatPublisher(cfg,port,marches,defenders,store,social,targetLocks);
+            return new StrategicCombatPublisher(cfg,port,marches,defenders,store,social,targetLocks,wars);
         }
         void install(StrategicRallyCasualties side) {
             var identity=side.rally();
@@ -85,6 +95,8 @@ class StrategicCombatPublisherTest {
         assertThat(slot.completed()).isFalse();assertThat(slot.sequence()).isEqualTo(1);
         assertThat(slot.combatPlan().battle()).isEqualTo(f.battle);
         assertThat(f.operations.findByTargetId(slot.targetId())).contains(slot);
+        assertThat(f.wars.pendingBattleReservation(100,slot.operationId())).isPresent()
+                .get().extracting(com.ironoath.core.nation.WarScoreBoard.BattleReservation::sourceId).isEqualTo(slot.targetId());
         assertThat(f.locked(()->f.publisher.publish(f.battle))).isEqualTo(slot);
         assertThat(f.marches.versionOf(f.battle.attacker().march().id())).isEqualTo(f.battle.attacker().marchVersion());
         assertThat(f.owners.findByTargetIds(List.of(slot.targetId()))).isEmpty();
@@ -107,6 +119,15 @@ class StrategicCombatPublisherTest {
         assertThatThrownBy(()->f.locked(()->f.publisher.publish(f.battle)))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(f.operations.findByTargetId("gate_north")).isEmpty();
+    }
+
+    @Test void closedWarCannotAcceptUnreservedPreDeadlineCombatPublication() {
+        var f=new Fixture(false,false);
+        assertThat(f.wars.settleIfExpired(300L).orElseThrow().abandonedNow()).isTrue();
+        assertThatThrownBy(()->f.locked(()->f.publisher.publish(f.battle)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("已闭战窗口");
+        assertThat(f.operations.findByTargetId("gate_north")).isEmpty();
+        assertThat(f.marches.findById(f.battle.attacker().march().id())).isPresent();
     }
 
     @Test void changedTargetCannotBePublishedEvenWithOriginalMarchAndRally() {

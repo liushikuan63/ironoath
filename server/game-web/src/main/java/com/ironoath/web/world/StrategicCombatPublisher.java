@@ -4,9 +4,12 @@ import com.ironoath.config.ConfigRegistry;
 import com.ironoath.core.march.MarchRepository;
 import com.ironoath.web.battle.CapturedStrategicBattle;
 import com.ironoath.web.battle.StrategicRallyCasualties;
+import com.ironoath.web.nation.WarStore;
 import com.ironoath.web.service.SocialAppService;
 import com.ironoath.web.service.WorldTargets;
 import com.ironoath.web.social.SocialStore;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
@@ -15,7 +18,8 @@ import org.springframework.stereotype.Service;
 /**
  * 原战略战果的持久发布边界：持原国家/全部集结锁后才取目标锁，核对原源版本再CAS单一COMBAT槽。
  * 原输入须由调用者在相同锁域内捕获；此类不代替争夺/赛季/圈层准入，也不装配地形或成员贡献。
- * 发布前无伤兵/目标/行军/战报/War效果；发布后仍须完整恢复者确认，当前玩家入口继续关闭。
+ * 发布先在活跃War快照CAS冻结原成员参战资格/系数与闭战预留，再CAS目标COMBAT槽；不执行伤兵、归属、行军、战报或War积分副作用。
+ * 最终恢复器须在所有精确回执确认后释放预留；生产到达调用及完整恢复未接前，玩家入口继续关闭。
  */
 @Service
 public final class StrategicCombatPublisher {
@@ -26,14 +30,16 @@ public final class StrategicCombatPublisher {
     private final SocialStore rallies;
     private final SocialAppService social;
     private final StrategicGarrisonWithdrawal targetLocks;
+    private final WarStore wars;
 
     public StrategicCombatPublisher(ConfigRegistry configs,TargetOperationStore operations,MarchRepository marches,
             StrategicTargetDefender defenders,SocialStore rallies,SocialAppService social,
-            StrategicGarrisonWithdrawal targetLocks) {
+            StrategicGarrisonWithdrawal targetLocks,WarStore wars) {
         this.configs=Objects.requireNonNull(configs);this.operations=Objects.requireNonNull(operations);
         this.marches=Objects.requireNonNull(marches);this.defenders=Objects.requireNonNull(defenders);
         this.rallies=Objects.requireNonNull(rallies);this.social=Objects.requireNonNull(social);
         this.targetLocks=Objects.requireNonNull(targetLocks);
+        this.wars=Objects.requireNonNull(wars);
     }
 
     public TargetOperationStore.Snapshot publish(CapturedStrategicBattle battle) {
@@ -52,6 +58,7 @@ public final class StrategicCombatPublisher {
         if(current!=null && current.operationId().equals(operationId)) {
             if(current.kind()!=TargetOperationStore.Kind.COMBAT || !current.combatPlan().battle().equals(battle))
                 throw new IllegalStateException("同一COMBAT操作不能替换原载荷或重新模拟战果");
+            if(!current.completed())reserveWarBattle(battle,current.sequence(),operationId);
             return current;
         }
         if(current!=null && !current.completed())throw new IllegalStateException("目标原操作未完成，不能发布下一COMBAT");
@@ -76,6 +83,7 @@ public final class StrategicCombatPublisher {
         long sequence=current==null?1:Math.addExact(current.sequence(),1);
         var next=TargetOperationStore.Snapshot.combat(Math.addExact(version,1),false,
                 TargetOperationStore.CombatPlan.create(battle,sequence));
+        reserveWarBattle(battle,sequence,operationId);
         try {
             boolean accepted=operations.compareAndSet(next,version);
             if(!confirmed(next))throw new IllegalStateException(accepted
@@ -86,6 +94,26 @@ public final class StrategicCombatPublisher {
             throw unknown;
         }
         return next;
+    }
+
+    private void reserveWarBattle(CapturedStrategicBattle battle,long sequence,String operationId) {
+        if(battle.formatVersion()!=2)throw new IllegalStateException("旧COMBAT格式没有逐成员引擎来源，不能发布War事件预留");
+        var members=new ArrayList<com.ironoath.core.nation.WarScoreBoard.BattleMember>();
+        addMembers(members,battle.attacker(),battle.result().atkKillsByMember());
+        if(battle.defender()!=null)addMembers(members,battle.defender(),battle.result().defKillsByMember());
+        wars.reserveBattle(battle.target().targetId(),sequence,operationId,battle.happenedAt(),members);
+    }
+
+    private static void addMembers(List<com.ironoath.core.nation.WarScoreBoard.BattleMember> out,
+            StrategicRallyCasualties side,Map<String,Long> kills) {
+        var nationId=side.rally().nationId();
+        for(String playerId:side.currentMembers().keySet()) {
+            Long count=kills.get(playerId);
+            if(count==null || count<0)throw new IllegalStateException("原COMBAT成员引擎击杀来源缺失");
+            out.add(new com.ironoath.core.nation.WarScoreBoard.BattleMember(playerId,nationId,count));
+        }
+        if(!kills.keySet().equals(side.currentMembers().keySet()))
+            throw new IllegalStateException("原COMBAT成员击杀集合与冻结兵权不一致");
     }
 
     private void requireOriginalSide(StrategicRallyCasualties side) {

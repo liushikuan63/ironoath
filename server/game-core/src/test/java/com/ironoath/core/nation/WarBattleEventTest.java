@@ -19,6 +19,26 @@ class WarBattleEventTest {
   assertThat(b.fatigueOf("owned-A")).isEqualTo(2);assertThat(b.fatigueOf("owned-B")).isEqualTo(7);assertThat(b.fatigueOf("owned-O")).isZero();assertThat(b.fatigueOf("owned-Z")).isZero();
   assertThat(b.battleEvent("gate_north")).isEqualTo(event);assertThat(event.effects()).hasSize(4);
  }
+ @Test void pendingReservationSurvivesSnapshotAndBlocksEveryWarCloseUntilExactEventCompletion(){
+  var b=board();var members=impacts().stream().map(i->new WarScoreBoard.BattleMember(i.playerId(),i.nationId(),i.kills())).toList();
+  var reservation=b.reserveBattle("gate_north",1,"owned-op-1",T0+1,members).orElseThrow();
+  var hotRules=new WarScoreBoard.Rules(60000,4,1,99,3,5,9,999,50);
+  var restored=WarScoreBoard.fromSnapshot(b.toSnapshot(),hotRules);restored.registerNation("owned-NO");
+  assertThat(restored.pendingBattleReservation("owned-op-1")).contains(reservation);
+  assertThatThrownBy(()->restored.expirePreparation(T0+1000)).hasMessageContaining("COMBAT");
+  assertThatThrownBy(()->restored.settle(T0+1000)).hasMessageContaining("COMBAT");
+  assertThatThrownBy(()->restored.completeBattleOperation("owned-op-1")).hasMessageContaining("WarEvent");
+  var wounds=Map.of("owned-A",2L,"owned-B",7L,"owned-O",9L,"owned-Z",0L);
+  var event=restored.freezeReservedBattleEvent("owned-op-1",wounds);
+  assertThat(event.rates()).isEqualTo(reservation.rates());
+  assertThat(event.effects().stream().filter(e->e.impact().playerId().equals("owned-O")).findFirst().orElseThrow().participant()).isFalse();
+  assertThat(restored.applyBattleEvent(event)).isTrue();
+  assertThatThrownBy(()->restored.expirePreparation(T0+1000)).hasMessageContaining("COMBAT");
+  assertThat(restored.completeBattleOperation("owned-op-1")).isTrue();
+  assertThat(restored.completeBattleOperation("owned-op-1")).isTrue();
+  restored.expirePreparation(T0+1000);
+  assertThat(restored.phase()).isEqualTo(WarScoreBoard.Phase.SETTLED);
+ }
  @Test void capturedNumericEffectsAndParticipationSurviveRuleAndMembershipMaterializationChanges(){
   var original=board();var event=original.freezeBattleEvent("gate_north",1,"owned-op-1",T0+1,impacts());
   var hot=new WarScoreBoard.Rules(60000,4,1,100,3,5,9,999,50);var b=WarScoreBoard.fromSnapshot(original.toSnapshot(),hot);b.registerNation("owned-NO");
@@ -36,6 +56,14 @@ class WarBattleEventTest {
   var original=board();var event=original.freezeBattleEvent("gate_north",1,"owned-old-limit",T0+1,List.of(new WarScoreBoard.BattleImpact("owned-A","owned-NA",0,2)));
   var hot=new WarScoreBoard.Rules(60000,4,1,2,3,5,9,999,50);var b=WarScoreBoard.fromSnapshot(original.toSnapshot(),hot);b.addFatigue("owned-A",0,20);
   assertThat(b.fatigueOf("owned-A")).isEqualTo(180);b.applyBattleEvent(event);assertThat(b.fatigueOf("owned-A")).isEqualTo(180);
+ }
+ @Test void aLatePublisherCannotCreateAnUnreservedPreDeadlineCombatAfterWarAlreadyClosed(){
+  var closed=board();closed.expirePreparation(T0+1000);
+  assertThatThrownBy(()->closed.reserveBattle("gate_north",1,"owned-late",T0+999,
+          List.of(new WarScoreBoard.BattleMember("owned-A","owned-NA",1))))
+          .hasMessageContaining("已闭战窗口");
+  assertThat(closed.reserveBattle("gate_north",1,"owned-after",T0+1000,
+          List.of(new WarScoreBoard.BattleMember("owned-A","owned-NA",1)))).isEmpty();
  }
  @Test void laterMemberOverflowCannotLeaveEarlierMemberOrReceiptPartiallyChanged(){
   var b=board();b.recordServerKill("owned-Z",Long.MAX_VALUE-2);var before=b.toSnapshot();

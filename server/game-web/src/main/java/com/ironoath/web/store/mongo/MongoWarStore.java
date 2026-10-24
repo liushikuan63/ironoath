@@ -2,6 +2,7 @@ package com.ironoath.web.store.mongo;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.List;
 
 import com.ironoath.core.nation.WarScoreBoard;
 import com.ironoath.web.nation.WarRulesAssembler;
@@ -179,6 +180,59 @@ public final class MongoWarStore implements WarStore {
         }
     }
 
+    @Override public Optional<WarScoreBoard.BattleReservation> reserveBattle(String sourceId,long sequence,
+            String operationId,long happenedAt,List<WarScoreBoard.BattleMember> members) {
+        synchronized(activeLock) {
+            for(int attempt=0;attempt<MAX_ATTEMPTS;attempt++) {
+                WarDocument doc=latestDocument();if(doc==null || doc.state()==null)return Optional.empty();
+                WarScoreBoard board=toDomain(doc);
+                var old=board.pendingBattleReservation(operationId);
+                var reservation=board.reserveBattle(sourceId,sequence,operationId,happenedAt,members);
+                if(reservation.isEmpty() || old.isPresent())return reservation;
+                try {if(replace(doc,board))return reservation;}
+                catch(RuntimeException unknown) {
+                    try {
+                        var read=findByStartedAt(doc.startedAt());
+                        var persisted=read.flatMap(b->b.pendingBattleReservation(operationId));
+                        if(persisted.filter(reservation.get()::equals).isPresent())return reservation;
+                    } catch(RuntimeException readFailure) {if(readFailure!=unknown)unknown.addSuppressed(readFailure);}
+                    throw unknown;
+                }
+            }
+            throw conflict();
+        }
+    }
+
+    @Override public Optional<WarScoreBoard.BattleReservation> pendingBattleReservation(long warStartedAt,String operationId) {
+        return findByStartedAt(warStartedAt).flatMap(board->board.pendingBattleReservation(operationId));
+    }
+
+    @Override public boolean completeBattleOperation(long warStartedAt,String operationId) {
+        synchronized(activeLock) {
+            String id=WarStore.documentIdOf(warStartedAt);
+            for(int attempt=0;attempt<MAX_ATTEMPTS;attempt++) {
+                WarDocument doc=mongo.findById(id,WarDocument.class,WarDocument.COLLECTION);
+                if(doc==null || doc.state()==null)return false;
+                WarScoreBoard board=toDomain(doc);
+                var reservation=board.pendingBattleReservation(operationId);
+                if(reservation.isEmpty())return board.hasBattleOperationReceipt(operationId);
+                var sourceId=reservation.get().sourceId();var sequence=reservation.get().sequence();
+                if(!board.completeBattleOperation(operationId))return false;
+                try {if(replace(doc,board))return true;}
+                catch(RuntimeException unknown) {
+                    try {
+                        var read=findByStartedAt(warStartedAt).orElse(null);
+                        var event=read==null?null:read.battleEvent(sourceId);
+                        if(read!=null && read.pendingBattleReservation(operationId).isEmpty() && event!=null
+                                && event.sequence()==sequence && event.operationId().equals(operationId))return true;
+                    } catch(RuntimeException readFailure) {if(readFailure!=unknown)unknown.addSuppressed(readFailure);}
+                    throw unknown;
+                }
+            }
+            throw conflict();
+        }
+    }
+
     @Override
     public Optional<WarStore.Settlement> settleIfExpired(long now) {
         synchronized (activeLock) {
@@ -191,6 +245,7 @@ public final class MongoWarStore implements WarStore {
                 if (!WarStore.dueToSettle(board, now)) {
                     return Optional.of(WarStore.Settlement.notSettled(board));
                 }
+                if(board.hasPendingBattleReservations())return Optional.of(WarStore.Settlement.notSettled(board));
                 if (board.phase() == WarScoreBoard.Phase.PREPARATION) {
                     board.expirePreparation(now);
                     if (replace(doc, board)) {
