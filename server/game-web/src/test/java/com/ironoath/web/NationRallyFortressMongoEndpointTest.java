@@ -386,6 +386,11 @@ class NationRallyFortressMongoEndpointTest {
                 assertThat(readback.battleEvent(target.definition().id())).isEqualTo(event);
                 assertThat(readback.gateCount(attacker.nationId())).isEqualTo(index+1);
                 assertThat(readback.gateCount(defender.nationId())).isZero();
+                var scores=readback.snapshot();
+                assertThat(scores.get(attacker.nationId()).buildingScore())
+                        .as("each new real gate capture contributes its configured building score")
+                        .isEqualTo(Math.multiplyExact(index+1L,warRules.rules().buildingScorePerCapture()));
+                assertThat(scores.get(defender.nationId()).buildingScore()).isZero();
                 assertThat(readback.phase()).isEqualTo(index+1==gates.size()
                         ?WarScoreBoard.Phase.SIEGE:WarScoreBoard.Phase.PREPARATION);
                 assertThat(readback.hasPendingBattleReservations()).isFalse();
