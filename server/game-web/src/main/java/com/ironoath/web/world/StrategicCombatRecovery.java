@@ -11,6 +11,8 @@ import com.ironoath.web.battle.StrategicBattleHospitalSettlement;
 import com.ironoath.web.battle.StrategicRallyCasualties;
 import com.ironoath.web.battle.StrategicBattleMarchOutcome;
 import com.ironoath.web.battle.StrategicWoundSettlement;
+import com.ironoath.web.battle.BattleReport;
+import com.ironoath.web.battle.BattleReportService;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -28,6 +30,7 @@ public final class StrategicCombatRecovery {
     private final NeutralTargetGarrisonStore neutralGarrisons;
     private final NationStore nations;
     private final MarchDueQueue due;
+    private final BattleReportService reports;
 
     public StrategicCombatRecovery(TargetOperationStore operations,ArmyRepository armies,MarchRepository marches) {
         this(operations,armies,marches,null,null,null,null);
@@ -42,10 +45,17 @@ public final class StrategicCombatRecovery {
     public StrategicCombatRecovery(TargetOperationStore operations,ArmyRepository armies,MarchRepository marches,
             TargetOccupationStore occupations,NeutralTargetGarrisonStore neutralGarrisons,NationStore nations,
             MarchDueQueue due) {
+        this(operations,armies,marches,occupations,neutralGarrisons,nations,due,null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public StrategicCombatRecovery(TargetOperationStore operations,ArmyRepository armies,MarchRepository marches,
+            TargetOccupationStore occupations,NeutralTargetGarrisonStore neutralGarrisons,NationStore nations,
+            MarchDueQueue due,BattleReportService reports) {
         this.operations=Objects.requireNonNull(operations);this.armies=Objects.requireNonNull(armies);
         this.marches=Objects.requireNonNull(marches);
         this.occupations=occupations;this.neutralGarrisons=neutralGarrisons;this.nations=nations;
-        this.due=due;
+        this.due=due;this.reports=reports;
     }
 
     /**
@@ -131,6 +141,21 @@ public final class StrategicCombatRecovery {
         requireCurrentPending(slot);applyMarchIntent(frozen.attacker());
         if(frozen.defender()!=null){requireCurrentPending(slot);applyMarchIntent(frozen.defender());}
         requireCurrentPending(slot);
+    }
+
+    /** Persist exact operation-scoped report rows after all original battle outcomes have been confirmed. */
+    public List<BattleReport> recoverReports(TargetOperationStore.Snapshot slot,StrategicBattleHospitalSettlement hospital) {
+        requireCurrentPending(slot);
+        if(reports==null)throw new IllegalStateException("战略战报恢复仓储未装配，保留COMBAT pending");
+        var plan=slot.combatPlan();var reportPlan=plan.reportPlan();
+        if(reportPlan==null)throw new IllegalStateException("原COMBAT缺战报身份计划，不能从当前昵称或TTL补造");
+        if(hospital==null || !hospital.plan().operationId().equals(plan.operationId())
+                || hospital.plan().sequence()!=plan.sequence() || !hospital.plan().battle().equals(plan.battle())
+                || !Objects.equals(hospital.plan().reportPlan(),reportPlan))
+            throw new IllegalArgumentException("医院结果不属于当前pending COMBAT报告计划");
+        var saved=reports.recordStrategic(reportPlan,hospital.result());
+        requireCurrentPending(slot);
+        return saved;
     }
 
     private void requireOriginalMarch(TargetOperationStore.MarchIntent intent) {

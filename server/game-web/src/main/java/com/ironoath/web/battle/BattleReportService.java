@@ -148,6 +148,24 @@ public class BattleReportService {
         return report;
     }
 
+    /** Persist the original COMBAT reports only; KILL and War effects have their own operation-scoped receipts. */
+    public List<BattleReport> recordStrategic(StrategicBattleReportPlan plan,BattleResult result) {
+        if(plan==null || result==null)throw new IllegalArgumentException("原战略战报计划/战果缺失");
+        var saved=new ArrayList<BattleReport>(plan.recipients().size());
+        for(var recipient:plan.recipients()) {
+            var report=new BattleReport(recipient.reportId(),recipient.ownerId(),recipient.attackerId(),recipient.defenderId(),
+                    recipient.defenderName(),recipient.attackerName(),plan.battleType(),recipient.attackerHeroIds(),
+                    recipient.defenderHeroIds(),result,plan.createdAt(),plan.expiresAt());
+            var persisted=store.saveExact(report);
+            if(!report.equals(persisted))throw new IllegalStateException("战略战报精确写回执载荷不一致");
+            var observed=store.findById(report.reportId())
+                    .orElseThrow(()->new IllegalStateException("战略战报完整写入后独立读回缺失"));
+            if(!report.equals(observed))throw new IllegalStateException("战略战报独立读回与原COMBAT载荷不一致");
+            saved.add(observed);
+        }
+        return List.copyOf(saved);
+    }
+
     /** 上报击杀时用的昵称：战报域不认识玩家账户，从社交域借一个（它已经有这一处查询）。 */
     private String nicknameOf(String playerId) {
         return social.nicknameOf(playerId);

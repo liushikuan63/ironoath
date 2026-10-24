@@ -3,7 +3,6 @@ package com.ironoath.web.world;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.core.march.MarchRepository;
 import com.ironoath.web.battle.CapturedStrategicBattle;
-import com.ironoath.web.battle.BattleReport;
 import com.ironoath.web.battle.StrategicRallyCasualties;
 import com.ironoath.web.battle.StrategicBattleReportPlan;
 import com.ironoath.web.nation.WarStore;
@@ -114,23 +113,8 @@ public final class StrategicCombatPublisher {
         String attackerOwner=battle.attacker().rally().initiatorId();
         String attackerName=social.nicknameOf(attackerOwner);
         String defenderOwner=battle.defender()==null?null:battle.defender().rally().initiatorId();
-        String defenderId=defenderOwner==null?battle.target().targetId():defenderOwner;
         String defenderName=defenderOwner==null?targetName:social.nicknameOf(defenderOwner);
-        var attackerHeroes=heroIds(battle.attacker());
-        var defenderHeroes=battle.defender()==null?List.<String>of():heroIds(battle.defender());
-        var recipients=new ArrayList<StrategicBattleReportPlan.Recipient>();
-        recipients.add(new StrategicBattleReportPlan.Recipient(BattleReport.idForOperation(operationId,attackerOwner),
-                attackerOwner,attackerOwner,defenderId,defenderName,attackerName,attackerHeroes,defenderHeroes));
-        if(defenderOwner!=null)recipients.add(new StrategicBattleReportPlan.Recipient(
-                BattleReport.idForOperation(operationId,defenderOwner),defenderOwner,attackerOwner,defenderOwner,
-                defenderName,attackerName,attackerHeroes,defenderHeroes));
-        return new StrategicBattleReportPlan(1,operationId,createdAt,expiresAt,battle.input().battleType(),recipients);
-    }
-
-    private static List<String> heroIds(StrategicRallyCasualties side) {
-        var ids=new ArrayList<String>();
-        side.rally().participants().values().forEach(participant->ids.addAll(participant.heroes()));
-        return List.copyOf(ids);
+        return StrategicBattleReportPlan.create(battle,operationId,expiresAt,attackerName,defenderName);
     }
 
     private static void addMembers(List<com.ironoath.core.nation.WarScoreBoard.BattleMember> out,

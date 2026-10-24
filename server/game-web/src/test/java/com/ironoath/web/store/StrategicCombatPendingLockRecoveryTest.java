@@ -25,6 +25,11 @@ import com.ironoath.core.nation.WarScoreBoard;
 import com.ironoath.web.battle.StrategicRallyCasualties;
 import com.ironoath.web.battle.StrategicBattleMarchOutcome;
 import com.ironoath.web.battle.StrategicWoundSettlement;
+import com.ironoath.web.battle.StrategicBattleReportPlan;
+import com.ironoath.web.battle.BattleReportService;
+import com.ironoath.web.rank.RankBoardService;
+import com.ironoath.web.nation.NationMembership;
+import com.ironoath.web.store.memory.InMemoryBattleReportStore;
 import com.ironoath.web.world.StrategicGarrisonWithdrawal;
 import com.ironoath.web.world.StrategicCombatRecovery;
 import com.ironoath.web.world.StrategicTargetDefender;
@@ -52,10 +57,13 @@ import static org.mockito.Mockito.when;
 /** Pending COMBAT retries must use frozen battle rallies before reading partially written target state. */
 class StrategicCombatPendingLockRecoveryTest {
     @Test void pendingCombatRecoveryMustPersistEveryMembersHospitalReceiptBeforeAnyLaterEffect() {
-        var battle=StrategicCombatSlotTest.battle(2399,true,true);var plan=TargetOperationStore.CombatPlan.create(battle,1);
+        var battle=StrategicCombatSlotTest.battle(2399,true,true);
         assertThat(battle.result().winner()).isEqualTo(com.ironoath.battle.Winner.DRAW);
-        var operations=new InMemoryTargetOperationStore();assertThat(operations.compareAndSet(TargetOperationStore.Snapshot.combat(1,false,plan),0)).isTrue();
         var configs=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
+        var plan=TargetOperationStore.CombatPlan.create(battle,1).withReportPlan(StrategicBattleReportPlan.create(battle,
+                "battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion(),
+                battle.happenedAt()+configs.longParam("BATTLE_REPORT_TTL_SECONDS")*1000L,"attacker","defender"));
+        var operations=new InMemoryTargetOperationStore();assertThat(operations.compareAndSet(TargetOperationStore.Snapshot.combat(1,false,plan),0)).isTrue();
         var owners=new InMemoryTargetOccupationStore();var originalOwner=battle.target().defender().occupation();
         assertThat(originalOwner).isNotNull();assertThat(owners.compareAndSet(originalOwner,0)).isTrue();
         var nationStore=mock(NationStore.class);var attackerNation=Nation.found(battle.attacker().rally().nationId(),"进攻国",
@@ -81,16 +89,30 @@ class StrategicCombatPendingLockRecoveryTest {
         var defenders=mock(StrategicTargetDefender.class);
         when(defenders.read(any())).thenThrow(new AssertionError("combat recovery must use the frozen plan"));
         var social=mock(SocialAppService.class);when(social.runRalliesDepartureLocked(anyCollection(),any())).thenAnswer(call->((Supplier<?>)call.getArgument(1)).get());
+        var battleReports=new InMemoryBattleReportStore();
+        var reportService=new BattleReportService(configs,battleReports,mock(com.ironoath.common.time.TimeService.class),
+                social,mock(RankBoardService.class),wars,mock(NationMembership.class));
         var due=new SortedMarchDueQueue();
         var withdrawal=new StrategicGarrisonWithdrawal(configs,operations,owners,marches,
                 due,defenders,social,new InJvmPlayerLock(),new StrategicCombatRecovery(operations,armies,marches,
-                owners,new InMemoryNeutralTargetGarrisonStore(),nationStore,due));
+                owners,new InMemoryNeutralTargetGarrisonStore(),nationStore,due,reportService));
 
         var advancer=new StrategicTargetMarchAdvancer(configs,marches,defenders,social,withdrawal,operations);
         var attackMarch=March.fromSnapshot(battle.attacker().march());var advanced=new java.util.concurrent.atomic.AtomicInteger();
         assertThatThrownBy(()->advancer.advance(attackMarch,battle.happenedAt(),()->{advanced.incrementAndGet();return true;}))
                 .isInstanceOf(BizException.class).hasMessageContaining("目标操作尚未确认完成");
         assertThat(advanced.get()).isZero();
+        var attackerReports=battleReports.reportsOf(battle.attacker().rally().initiatorId());
+        assertThat(attackerReports)
+                .as("pending COMBAT recovery must persist the deterministic attacker initiator report")
+                .hasSize(1);
+        var attackerReport=attackerReports.get(0);
+        assertThat(attackerReport.reportId()).isEqualTo(com.ironoath.web.battle.BattleReport.idForOperation(
+                plan.operationId(),battle.attacker().rally().initiatorId()));
+        assertThat(attackerReport.result().atkKillsByMember()).isEqualTo(battle.result().atkKillsByMember());
+        var defenderReports=battleReports.reportsOf(battle.defender().rally().initiatorId());
+        assertThat(defenderReports).hasSize(1);
+        assertThat(defenderReports.get(0).result().defKillsByMember()).isEqualTo(battle.result().defKillsByMember());
         var ownerAfter=owners.findByTargetIds(List.of(battle.target().targetId())).get(battle.target().targetId());
         if(battle.result().winner()==com.ironoath.battle.Winner.ATTACKER) {
             assertThat(ownerAfter.nationId()).isEqualTo(attackerNation.id());
@@ -132,6 +154,8 @@ class StrategicCombatPendingLockRecoveryTest {
             assertThat(army.snapshot().strategicWounds().get(battle.target().targetId())).isEqualTo(receipt);
             assertThat(army.totalWounded()).isEqualTo(receipt.admitted().values().stream().mapToLong(Long::longValue).sum());
         });
+        assertThat(battleReports.reportsOf(battle.attacker().rally().initiatorId())).containsExactly(attackerReport);
+        assertThat(battleReports.reportsOf(battle.defender().rally().initiatorId())).containsExactly(defenderReports.get(0));
         var pendingAfterReplay=operations.findByTargetId(battle.target().targetId()).orElseThrow();
         assertThat(pendingAfterReplay).isEqualTo(pendingAfterFirst);
         assertThat(wars.pendingBattleReservation(battle.happenedAt()-10,plan.operationId())).isPresent();
@@ -141,9 +165,15 @@ class StrategicCombatPendingLockRecoveryTest {
         var battle=StrategicCombatSlotTest.battle(2382,false,true,false);
         assertThat(battle.result().winner()).isEqualTo(com.ironoath.battle.Winner.ATTACKER);
         assertThat(battle.npcSurvivors()).isNotEmpty();
-        var plan=TargetOperationStore.CombatPlan.create(battle,1);var operations=new InMemoryTargetOperationStore();
-        assertThat(operations.compareAndSet(TargetOperationStore.Snapshot.combat(1,false,plan),0)).isTrue();
         var configs=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));var owners=new InMemoryTargetOccupationStore();
+        var targetName=com.ironoath.web.service.WorldTargets.from(configs).targets().stream()
+                .filter(target->target.definition().id().equals(battle.target().targetId())).findFirst().orElseThrow().definition().name();
+        var operationId="battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion();
+        var reportPlan=StrategicBattleReportPlan.create(battle,operationId,
+                battle.happenedAt()+configs.longParam("BATTLE_REPORT_TTL_SECONDS")*1000L,"attacker",targetName);
+        var plan=TargetOperationStore.CombatPlan.create(battle,1).withReportPlan(reportPlan);
+        var operations=new InMemoryTargetOperationStore();
+        assertThat(operations.compareAndSet(TargetOperationStore.Snapshot.combat(1,false,plan),0)).isTrue();
         var neutral=new InMemoryNeutralTargetGarrisonStore();var armies=new InMemoryArmyStore();
         for(String player:battle.attacker().currentMembers().keySet()) {
             var army=new ArmyState();army.add("unit_infantry_t4",100);assertThat(armies.insertIfAbsent(player,army)).isTrue();
@@ -166,7 +196,10 @@ class StrategicCombatPendingLockRecoveryTest {
         when(nationStore.findById(nation.id())).thenReturn(Optional.of(nation));
         var social=mock(SocialAppService.class);
         when(social.runRalliesDepartureLocked(anyCollection(),any())).thenAnswer(call->((Supplier<?>)call.getArgument(1)).get());
-        var due=new SortedMarchDueQueue();var recovery=new StrategicCombatRecovery(operations,armies,marches,owners,neutral,nationStore,due);
+        var battleReports=new InMemoryBattleReportStore();
+        var reportService=new BattleReportService(configs,battleReports,mock(com.ironoath.common.time.TimeService.class),
+                social,mock(RankBoardService.class),wars,mock(NationMembership.class));
+        var due=new SortedMarchDueQueue();var recovery=new StrategicCombatRecovery(operations,armies,marches,owners,neutral,nationStore,due,reportService);
         due.schedule(attacker.id(),battle.attacker().march().arriveAt());
         var targetOperations=new StrategicGarrisonWithdrawal(configs,operations,owners,marches,due,defenderReader,social,
                 new InJvmPlayerLock(),recovery);
@@ -188,6 +221,10 @@ class StrategicCombatPendingLockRecoveryTest {
         assertThat(marches.versionOf(attacker.id())).isEqualTo(Math.addExact(originalVersion,1));
         assertThat(marches.findById(attacker.id()).orElseThrow().snapshot()).isEqualTo(projected.after());
         assertThat(due.dueBefore(battle.happenedAt()+10_000,16)).isEmpty();
+        var persistedReport=battleReports.reportsOf(battle.attacker().rally().initiatorId()).get(0);
+        assertThat(persistedReport.reportId()).isEqualTo(com.ironoath.web.battle.BattleReport.idForOperation(plan.operationId(),
+                battle.attacker().rally().initiatorId()));
+        assertThat(persistedReport.defenderName()).isEqualTo(targetName);
         var pending=operations.findByTargetId(battle.target().targetId()).orElseThrow();
         assertThat(pending.completed()).isFalse();assertThat(pending.combatPlan().battle()).isEqualTo(battle);
         assertThat(pending.combatPlan().marchRecovery()).isNotNull();

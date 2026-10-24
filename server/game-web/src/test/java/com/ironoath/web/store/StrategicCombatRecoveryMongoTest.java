@@ -8,6 +8,7 @@ import com.ironoath.core.nation.Nation;
 import com.ironoath.web.battle.CapturedStrategicBattle;
 import com.ironoath.web.battle.StrategicRallyCasualties;
 import com.ironoath.web.battle.StrategicBattleHospitalSettlement;
+import com.ironoath.web.battle.StrategicBattleReportPlan;
 import com.ironoath.web.nation.WarRulesAssembler;
 import com.ironoath.web.nation.NationRulesAssembler;
 import com.ironoath.web.store.mongo.*;
@@ -22,6 +23,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
+import static org.mockito.Mockito.mock;
 
 /** The recovery owner replays actual Mongo Army/March/War/COMBAT receipts across fresh store instances. */
 class StrategicCombatRecoveryMongoTest {
@@ -29,6 +31,35 @@ class StrategicCombatRecoveryMongoTest {
     @BeforeAll static void open(){db=TestMongo.tryOpen();assertThat(db).isNotNull();}
     @AfterAll static void close(){if(db!=null)db.close();}
     @BeforeEach void clear(){db.template().getDb().drop();MongoIndexes.ensure(db.template());}
+
+    @Test void strategicInitiatorReportsSurviveFreshMongoStoreReplay() {
+        var battle=StrategicCombatSlotTest.battle(2404,true,true);
+        var operationId="battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion();
+        var reportPlan=StrategicBattleReportPlan.create(battle,operationId,battle.happenedAt()+86_400_000L,
+                "frozen attacker","frozen defender");
+        var combat=TargetOperationStore.CombatPlan.create(battle,1).withReportPlan(reportPlan);
+        var operations=new MongoTargetOperationStore(db.template());
+        assertThat(operations.compareAndSet(TargetOperationStore.Snapshot.combat(1,false,combat),0)).isTrue();
+        var persistedPlan=new MongoTargetOperationStore(db.template()).findByTargetId(battle.target().targetId())
+                .orElseThrow().combatPlan().reportPlan();
+        assertThat(persistedPlan).isEqualTo(reportPlan);
+
+        var first=new com.ironoath.web.battle.BattleReportService(ConfigRegistry.loadFromDirectory(Path.of("contract/config")),
+                new MongoBattleReportStore(db.template()),mock(com.ironoath.common.time.TimeService.class),
+                mock(com.ironoath.web.service.SocialAppService.class),mock(com.ironoath.web.rank.RankBoardService.class),
+                mock(com.ironoath.web.nation.WarStore.class),mock(com.ironoath.web.nation.NationMembership.class))
+                .recordStrategic(persistedPlan,battle.result());
+        var replay=new com.ironoath.web.battle.BattleReportService(ConfigRegistry.loadFromDirectory(Path.of("contract/config")),
+                new MongoBattleReportStore(db.template()),mock(com.ironoath.common.time.TimeService.class),
+                mock(com.ironoath.web.service.SocialAppService.class),mock(com.ironoath.web.rank.RankBoardService.class),
+                mock(com.ironoath.web.nation.WarStore.class),mock(com.ironoath.web.nation.NationMembership.class))
+                .recordStrategic(persistedPlan,battle.result());
+        assertThat(replay).isEqualTo(first).hasSize(2);
+        var readStore=new MongoBattleReportStore(db.template());
+        for(var report:first)assertThat(readStore.findById(report.reportId())).contains(report);
+        assertThat(readStore.reportsOf(battle.attacker().rally().initiatorId())).containsExactly(first.get(0));
+        assertThat(readStore.reportsOf(battle.defender().rally().initiatorId())).containsExactly(first.get(1));
+    }
 
     @Test void admittedHospitalReceiptsSurviveRecoveryRestartWithoutAdvancingThePendingCombat() {
         var battle=StrategicCombatSlotTest.battle(2400,true,true);var plan=TargetOperationStore.CombatPlan.create(battle,1);

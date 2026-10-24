@@ -32,6 +32,24 @@ public record StrategicBattleReportPlan(int formatVersion,String operationId,lon
         }
         if(recipients.size()>2)throw invalid("首版战略战报只允许攻守发起人各一份");
     }
+    public static StrategicBattleReportPlan create(CapturedStrategicBattle battle,String operationId,long expiresAt,
+            String attackerName,String defenderName) {
+        if(battle==null)throw invalid("原战略战果缺失");
+        var attacker=battle.attacker();String attackerOwner=attacker.rally().initiatorId();
+        var defender=battle.defender();String defenderOwner=defender==null?null:defender.rally().initiatorId();
+        var attackerHeroes=heroIds(attacker);var defenderHeroes=defender==null?List.<String>of():heroIds(defender);
+        String defenderId=defenderOwner==null?battle.target().targetId():defenderOwner;
+        var rows=new java.util.ArrayList<Recipient>();
+        rows.add(new Recipient(BattleReport.idForOperation(operationId,attackerOwner),attackerOwner,attackerOwner,
+                defenderId,defenderName,attackerName,attackerHeroes,defenderHeroes));
+        if(defenderOwner!=null)rows.add(new Recipient(BattleReport.idForOperation(operationId,defenderOwner),
+                defenderOwner,attackerOwner,defenderOwner,defenderName,attackerName,attackerHeroes,defenderHeroes));
+        return new StrategicBattleReportPlan(1,operationId,battle.happenedAt(),expiresAt,battle.input().battleType(),rows);
+    }
+    private static List<String> heroIds(StrategicRallyCasualties side) {
+        var ids=new java.util.ArrayList<String>();side.rally().participants().values().forEach(p->ids.addAll(p.heroes()));
+        return List.copyOf(ids);
+    }
     private static void text(String value,String field) {
         if(value==null || value.isBlank())throw invalid(field+"缺失");
     }
