@@ -17,5 +17,16 @@ public enum TerrainType {
     /** 河流：渡河方劣势。 */
     RIVER,
     /** 城下：攻城战，防守方有城墙加成。 */
-    CITY_WALL
+    CITY_WALL;
+
+    /** Server-authored map label; clients display this field and do not mirror terrain translations. */
+    public String displayName() {
+        return switch (this) {
+            case PLAIN -> "平原";
+            case MOUNTAIN -> "山地";
+            case FOREST -> "森林";
+            case RIVER -> "河流";
+            case CITY_WALL -> "城下";
+        };
+    }
 }

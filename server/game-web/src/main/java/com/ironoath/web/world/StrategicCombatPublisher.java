@@ -61,7 +61,8 @@ public final class StrategicCombatPublisher {
                 .orElseThrow(()->new IllegalStateException("原战略目标已不在配置目录"));
         var facts=battle.target();
         if(target.coord().x()!=facts.x() || target.coord().y()!=facts.y()
-                || !target.definition().kind().name().equals(facts.kind().name()))
+                || !target.definition().kind().name().equals(facts.kind().name())
+                || target.battleTerrain()!=battle.input().terrain())
             throw new IllegalStateException("原战略目标锚点与当前目录不一致");
         requireOriginalSide(battle.attacker());
         if(battle.defender()!=null)requireOriginalSide(battle.defender());

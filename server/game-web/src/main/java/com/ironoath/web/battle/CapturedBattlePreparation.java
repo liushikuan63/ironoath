@@ -187,7 +187,18 @@ public final class CapturedBattlePreparation {
                                         TerrainType terrain,long seed,BattleModifier attackModifier,BattleModifier defenseModifier) {
             requireSide(attacker);requireTarget(target);
             if(attacker.march==null)throw new IllegalArgumentException("战略进攻必须使用原国家集结行军");
+            var original=March.fromSnapshot(attacker.march);
+            if(!original.targetId().equals(target.target.definition().id()) || !original.to().equals(target.target.coord()))
+                throw new IllegalArgumentException("原进攻行军与捕获的战略目标不一致");
+            if(terrain!=target.target.battleTerrain())
+                throw new IllegalArgumentException("战略战斗地形必须使用捕获目标目录的原地形");
             return simulateStrategic(attacker,defenderSide(target,defenderTech,defenderRally),terrain,seed,attackModifier,defenseModifier);
+        }
+        /** 生产目标战斗从同一冻结目标目录取地形；调用方不能自行给目标换地形。 */
+        public Simulation simulateTarget(PreparedSide attacker,TargetInput target,PlayerTech defenderTech,Rally defenderRally,
+                                        long seed,BattleModifier attackModifier,BattleModifier defenseModifier) {
+            return simulateTarget(attacker,target,defenderTech,defenderRally,target.target.battleTerrain(),seed,
+                    attackModifier,defenseModifier);
         }
         public StrategicRallyCasualties freezePlayerCasualties(Simulation battle,StrategicRallyCasualties.Side side,PreparedHospitals hospitals) {
             if(battle==null || battle.owner!=this || side==null)throw new IllegalArgumentException("只能冻结同一捕获视图的原模拟战果");

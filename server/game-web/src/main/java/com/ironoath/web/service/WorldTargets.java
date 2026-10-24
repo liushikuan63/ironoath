@@ -4,6 +4,7 @@ import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.MapmonsterCfg;
 import com.ironoath.config.cfg.WorldTargetCfg;
 import com.ironoath.core.world.Coord;
+import com.ironoath.battle.TerrainType;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -14,11 +15,12 @@ import java.util.Map;
  * 防守引用既有难度表；发布地图图层前必须另查旧城冲突，不能用目标覆盖玩家数据。
  */
 public final class WorldTargets {
-    public record Target(WorldTargetCfg definition, Coord coord, MapmonsterCfg defender) {
+    public record Target(WorldTargetCfg definition, Coord coord, MapmonsterCfg defender,TerrainType battleTerrain) {
         public long troops() {
             return Math.addExact(Math.addExact(defender.infantryCount(), defender.cavalryCount()),
                     Math.addExact(defender.archerCount(), defender.siegeCount()));
         }
+        public String terrainName(){return battleTerrain.displayName();}
     }
 
     public record Conflict(String targetId, Coord coord, String playerId) {}
@@ -34,21 +36,27 @@ public final class WorldTargets {
         int size = Math.toIntExact(configs.longParam("WORLD_SIZE"));
         Map<String, MapmonsterCfg> defenders = new LinkedHashMap<>();
         configs.all(MapmonsterCfg.class).forEach(row -> defenders.put(row.id(), row));
+        List<WorldTargetCfg> rows=configs.all(WorldTargetCfg.class);
+        if(rows.isEmpty())return new WorldTargets(Map.of());
+        Map<Coord,WorldTargetCfg> definitionsByCoord=new LinkedHashMap<>();
+        for(WorldTargetCfg row:rows) {
+            Coord coord=Coord.of(Math.toIntExact(row.x()),Math.toIntExact(row.y()));
+            if(!coord.withinWorld(size))throw new IllegalArgumentException("战略目标坐标越界："+row.id()+" "+coord);
+            WorldTargetCfg previous=definitionsByCoord.putIfAbsent(coord,row);
+            if(previous!=null)throw new IllegalArgumentException("战略目标坐标重复："+previous.id()+" / "+row.id()+" "+coord);
+        }
+        var capitals=rows.stream().filter(row->row.kind()==WorldTargetCfg.Kind.CAPITAL).toList();
+        if(capitals.size()!=1)throw new IllegalArgumentException("固定战略目标目录必须且只能包含一个王城");
+        Coord capital=Coord.of(Math.toIntExact(capitals.get(0).x()),Math.toIntExact(capitals.get(0).y()));
         Map<Coord, Target> targets = new LinkedHashMap<>();
-        for (WorldTargetCfg row : configs.all(WorldTargetCfg.class)) {
-            Coord coord = Coord.of(Math.toIntExact(row.x()), Math.toIntExact(row.y()));
-            if (!coord.withinWorld(size)) {
-                throw new IllegalArgumentException("战略目标坐标越界：" + row.id() + " " + coord);
-            }
+        for (var definition:definitionsByCoord.entrySet()) {
+            Coord coord=definition.getKey();WorldTargetCfg row=definition.getValue();
             MapmonsterCfg defender = defenders.get(row.defenderId());
             if (defender == null) {
                 throw new IllegalArgumentException("战略目标防守配置缺失：" + row.id());
             }
-            Target previous = targets.putIfAbsent(coord, new Target(row, coord, defender));
-            if (previous != null) {
-                throw new IllegalArgumentException("战略目标坐标重复：" + previous.definition().id()
-                        + " / " + row.id() + " " + coord);
-            }
+            TerrainType battleTerrain=StrategicTerrainResolver.resolve(row,coord,capital);
+            targets.put(coord,new Target(row,coord,defender,battleTerrain));
         }
         return new WorldTargets(targets);
     }

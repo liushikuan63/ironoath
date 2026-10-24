@@ -55,7 +55,7 @@ function protocolResourceTypes(): string[] {
 function entity(over: Partial<WorldEntity> & { type: WorldEntity['type'] }): WorldEntity {
   return {
     id: 'e1', x: 10, y: 20, level: null, ownerName: null, allianceTag: null,
-    marchStatus: null, resourceType: null, load: null, displayName: null, ...over,
+    marchStatus: null, resourceType: null, load: null, displayName: null, terrainName: null, ...over,
   }
 }
 
@@ -67,6 +67,13 @@ test('战略目标只显示服务端中文名，缺名时不露内部id或枚举
     assert.equal(entityCaption(target), name)
     assert.equal(entityCaption({ ...target, displayName: null } as WorldEntity), fallback)
   }
+})
+
+test('固定战略目标名牌显示服务端下发的地形中文名', () => {
+  const target = Object.assign(entity({ type: 'GATE', displayName: '北关' }), { terrainName: '山地' })
+  assert.equal(entityCaption(target), '北关 · 山地')
+  Reflect.deleteProperty(target, 'terrainName')
+  assert.equal(entityCaption(target), '北关', '旧服务端缺少新增字段时保留原名牌文案')
 })
 
 test('资源格印的是配置表里的中文名，不是 WOOD/STONE/IRON/GRAIN（#268 的缺陷形态）', () => {

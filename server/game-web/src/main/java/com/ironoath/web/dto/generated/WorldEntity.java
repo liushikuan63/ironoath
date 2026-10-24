@@ -16,6 +16,7 @@ public record WorldEntity(
         MarchStatus marchStatus,
         String resourceType,   // 资源点产出的资源 id；其余为 null
         Long load,   // 行军实体的当前负载
-        String displayName)   // 固定战略目标的服务端中文名；其他实体为null。缺失时客户端按类型显示通用中文名，不显示内部id。
+        String displayName,   // 固定战略目标的服务端中文名；其他实体为null。缺失时客户端按类型显示通用中文名，不显示内部id。
+        String terrainName)   // 固定战略目标按已裁定坐标规则解析的服务端地形中文名；其他实体为null。客户端只显示该字段，不推断地形或复制翻译。
 {
 }

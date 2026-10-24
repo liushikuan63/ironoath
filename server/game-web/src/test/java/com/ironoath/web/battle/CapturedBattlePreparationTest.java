@@ -295,19 +295,20 @@ class CapturedBattlePreparationTest {
         var reader=reader();var prep=preparation();var scope=prep.capture(200);var party=rally("owned-target-bound",List.of());
         var attack=scope.playerSide(march("owned-target-bound",List.of()),3,PlayerTech.empty(),party);
         var target=scope.readTarget(reader,"gate_north");
-        var battle=scope.simulateTarget(attack,target,null,null,TerrainType.PLAIN,23,BattleModifier.none(),BattleModifier.none());
+        var battle=scope.simulateTarget(attack,target,null,null,23,BattleModifier.none(),BattleModifier.none());
         assertThat(battle.target()).isSameAs(target);assertThat(battle.input().battleType()).isEqualTo(BattleType.SIEGE);
         assertThat(battle.target().defender().troops().values().stream().mapToLong(Long::longValue).sum()).isEqualTo(60185);
         assertThat(BattleSimulator.simulate(battle.input())).isEqualTo(battle.result());
         var other=scope.readTarget(reader,"gate_south");
-        assertThatThrownBy(()->scope.simulateTarget(attack,other,null,null,TerrainType.PLAIN,23,BattleModifier.none(),BattleModifier.none())).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("原进攻行军");
+        assertThatThrownBy(()->scope.simulateTarget(attack,other,null,null,23,BattleModifier.none(),BattleModifier.none())).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("原进攻行军");
         var foreign=prep.capture(200).readTarget(reader,"gate_north");
-        assertThatThrownBy(()->scope.simulateTarget(attack,foreign,null,null,TerrainType.PLAIN,23,BattleModifier.none(),BattleModifier.none())).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("同一");
+        assertThatThrownBy(()->scope.simulateTarget(attack,foreign,null,null,23,BattleModifier.none(),BattleModifier.none())).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("同一");
     }
     @Test void persistedTargetBattleRequiresOriginalTargetAndSameScopeHospitals() {
         var prep=preparation();var scope=prep.capture(200);var party=rally("owned-journal-bound",List.of());
         var attack=scope.playerSide(march("owned-journal-bound",List.of()),3,PlayerTech.empty(),party);
-        var battle=scope.simulateTarget(attack,scope.readTarget(reader(),"gate_north"),null,null,TerrainType.PLAIN,2380,BattleModifier.none(),BattleModifier.none());
+        var target=scope.readTarget(reader(),"gate_north");
+        var battle=scope.simulateTarget(attack,target,null,null,2380,BattleModifier.none(),BattleModifier.none());
         var member=new CapturedBattlePreparation.MemberHospital(mock(CityState.class),mock(PlayerSave.class));
         var hospitals=scope.prepareHospitals(Map.of("owned-leader",member));
         var frozen=scope.freezeTargetBattle(battle,hospitals,null);assertThat(frozen.input()).isSameAs(battle.input());assertThat(frozen.result()).isSameAs(battle.result());
@@ -315,5 +316,18 @@ class CapturedBattlePreparationTest {
         assertThatThrownBy(()->scope.freezeTargetBattle(battle,hospitals,hospitals)).hasMessageContaining("NPC");
         var unbound=scope.simulateStrategic(attack,scope.neutralSide("owned-unbound-npc",Map.of("unit_infantry_t4",100L)),TerrainType.PLAIN,2380,BattleModifier.none(),BattleModifier.none());
         assertThatThrownBy(()->scope.freezeTargetBattle(unbound,hospitals,null)).hasMessageContaining("真实目标");
+    }
+
+    @Test void strategicTargetSimulationMustConsumeTheTerrainResolvedFromItsFrozenTarget() {
+        var scope=preparation().capture(120);var party=rally("owned-directional-terrain",List.of());
+        var attack=scope.playerSide(march("owned-directional-terrain",List.of()),0,PlayerTech.empty(),party);
+        var target=scope.readTarget(reader(),"gate_north");
+        assertThatThrownBy(()->scope.simulateTarget(attack,target,null,null,TerrainType.PLAIN,2396,
+                BattleModifier.none(),BattleModifier.none()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("地形");
+        var battle=scope.simulateTarget(attack,target,null,null,2396,
+                BattleModifier.none(),BattleModifier.none());
+        assertThat(battle.input().battleType()).isEqualTo(BattleType.SIEGE);
+        assertThat(battle.input().terrain()).isEqualTo(TerrainType.MOUNTAIN);
     }
 }

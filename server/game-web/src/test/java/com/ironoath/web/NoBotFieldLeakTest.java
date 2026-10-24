@@ -92,7 +92,7 @@ class NoBotFieldLeakTest {
         // （验收 5 的 20KB 上限），而每次膨胀都是「顺手加一个字段」造成的，没人会主动去量
         // #2362 仅增加服务端战略目标中文名，避免客户端复制名称表；20KB 断言仍由 WorldEndpointTest 验。
         assertThat(names).containsExactly("id", "type", "x", "y", "level",
-                "ownerName", "allianceTag", "marchStatus", "resourceType", "load", "displayName");
+                "ownerName", "allianceTag", "marchStatus", "resourceType", "load", "displayName", "terrainName");
     }
 
     @Test

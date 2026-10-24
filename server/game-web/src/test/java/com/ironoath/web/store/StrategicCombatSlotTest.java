@@ -82,7 +82,8 @@ class StrategicCombatSlotTest {
                     "owned-defender-N","原驻军国",120,"owned-capture",1,TargetOccupationStore.Garrison.stationed(def.id())),0);
         }
         var reader=new StrategicTargetDefender(cfg,owners,marches,social,new InMemoryNeutralTargetGarrisonStore());
-        var simulation=scope.simulateTarget(attacker,scope.readTarget(reader,"gate_north"),playerDefender?PlayerTech.empty():null,defenderRally,TerrainType.PLAIN,seed,BattleModifier.none(),BattleModifier.none());
+        var target=scope.readTarget(reader,"gate_north");
+        var simulation=scope.simulateTarget(attacker,target,playerDefender?PlayerTech.empty():null,defenderRally,seed,BattleModifier.none(),BattleModifier.none());
         var save=mock(PlayerSave.class);when(save.tech()).thenReturn(PlayerTech.empty());
         var city=mock(CityState.class);
         if(hospital){var building=mock(com.ironoath.core.city.BuildingInstance.class);when(building.configId()).thenReturn("hospital");when(building.level()).thenReturn(1);when(city.buildings()).thenReturn(List.of(building));}

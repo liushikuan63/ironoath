@@ -31,7 +31,7 @@ function entity(id: string, type: WorldEntityType, x: number, y: number): WorldE
   return {
     id, type, x, y,
     level: null, ownerName: null, allianceTag: null,
-    marchStatus: null, resourceType: null, load: null, displayName: null,
+    marchStatus: null, resourceType: null, load: null, displayName: null, terrainName: null,
   }
 }
 

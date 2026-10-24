@@ -163,6 +163,8 @@ export interface WorldEntity {
   load: number | null
   /** 固定战略目标的服务端中文名；其他实体为null。缺失时客户端按类型显示通用中文名，不显示内部id。 */
   displayName: string | null
+  /** 固定战略目标按已裁定坐标规则解析的服务端地形中文名；其他实体为null。客户端只显示该字段，不推断地形或复制翻译。 */
+  terrainName: string | null
 }
 
 /**

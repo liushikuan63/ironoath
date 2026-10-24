@@ -121,13 +121,55 @@ class WorldEndpointTest {
         var fog = world.fogOf(playerId);
         fog.exploreChunk("8:8");
         world.saveFog(playerId,fog,fog.version());
-        long oldTerrainVersion = world.chunkVersion("8:8");
+        // 上一版world_target缓存层版本为1；version=2必须使旧地图缓存重取固定目标文案。
+        long oldTerrainVersion = Math.addExact(world.chunkVersion("8:8"),1L);
         var response = worldAppService.viewport(playerId,new ViewportReq(256,256,1,
                 List.of(new ChunkVersion("8:8",oldTerrainVersion))));
         assertThat(response.chunks()).anySatisfy(chunk -> {
             assertThat(chunk.key()).isEqualTo("8:8");
-            assertThat(chunk.entities()).anySatisfy(e -> assertThat(e.id()).isEqualTo("capital_center"));
+            assertThat(chunk.version()).isGreaterThan(oldTerrainVersion);
+            assertThat(chunk.entities()).anySatisfy(e -> {
+                assertThat(e.id()).isEqualTo("capital_center");
+                assertThat(new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(e)
+                        .path("terrainName").asText()).isEqualTo("城下");
+            });
         });
+    }
+
+    @Test void strategicTargetViewportLabelsMatchTheSelectedDirectionalTerrainRule() {
+        String playerId=newPlayer();
+        var expected=java.util.Map.ofEntries(
+                java.util.Map.entry("capital_center","城下"),
+                java.util.Map.entry("gate_north","山地"),java.util.Map.entry("gate_east","森林"),
+                java.util.Map.entry("gate_south","河流"),java.util.Map.entry("gate_west","平原"),
+                java.util.Map.entry("fortress_ne_1","山地"),java.util.Map.entry("fortress_ne_2","森林"),
+                java.util.Map.entry("fortress_nw_1","山地"),java.util.Map.entry("fortress_nw_2","平原"),
+                java.util.Map.entry("fortress_sw_1","河流"),java.util.Map.entry("fortress_sw_2","平原"),
+                java.util.Map.entry("fortress_se_1","河流"),java.util.Map.entry("fortress_se_2","森林"));
+        var explored=new java.util.HashSet<String>();
+        for(var target:com.ironoath.web.service.WorldTargets.from(configs).targets()) {
+            String key=target.coord().chunkKey(Math.toIntExact(configs.longParam("WORLD_CHUNK_SIZE")));
+            if(explored.add(key)) {
+                var fog=world.fogOf(playerId);fog.exploreChunk(key);
+                assertThat(world.saveFog(playerId,fog,fog.version())).isGreaterThan(fog.version());
+            }
+            var versions=new java.util.LinkedHashMap<String,Long>();
+            WorldEntity entity=null;
+            for(int page=0;page<12 && entity==null;page++) {
+                var response=worldAppService.viewport(playerId,new ViewportReq(target.coord().x(),target.coord().y(),1,
+                        versions.entrySet().stream().map(e->new ChunkVersion(e.getKey(),e.getValue())).toList()));
+                for(var chunk:response.chunks()) {
+                    versions.put(chunk.key(),chunk.version());
+                    if(entity==null)entity=chunk.entities().stream().filter(value->value.id().equals(target.definition().id()))
+                            .findFirst().orElse(null);
+                }
+                if(entity==null)assertThat(response.staleChunks()).contains(key);
+            }
+            assertThat(entity).as("目标地形所在chunk最终应能经增量分页下发，目标=%s",target.definition().id()).isNotNull();
+            var json=new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(entity);
+            assertThat(json.path("terrainName").asText()).as("地形展示来自服务端，目标=%s",entity.id())
+                    .isEqualTo(expected.get(entity.id()));
+        }
     }
 
     @Test void strategicTargetsRejectPhysicalActionsBeforeTroopsAreDeducted() {

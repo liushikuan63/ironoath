@@ -414,7 +414,7 @@ public class WorldAppService {
         // 城表索引（坐标 → 玩家）：与 allCities 同一条惰性策略，一趟请求只建一次
         Map<Coord, String> cityIndex = null;
         // 静态图层变化也必须让旧地形缓存失效；只读请求不为此写世界版本。
-        // 发布坐标/名称变动时 world_target.version 必须递增，回滚须刷新客户端缓存。
+        // 发布坐标/名称或由坐标解析的战略地形变化时 world_target.version 必须递增，回滚须刷新客户端地图缓存。
         long targetLayerVersion = configs.rawTable("world_target").version();
         var targets = WorldTargets.from(configs);
         var owners = occupationSnapshot(targets);
@@ -527,7 +527,7 @@ public class WorldAppService {
             }
             Coord coord = allCities.get(ownerId);
             out.add(new WorldEntity(ownerId, WorldEntityType.CITY, coord.x(), coord.y(),
-                    save.cityLevel(), save.nickName(), null, null, null, null, null));
+                    save.cityLevel(), save.nickName(), null, null, null, null, null,null));
         });
         return out;
     }
@@ -556,7 +556,7 @@ public class WorldAppService {
             }
             out.add(new WorldEntity(march.id(), WorldEntityType.MARCH, pos.x(), pos.y(),
                     null, null, null,
-                    MarchStatus.valueOf(march.status().name()), null, march.load(), null));
+                    MarchStatus.valueOf(march.status().name()), null, march.load(), null,null));
         }
         WorldGenerator.Catalog catalog = catalog();
         Map<String, PlayerBrief> cityBriefs = cityBriefsOf(origin, rules, cityIndex);
@@ -631,7 +631,7 @@ public class WorldAppService {
             PlayerBrief brief = cityBriefs.get(owner);
             return new WorldEntity(owner, WorldEntityType.CITY, coord.x(), coord.y(),
                     brief == null ? 0 : brief.cityLevel(),
-                    brief == null ? null : brief.nickName(), null, null, null, null, null);
+                    brief == null ? null : brief.nickName(), null, null, null, null, null,null);
         }
         // 旧城仍优先；旧野怪/资源消耗标记不能把新固定目标挖掉。这里不写任何占领状态。
         var target = targets.at(coord);
@@ -641,7 +641,7 @@ public class WorldAppService {
                     WorldEntityType.valueOf(target.definition().kind().name()), coord.x(), coord.y(),
                     Math.toIntExact(target.defender().level()), occupation==null?null:occupation.nationName(),
                     null, null, null, null,
-                    target.definition().name());
+                    target.definition().name(),target.terrainName());
         }
         if (consumed.contains(coord)) {
             return null;
@@ -649,9 +649,9 @@ public class WorldAppService {
         WorldGenerator.Cell cell = WorldGenerator.generate(rules(), catalog, coord);
         return switch (cell.entityType()) {
             case MONSTER -> new WorldEntity(stableId("monster", coord), WorldEntityType.MONSTER,
-                    coord.x(), coord.y(), cell.level(), null, null, null, null, null, null);
+                    coord.x(), coord.y(), cell.level(), null, null, null, null, null, null,null);
             case RESOURCE -> new WorldEntity(stableId("resource", coord), WorldEntityType.RESOURCE,
-                    coord.x(), coord.y(), cell.level(), null, null, null, cell.entityId(), null, null);
+                    coord.x(), coord.y(), cell.level(), null, null, null, cell.entityId(), null, null,null);
             case EMPTY, CITY, BUILDING, GATE, CAPITAL, FORTRESS -> null;
         };
     }

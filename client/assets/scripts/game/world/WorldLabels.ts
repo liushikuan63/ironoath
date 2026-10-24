@@ -32,17 +32,21 @@ export function entityCaption(entity: WorldEntity): string {
     case 'BUILDING':
       return entity.allianceTag ?? level
     case 'GATE':
-      return entity.displayName || '关卡'
+      return strategicTargetCaption(entity.displayName || '关卡',entity.terrainName)
     case 'CAPITAL':
-      return entity.displayName || '王城'
+      return strategicTargetCaption(entity.displayName || '王城',entity.terrainName)
     case 'FORTRESS':
-      return entity.displayName || '要塞'
+      return strategicTargetCaption(entity.displayName || '要塞',entity.terrainName)
     case 'MARCH':
       return entity.load === null ? '' : `${entity.load}`
     case 'EMPTY':
     default:
       return ''
   }
+}
+
+function strategicTargetCaption(displayName: string,terrainName: string|null): string {
+  return terrainName ? `${displayName} · ${terrainName}` : displayName
 }
 
 /** 名牌板子的高度（与 `WorldMap.drawCaptionPlate` 画的那一条一致，两处只此一份定义）。 */
