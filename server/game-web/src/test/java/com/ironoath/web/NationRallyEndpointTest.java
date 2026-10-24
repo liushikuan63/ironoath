@@ -1150,6 +1150,97 @@ class NationRallyEndpointTest {
         }
     }
 
+    @Test
+    @DirtiesContext(methodMode=DirtiesContext.MethodMode.AFTER_METHOD)
+    @DisplayName("国家集结真实攻占全部八座配置要塞后粮木石铁收益均达16%")
+    void nationalRallyCapturesAllConfiguredFortressesAndReachesSixteenPercent() throws Exception {
+        DeterministicBattleSeedTestConfig.seed=2384L;
+        Nation nation=nation(4);
+        post200("/nation/appoint",nation.king,new NationAppointReq(
+                newRequestId(),nation.mates.get(0),NationOffice.PRIME_MINISTER));
+        post200("/nation/appoint",nation.king,new NationAppointReq(
+                newRequestId(),nation.mates.get(1),NationOffice.GENERAL));
+        post200("/nation/appoint",nation.king,new NationAppointReq(
+                newRequestId(),nation.mates.get(2),NationOffice.GENERAL));
+        doNothing().when(strategicTargetCircleGuard).guardRallyStart(
+                org.mockito.ArgumentMatchers.anyString(),org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyInt());
+        doNothing().when(strategicTargetCircleGuard).guardArrival(org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyInt());
+        var fortresses=WorldTargets.from(configs).targets().stream()
+                .filter(row->row.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.FORTRESS)
+                .sorted(java.util.Comparator.comparing(row->row.definition().id())).toList();
+        assertThat(fortresses).hasSize(8);
+        var captains=java.util.stream.Stream.concat(java.util.stream.Stream.of(nation.king),nation.mates.stream()).toList();
+        captains.forEach(playerId->giveTroops(playerId,"unit_cavalry_t4",10_000_000L));
+        var resourceIds=List.of(com.ironoath.core.resource.ResourceIds.GRAIN,
+                com.ironoath.core.resource.ResourceIds.WOOD,com.ironoath.core.resource.ResourceIds.STONE,
+                com.ironoath.core.resource.ResourceIds.IRON);
+        long startedAt=System.currentTimeMillis();
+        var resources=resourceIds.stream().collect(java.util.stream.Collectors.toMap(id->id,
+                id->new PlayerResourceState(0,1_000_000L,0,0,startedAt),
+                (left,right)->left,java.util.LinkedHashMap::new));
+        var player=PlayerSave.createNew(nation.king,"fortress-eight-output-"+UUID.randomUUID(),"八要塞收益验收",16,
+                startedAt,1,resources,com.ironoath.core.player.PlayerPower.zero(),null);
+        var viewPlayer=PlayerSave.createNew(nation.king,"fortress-eight-view-"+UUID.randomUUID(),"八要塞只读验收",16,
+                startedAt,1,resources,com.ironoath.core.player.PlayerPower.zero(),null);
+        var baselineRates=resourceRateService.compute(new com.ironoath.core.city.CityState(),player.tech(),
+                nation.king,startedAt);
+        var captured=new ArrayList<com.ironoath.web.world.TargetOccupationStore.Snapshot>();
+
+        for(int i=0;i<fortresses.size();i++) {
+            var target=fortresses.get(i);var coord=target.coord();
+            String captain=captains.get(i%captains.size());
+            String joiner=captains.get((i+1)%captains.size());
+            String rallyId=post200("/rally/nation",captain,new NationRallyReq(newRequestId(),
+                    new SocialCoord(coord.x(),coord.y()),SocialTargetType.STRATEGIC_TARGET,4,10,
+                    List.of(new RallyTroop("unit_cavalry_t4",500_000L)),List.of()))
+                    .get("rally").get("rallyId").asText();
+            post200("/rally/join",joiner,new RallyJoinReq(newRequestId(),rallyId,
+                    List.of(new RallyTroop("unit_cavalry_t4",500_000L)),List.of()));
+            var rally=socialStore.rallyOf(rallyId).orElseThrow();
+            marchAppService.processDue(captain,rally.prepareUntil()+1L);
+            String marchId="march_rally_"+rallyId;
+            var march=marchRepository.findById(marchId).orElseThrow().snapshot();
+            marchAppService.processDue(captain,march.arriveAt());
+            var slot=targetOperations.findByTargetId(target.definition().id()).orElseThrow();
+            assertThat(slot.combatPlan().battle().input().battleType())
+                    .as("%s must enter the strategic siege path",target.definition().id())
+                    .isEqualTo(com.ironoath.battle.BattleType.SIEGE);
+            assertThat(slot.combatPlan().battle().input().terrain())
+                    .as("%s terrain must come from the configured world target",target.definition().id())
+                    .isEqualTo(target.battleTerrain());
+            assertThat(slot.combatPlan().battle().result().winner())
+                    .as("%s must be captured through its real NPC battle",target.definition().id())
+                    .isEqualTo(com.ironoath.battle.Winner.ATTACKER);
+            strategicRecovery.recoverPending();
+            var occupation=targetOccupations.findByTargetIds(List.of(target.definition().id()))
+                    .get(target.definition().id());
+            assertThat(occupation).as("battle recovery must create %s ownership",target.definition().id()).isNotNull();
+            assertThat(occupation.nationId()).isEqualTo(nation.nationId);
+            assertThat(occupation.garrison()).isEqualTo(
+                    com.ironoath.web.world.TargetOccupationStore.Garrison.stationed(marchId));
+            assertThat(targetOperations.findByTargetId(target.definition().id()).orElseThrow().completed()).isTrue();
+            captured.add(occupation);
+        }
+
+        long settledAt=captured.stream().mapToLong(com.ironoath.web.world.TargetOccupationStore.Snapshot::capturedAt)
+                .max().orElseThrow()+3_600_000L;
+        var settled=resourceRateService.settle(player,new com.ironoath.core.city.CityState(),settledAt);
+        var view=resourceRateService.settledView(viewPlayer,new com.ironoath.core.city.CityState(),settledAt);
+        for(String id:resourceIds) {
+            long base=configs.getResource(id).basePerHour();
+            long fortressBonus=base*16/100;
+            long fullRate=baselineRates.perHour(id)+fortressBonus;
+            assertThat(settled.rates().perHour(id)).as("eight real occupations yield 16%% %s",id).isEqualTo(fullRate);
+            assertThat(settled.credited().get(id)).as("at least one final hour at the eight-fortress rate for %s",id)
+                    .isGreaterThanOrEqualTo(fullRate);
+            assertThat(view.get(id).perHour()).isEqualTo(fullRate);
+            assertThat(view.get(id).current()).isEqualTo(settled.credited().get(id));
+            assertThat(viewPlayer.resource(id).current()).isZero();
+        }
+    }
+
     // ---------- 加入 ----------
 
     @Test
