@@ -11,13 +11,60 @@ import java.util.Optional;
 public interface TargetOperationStore {
     enum Kind { WITHDRAWAL,COMBAT }
     record Anchor(String targetId,com.ironoath.core.world.WorldGenerator.EntityType kind,int x,int y) {}
-    record CombatPlan(String operationId,long sequence,com.ironoath.web.battle.CapturedStrategicBattle battle) {
+    record MarchIntent(String marchId,long beforeVersion,March.Snapshot before,
+                       com.ironoath.web.battle.StrategicBattleMarchOutcome.Disposition disposition,
+                       March.Snapshot after) {
+        public MarchIntent {
+            if(marchId==null || marchId.isBlank() || beforeVersion<0 || before==null || disposition==null)
+                throw new IllegalArgumentException("COMBAT行军恢复意图缺少来源/版本/去向");
+            before=freeze(before);
+            if(!marchId.equals(before.id()))throw new IllegalArgumentException("COMBAT行军恢复前态ID不匹配");
+            if(disposition==com.ironoath.web.battle.StrategicBattleMarchOutcome.Disposition.ANNIHILATED) {
+                if(after!=null)throw new IllegalArgumentException("全灭行军意图不能保存0兵after态");
+            } else {
+                if(after==null)throw new IllegalArgumentException("仍存活行军恢复意图缺少after态");
+                after=freeze(after);
+                if(!marchId.equals(after.id()))throw new IllegalArgumentException("COMBAT行军恢复后态ID不匹配");
+            }
+        }
+        public static MarchIntent from(com.ironoath.web.battle.StrategicBattleMarchOutcome outcome) {
+            return new MarchIntent(outcome.before().id(),outcome.beforeVersion(),outcome.before(),outcome.disposition(),outcome.after());
+        }
+    }
+    record MarchRecoveryPlan(MarchIntent attacker,MarchIntent defender) {
+        public MarchRecoveryPlan {
+            if(attacker==null || attacker.disposition()==null)throw new IllegalArgumentException("攻方COMBAT行军恢复意图缺失");
+            if(defender!=null && defender.marchId().equals(attacker.marchId()))
+                throw new IllegalArgumentException("COMBAT攻守不能复用同一March恢复意图");
+        }
+    }
+    record CombatPlan(String operationId,long sequence,com.ironoath.web.battle.CapturedStrategicBattle battle,
+                      MarchRecoveryPlan marchRecovery) {
+        public CombatPlan(String operationId,long sequence,com.ironoath.web.battle.CapturedStrategicBattle battle) {
+            this(operationId,sequence,battle,null);
+        }
         public CombatPlan {
             if(sequence<1 || battle==null || !Objects.equals(operationId,"battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion()))
                 throw new IllegalArgumentException("原战斗操作ID/代次与兵权版本不一致");
+            if(marchRecovery!=null) {
+                var attacker=marchRecovery.attacker();
+                if(!attacker.marchId().equals(battle.attacker().march().id())
+                        || attacker.beforeVersion()!=battle.attacker().marchVersion()
+                        || !attacker.before().equals(battle.attacker().march()))
+                    throw new IllegalArgumentException("COMBAT攻方行军恢复意图与冻结战果不一致");
+                var frozenDefender=battle.defender();var intentDefender=marchRecovery.defender();
+                if((frozenDefender==null)!=(intentDefender==null)
+                        || frozenDefender!=null && (!intentDefender.marchId().equals(frozenDefender.march().id())
+                        || intentDefender.beforeVersion()!=frozenDefender.marchVersion()
+                        || !intentDefender.before().equals(frozenDefender.march())))
+                    throw new IllegalArgumentException("COMBAT守方行军恢复意图与冻结战果不一致");
+            }
         }
         public static CombatPlan create(com.ironoath.web.battle.CapturedStrategicBattle battle,long sequence) {
             return new CombatPlan("battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion(),sequence,battle);
+        }
+        public CombatPlan withMarchRecovery(MarchRecoveryPlan recovery) {
+            return new CombatPlan(operationId,sequence,battle,recovery);
         }
     }
     record WithdrawalPlan(String operationId,long sequence,long happenedAt,
@@ -97,9 +144,17 @@ public interface TargetOperationStore {
     static boolean allowed(Snapshot current,Snapshot next,long expectedVersion){
         if(current==null)return expectedVersion==0 && !next.completed() && next.sequence()==1;
         if(current.version()!=expectedVersion)return false;
-        if(current.operationId().equals(next.operationId()))
-            return !current.completed() && next.completed() && current.kind()==next.kind()
-                    && Objects.equals(current.plan(),next.plan()) && Objects.equals(current.combatPlan(),next.combatPlan());
+        if(current.operationId().equals(next.operationId())) {
+            if(current.kind()!=next.kind())return false;
+            if(current.kind()==Kind.WITHDRAWAL)
+                return !current.completed() && next.completed() && Objects.equals(current.plan(),next.plan());
+            var before=current.combatPlan();var after=next.combatPlan();
+            if(before==null || after==null || !Objects.equals(before.operationId(),after.operationId())
+                    || before.sequence()!=after.sequence() || !Objects.equals(before.battle(),after.battle()))return false;
+            if(current.completed())return false;
+            if(next.completed())return Objects.equals(before,after);
+            return before.marchRecovery()==null && after.marchRecovery()!=null;
+        }
         return current.completed() && !next.completed()
                 && next.sequence()==Math.addExact(current.sequence(),1);
     }

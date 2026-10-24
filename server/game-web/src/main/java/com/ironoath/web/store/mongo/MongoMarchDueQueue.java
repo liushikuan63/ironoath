@@ -3,6 +3,7 @@ package com.ironoath.web.store.mongo;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.OptionalLong;
 
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -79,6 +80,11 @@ public final class MongoMarchDueQueue implements MarchDueQueue {
     @Override
     public int size() {
         return (int) mongo.count(new Query(), MarchDueDocument.COLLECTION);
+    }
+
+    @Override public OptionalLong dueAtOf(String marchId) {
+        requireId(marchId);var document=mongo.findById(marchId,MarchDueDocument.class,MarchDueDocument.COLLECTION);
+        return document==null?OptionalLong.empty():OptionalLong.of(document.dueAt());
     }
 
     private static void requireId(String marchId) {

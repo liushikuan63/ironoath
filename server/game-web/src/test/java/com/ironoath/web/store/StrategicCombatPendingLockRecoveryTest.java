@@ -23,6 +23,7 @@ import com.ironoath.web.nation.NationRulesAssembler;
 import com.ironoath.web.nation.NationStore;
 import com.ironoath.core.nation.WarScoreBoard;
 import com.ironoath.web.battle.StrategicRallyCasualties;
+import com.ironoath.web.battle.StrategicBattleMarchOutcome;
 import com.ironoath.web.battle.StrategicWoundSettlement;
 import com.ironoath.web.world.StrategicGarrisonWithdrawal;
 import com.ironoath.web.world.StrategicCombatRecovery;
@@ -83,7 +84,7 @@ class StrategicCombatPendingLockRecoveryTest {
         var due=new SortedMarchDueQueue();
         var withdrawal=new StrategicGarrisonWithdrawal(configs,operations,owners,marches,
                 due,defenders,social,new InJvmPlayerLock(),new StrategicCombatRecovery(operations,armies,marches,
-                owners,new InMemoryNeutralTargetGarrisonStore(),nationStore));
+                owners,new InMemoryNeutralTargetGarrisonStore(),nationStore,due));
 
         var advancer=new StrategicTargetMarchAdvancer(configs,marches,defenders,social,withdrawal,operations);
         var attackMarch=March.fromSnapshot(battle.attacker().march());var advanced=new java.util.concurrent.atomic.AtomicInteger();
@@ -95,7 +96,18 @@ class StrategicCombatPendingLockRecoveryTest {
             assertThat(ownerAfter.nationId()).isEqualTo(attackerNation.id());
             assertThat(ownerAfter.garrison()).isEqualTo(TargetOccupationStore.Garrison.stationed(battle.attacker().march().id()));
         } else assertThat(ownerAfter).isEqualTo(originalOwner);
-        assertThat(due.dueBefore(battle.happenedAt()+10_000,16)).isEmpty();
+        for(var side:List.of(StrategicRallyCasualties.Side.ATTACKER,StrategicRallyCasualties.Side.DEFENDER)) {
+            var outcome=StrategicBattleMarchOutcome.project(plan,side).orElseThrow();
+            if(outcome.disposition()==StrategicBattleMarchOutcome.Disposition.ANNIHILATED) {
+                assertThat(marches.findById(outcome.before().id())).isEmpty();
+                assertThat(due.dueAtOf(outcome.before().id()).isPresent()).isFalse();
+            } else {
+                assertThat(marches.findById(outcome.after().id()).orElseThrow().snapshot()).isEqualTo(outcome.after());
+                if(outcome.disposition()==StrategicBattleMarchOutcome.Disposition.RETURN)
+                    assertThat(due.dueAtOf(outcome.after().id()).orElseThrow()).isEqualTo(outcome.after().returnArriveAt());
+                else assertThat(due.dueAtOf(outcome.after().id()).isPresent()).isFalse();
+            }
+        }
 
         var firstReceipts=new LinkedHashMap<String,ArmyState.StrategicWoundReceipt>();
         for(var side:List.of(battle.attacker(),battle.defender()))for(String player:side.currentMembers().keySet()) {
@@ -104,11 +116,11 @@ class StrategicCombatPendingLockRecoveryTest {
                     .as("every actual member gets one persistent hospital receipt before recovery advances")
                     .isNotNull();firstReceipts.put(player,receipt);
         }
-        for(String marchId:marchSnapshots.keySet()) {
-            assertThat(marches.findById(marchId).orElseThrow().snapshot()).isEqualTo(marchSnapshots.get(marchId));
-            assertThat(marches.versionOf(marchId)).isEqualTo(marchVersions.get(marchId));
-        }
-        assertThat(operations.findByTargetId(battle.target().targetId())).contains(TargetOperationStore.Snapshot.combat(1,false,plan));
+        for(String marchId:marchSnapshots.keySet()) assertThat(marches.versionOf(marchId)).isEqualTo(Math.addExact(marchVersions.get(marchId),1));
+        var pendingAfterFirst=operations.findByTargetId(battle.target().targetId()).orElseThrow();
+        assertThat(pendingAfterFirst.completed()).isFalse();assertThat(pendingAfterFirst.version()).isEqualTo(2);
+        assertThat(pendingAfterFirst.combatPlan().battle()).isEqualTo(battle);
+        assertThat(pendingAfterFirst.combatPlan().marchRecovery()).isNotNull();
         assertThat(wars.pendingBattleReservation(battle.happenedAt()-10,plan.operationId())).isPresent();
 
         withdrawal.recoverPending();
@@ -120,7 +132,8 @@ class StrategicCombatPendingLockRecoveryTest {
             assertThat(army.snapshot().strategicWounds().get(battle.target().targetId())).isEqualTo(receipt);
             assertThat(army.totalWounded()).isEqualTo(receipt.admitted().values().stream().mapToLong(Long::longValue).sum());
         });
-        assertThat(operations.findByTargetId(battle.target().targetId())).contains(TargetOperationStore.Snapshot.combat(1,false,plan));
+        var pendingAfterReplay=operations.findByTargetId(battle.target().targetId()).orElseThrow();
+        assertThat(pendingAfterReplay).isEqualTo(pendingAfterFirst);
         assertThat(wars.pendingBattleReservation(battle.happenedAt()-10,plan.operationId())).isPresent();
     }
 
@@ -145,7 +158,7 @@ class StrategicCombatPendingLockRecoveryTest {
         var marches=new InMemoryMarchStore(32);var attacker=March.fromSnapshot(battle.attacker().march());
         assertThat(marches.insertIfAbsent(attacker)).isTrue();
         while(marches.versionOf(attacker.id())<battle.attacker().marchVersion())marches.save(attacker,marches.versionOf(attacker.id()));
-        long originalVersion=marches.versionOf(attacker.id());var originalMarch=marches.findById(attacker.id()).orElseThrow().snapshot();
+        long originalVersion=marches.versionOf(attacker.id());
         var defenderReader=mock(StrategicTargetDefender.class);
         when(defenderReader.read(any())).thenThrow(new AssertionError("target recovery must use the frozen NPC payload"));
         var nationStore=mock(NationStore.class);var nation=Nation.found(battle.attacker().rally().nationId(),"进攻国",
@@ -153,7 +166,8 @@ class StrategicCombatPendingLockRecoveryTest {
         when(nationStore.findById(nation.id())).thenReturn(Optional.of(nation));
         var social=mock(SocialAppService.class);
         when(social.runRalliesDepartureLocked(anyCollection(),any())).thenAnswer(call->((Supplier<?>)call.getArgument(1)).get());
-        var due=new SortedMarchDueQueue();var recovery=new StrategicCombatRecovery(operations,armies,marches,owners,neutral,nationStore);
+        var due=new SortedMarchDueQueue();var recovery=new StrategicCombatRecovery(operations,armies,marches,owners,neutral,nationStore,due);
+        due.schedule(attacker.id(),battle.attacker().march().arriveAt());
         var targetOperations=new StrategicGarrisonWithdrawal(configs,operations,owners,marches,due,defenderReader,social,
                 new InJvmPlayerLock(),recovery);
         var advancer=new StrategicTargetMarchAdvancer(configs,marches,defenderReader,social,targetOperations,operations);
@@ -169,9 +183,14 @@ class StrategicCombatPendingLockRecoveryTest {
         var npc=neutral.findByTargetIds(List.of(battle.target().targetId())).get(battle.target().targetId());
         assertThat(npc.phase()).isEqualTo(com.ironoath.web.world.NeutralTargetGarrisonStore.Phase.RETIRED);
         assertThat(npc.troops()).isEmpty();
-        assertThat(marches.versionOf(attacker.id())).isEqualTo(originalVersion);
-        assertThat(marches.findById(attacker.id()).orElseThrow().snapshot()).isEqualTo(originalMarch);
-        assertThat(operations.findByTargetId(battle.target().targetId())).contains(TargetOperationStore.Snapshot.combat(1,false,plan));
+        var projected=StrategicBattleMarchOutcome.project(plan,StrategicRallyCasualties.Side.ATTACKER).orElseThrow();
+        assertThat(projected.disposition()).isEqualTo(StrategicBattleMarchOutcome.Disposition.HOLD);
+        assertThat(marches.versionOf(attacker.id())).isEqualTo(Math.addExact(originalVersion,1));
+        assertThat(marches.findById(attacker.id()).orElseThrow().snapshot()).isEqualTo(projected.after());
+        assertThat(due.dueBefore(battle.happenedAt()+10_000,16)).isEmpty();
+        var pending=operations.findByTargetId(battle.target().targetId()).orElseThrow();
+        assertThat(pending.completed()).isFalse();assertThat(pending.combatPlan().battle()).isEqualTo(battle);
+        assertThat(pending.combatPlan().marchRecovery()).isNotNull();
         assertThat(wars.pendingBattleReservation(battle.happenedAt()-10,plan.operationId())).isPresent();
     }
 

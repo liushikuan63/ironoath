@@ -3,11 +3,13 @@ package com.ironoath.web.world;
 import com.ironoath.core.army.ArmyRepository;
 import com.ironoath.core.army.ArmyState;
 import com.ironoath.core.march.March;
+import com.ironoath.core.march.MarchDueQueue;
 import com.ironoath.core.march.MarchRepository;
 import com.ironoath.core.nation.Nation;
 import com.ironoath.web.nation.NationStore;
 import com.ironoath.web.battle.StrategicBattleHospitalSettlement;
 import com.ironoath.web.battle.StrategicRallyCasualties;
+import com.ironoath.web.battle.StrategicBattleMarchOutcome;
 import com.ironoath.web.battle.StrategicWoundSettlement;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -25,17 +27,25 @@ public final class StrategicCombatRecovery {
     private final TargetOccupationStore occupations;
     private final NeutralTargetGarrisonStore neutralGarrisons;
     private final NationStore nations;
+    private final MarchDueQueue due;
 
     public StrategicCombatRecovery(TargetOperationStore operations,ArmyRepository armies,MarchRepository marches) {
-        this(operations,armies,marches,null,null,null);
+        this(operations,armies,marches,null,null,null,null);
+    }
+
+    public StrategicCombatRecovery(TargetOperationStore operations,ArmyRepository armies,MarchRepository marches,
+            TargetOccupationStore occupations,NeutralTargetGarrisonStore neutralGarrisons,NationStore nations) {
+        this(operations,armies,marches,occupations,neutralGarrisons,nations,null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
     public StrategicCombatRecovery(TargetOperationStore operations,ArmyRepository armies,MarchRepository marches,
-            TargetOccupationStore occupations,NeutralTargetGarrisonStore neutralGarrisons,NationStore nations) {
+            TargetOccupationStore occupations,NeutralTargetGarrisonStore neutralGarrisons,NationStore nations,
+            MarchDueQueue due) {
         this.operations=Objects.requireNonNull(operations);this.armies=Objects.requireNonNull(armies);
         this.marches=Objects.requireNonNull(marches);
         this.occupations=occupations;this.neutralGarrisons=neutralGarrisons;this.nations=nations;
+        this.due=due;
     }
 
     /**
@@ -86,6 +96,105 @@ public final class StrategicCombatRecovery {
                 throw new IllegalStateException("守方胜利后的原目标归属已被其他操作修改");
         }
         requireCurrentPending(slot);
+    }
+
+    /** Freeze exact HOLD/RETURN/ANNIHILATED outcomes before any player March or due-queue mutation. */
+    public TargetOperationStore.Snapshot freezeMarchOutcomes(TargetOperationStore.Snapshot slot) {
+        requireCurrentPending(slot);
+        if(slot.combatPlan().marchRecovery()!=null)return slot;
+        var plan=slot.combatPlan();var battle=plan.battle();
+        var attacker=StrategicBattleMarchOutcome.project(plan,StrategicRallyCasualties.Side.ATTACKER)
+                .orElseThrow(()->new IllegalStateException("攻方原March outcome缺失，拒绝恢复COMBAT"));
+        var defender=battle.defender()==null?null:StrategicBattleMarchOutcome.project(plan,StrategicRallyCasualties.Side.DEFENDER)
+                .orElseThrow(()->new IllegalStateException("玩家守方原March outcome缺失，拒绝恢复COMBAT"));
+        var frozen=new TargetOperationStore.MarchRecoveryPlan(TargetOperationStore.MarchIntent.from(attacker),
+                defender==null?null:TargetOperationStore.MarchIntent.from(defender));
+        requireOriginalMarch(frozen.attacker());if(frozen.defender()!=null)requireOriginalMarch(frozen.defender());
+        var next=TargetOperationStore.Snapshot.combat(Math.addExact(slot.version(),1),false,plan.withMarchRecovery(frozen));
+        try {
+            if(!operations.compareAndSet(next,slot.version())
+                    && !operations.findByTargetId(slot.targetId()).filter(next::equals).isPresent())
+                throw new IllegalStateException("March outcome冻结CAS未确认，尚未写战后March效果");
+        } catch(RuntimeException unknown) {
+            if(!operations.findByTargetId(slot.targetId()).filter(next::equals).isPresent())throw unknown;
+        }
+        return operations.findByTargetId(slot.targetId()).filter(next::equals)
+                .orElseThrow(()->new IllegalStateException("March outcome冻结后COMBAT槽未完整读回"));
+    }
+
+    /** Apply durable March intents; each exact outcome is replayable and the COMBAT slot remains pending afterward. */
+    public void recoverMarchOutcomes(TargetOperationStore.Snapshot slot) {
+        requireCurrentPending(slot);
+        if(due==null)throw new IllegalStateException("MarchDueQueue未装配，保留COMBAT pending");
+        var frozen=slot.combatPlan().marchRecovery();
+        if(frozen==null)throw new IllegalStateException("COMBAT March outcome尚未持久冻结");
+        requireCurrentPending(slot);applyMarchIntent(frozen.attacker());
+        if(frozen.defender()!=null){requireCurrentPending(slot);applyMarchIntent(frozen.defender());}
+        requireCurrentPending(slot);
+    }
+
+    private void requireOriginalMarch(TargetOperationStore.MarchIntent intent) {
+        long before=marches.versionOf(intent.marchId());
+        var current=marches.findById(intent.marchId()).orElseThrow(()->new IllegalStateException("March outcome冻结前原行军缺失"));
+        long after=marches.versionOf(intent.marchId());
+        if(before!=intent.beforeVersion() || after!=before || !current.snapshot().equals(intent.before()))
+            throw new IllegalStateException("March outcome冻结时原版本/兵权已变化");
+    }
+
+    private void applyMarchIntent(TargetOperationStore.MarchIntent intent) {
+        var current=marches.findById(intent.marchId()).orElse(null);
+        if(intent.disposition()==StrategicBattleMarchOutcome.Disposition.ANNIHILATED) {
+            if(current!=null) {
+                long version=marches.versionOf(intent.marchId());
+                if(version!=intent.beforeVersion() || !current.snapshot().equals(intent.before()))
+                    throw new IllegalStateException("全灭March版本/兵权不同，拒绝删除");
+                try {
+                    if(!marches.deleteIfVersion(intent.marchId(),intent.beforeVersion())
+                            && marches.findById(intent.marchId()).isPresent())
+                        throw new IllegalStateException("全灭March原版本删除未确认");
+                } catch(RuntimeException unknown) {
+                    if(marches.findById(intent.marchId()).isPresent())throw unknown;
+                }
+            }
+            cancelDueExact(intent.marchId());return;
+        }
+        if(current==null)throw new IllegalStateException("仍有幸存兵的原March缺档，不能当作全灭");
+        long version=marches.versionOf(intent.marchId());
+        boolean before=version==intent.beforeVersion() && current.snapshot().equals(intent.before());
+        boolean after=version==Math.addExact(intent.beforeVersion(),1) && current.snapshot().equals(intent.after());
+        if(!before && !after)throw new IllegalStateException("March与冻结的原前态/战后态均不一致");
+        if(before) {
+            try {marches.save(March.fromSnapshot(intent.after()),intent.beforeVersion());}
+            catch(RuntimeException unknown) {if(!marchAfterConfirmed(intent))throw unknown;}
+            if(!marchAfterConfirmed(intent))throw new IllegalStateException("战后March完整快照未独立读回");
+        }
+        if(intent.disposition()==StrategicBattleMarchOutcome.Disposition.RETURN)
+            scheduleDueExact(intent.marchId(),intent.after().returnArriveAt());
+        else cancelDueExact(intent.marchId());
+    }
+
+    private boolean marchAfterConfirmed(TargetOperationStore.MarchIntent intent) {
+        return marches.versionOf(intent.marchId())==Math.addExact(intent.beforeVersion(),1)
+                && marches.findById(intent.marchId()).map(m->m.snapshot().equals(intent.after())).orElse(false);
+    }
+
+    private void scheduleDueExact(String marchId,Long dueAt) {
+        if(dueAt==null || dueAt<=0)throw new IllegalStateException("RETURN March缺返程到期时刻");
+        try {due.reschedule(marchId,dueAt);}
+        catch(RuntimeException unknown) {
+            var persisted=due.dueAtOf(marchId);
+            if(persisted.isPresent() && persisted.getAsLong()==dueAt)return;
+            throw unknown;
+        }
+        var persisted=due.dueAtOf(marchId);
+        if(persisted.isEmpty() || persisted.getAsLong()!=dueAt)
+            throw new IllegalStateException("March RETURN到期队列精确读回不符");
+    }
+
+    private void cancelDueExact(String marchId) {
+        try {due.cancel(marchId);}
+        catch(RuntimeException unknown) {if(due.dueAtOf(marchId).isPresent())throw unknown;}
+        if(due.dueAtOf(marchId).isPresent())throw new IllegalStateException("非RETURN March仍有旧due事件");
     }
 
     private void resolveNpcTarget(TargetOperationStore.Snapshot slot,TargetOccupationStore.Snapshot ownerBefore,

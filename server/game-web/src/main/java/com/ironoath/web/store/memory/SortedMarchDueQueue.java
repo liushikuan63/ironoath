@@ -5,6 +5,7 @@ import com.ironoath.core.march.MarchDueQueue;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -98,6 +99,10 @@ public final class SortedMarchDueQueue implements MarchDueQueue {
     @Override
     public int size() {
         return dueAtOf.size();
+    }
+
+    @Override public OptionalLong dueAtOf(String marchId) {
+        requireId(marchId);var dueAt=dueAtOf.get(marchId);return dueAt==null?OptionalLong.empty():OptionalLong.of(dueAt);
     }
 
     /** 某个时刻的待触发数量，供单测断言「同一时刻的多支行军都被登记了」。 */

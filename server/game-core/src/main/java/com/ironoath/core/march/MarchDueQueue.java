@@ -1,6 +1,7 @@
 package com.ironoath.core.march;
 
 import java.util.List;
+import java.util.OptionalLong;
 
 /**
  * 职责：行军到期队列端口 —— <b>B07 头号红线的落地方式</b>。
@@ -53,6 +54,9 @@ public interface MarchDueQueue {
      *              否则一次请求的耗时会拖垮整个线程池；分批处理让每次请求的耗时可预测
      */
     List<String> dueBefore(long nowMillis, int limit);
+
+    /** 精确读取单支March的到期回执，用于确认未知队列写入。 */
+    OptionalLong dueAtOf(String marchId);
 
     /** 队列中的事件总数，用于监控与单测。 */
     int size();

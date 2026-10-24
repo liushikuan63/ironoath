@@ -3,6 +3,7 @@ package com.ironoath.web.store;
 import com.ironoath.core.march.March;
 import com.ironoath.core.world.Coord;
 import com.ironoath.core.world.WorldGenerator;
+import com.ironoath.web.battle.StrategicBattleMarchOutcome;
 import com.ironoath.web.world.TargetOccupationStore;
 import com.ironoath.web.world.TargetOperationStore;
 import com.ironoath.web.store.memory.InMemoryTargetOperationStore;
@@ -63,6 +64,25 @@ class TargetOperationStoreTest {
         assertThat(store.findByOperationId(next.plan().operationId())).contains(next);
         assertThat(store.findByOperationId(first.operationId())).isEmpty();
         assertThat(store.findAllTargetIds(2)).containsExactly("gate_north");
+    }
+
+    @ParameterizedTest @EnumSource(Backend.class)
+    void frozenMarchOutcomesCanBeAddedOnceBeforeAnyMarchSideEffect(Backend b){
+        var store=store(b);var battle=StrategicCombatSlotTest.battle(2403,true,true);var original=TargetOperationStore.CombatPlan.create(battle,1);
+        var pending=TargetOperationStore.Snapshot.combat(1,false,original);assertThat(store.compareAndSet(pending,0)).isTrue();
+        var attacker=StrategicBattleMarchOutcome.project(original,com.ironoath.web.battle.StrategicRallyCasualties.Side.ATTACKER).orElseThrow();
+        var defender=StrategicBattleMarchOutcome.project(original,com.ironoath.web.battle.StrategicRallyCasualties.Side.DEFENDER).orElseThrow();
+        var recovery=new TargetOperationStore.MarchRecoveryPlan(TargetOperationStore.MarchIntent.from(attacker),
+                TargetOperationStore.MarchIntent.from(defender));
+        var frozen=TargetOperationStore.Snapshot.combat(2,false,original.withMarchRecovery(recovery));
+        assertThat(store.compareAndSet(frozen,1)).isTrue();assertThat(store.compareAndSet(frozen,1)).isTrue();
+        if(b==Backend.MONGO)store=new MongoTargetOperationStore(db.template());
+        assertThat(store.findByTargetId("gate_north")).contains(frozen);
+        assertThat(store.compareAndSet(TargetOperationStore.Snapshot.combat(3,false,original),2))
+                .as("once the delete/update intent is persisted, replay cannot discard it")
+                .isFalse();
+        var done=TargetOperationStore.Snapshot.combat(3,true,original.withMarchRecovery(recovery));
+        assertThat(store.compareAndSet(done,2)).isTrue();assertThat(store.findByTargetId("gate_north")).contains(done);
     }
 
     @Test void planFreezesExactRecallAndRejectsWrongOwnerOrMarch(){

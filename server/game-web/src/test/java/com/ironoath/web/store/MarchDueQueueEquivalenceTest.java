@@ -59,6 +59,7 @@ class MarchDueQueueEquivalenceTest {
             queue.schedule("m-mid", 3_000L);
 
             assertThat(queue.dueBefore(500L, 10)).as("%s：还没到点", label).isEmpty();
+            assertThat(queue.dueAtOf("m-late")).as("%s：可精确读回单队列回执",label).hasValue(5_000L);
             assertThat(queue.dueBefore(3_000L, 10)).as("%s：含等于 now 的那条", label)
                     .containsExactly("m-early", "m-mid");
             assertThat(queue.size()).as("%s：取过不删除，size 不变", label).isEqualTo(3);
@@ -74,6 +75,7 @@ class MarchDueQueueEquivalenceTest {
             String label = queue.getClass().getSimpleName();
             queue.schedule("m-1", 1_000L);
             queue.reschedule("m-1", 9_000L);
+            assertThat(queue.dueAtOf("m-1")).as("%s：改期回读精确到期时刻",label).hasValue(9_000L);
 
             assertThat(queue.size()).as("%s：仍是同一条", label).isEqualTo(1);
             assertThat(queue.dueBefore(2_000L, 10)).as("%s：旧时刻已失效", label).isEmpty();
@@ -98,6 +100,7 @@ class MarchDueQueueEquivalenceTest {
             assertThat(queue.dueBefore(1_000L, 10)).isEmpty();
             assertThat(queue.dueBefore(9_000L, 10)).containsExactly("m-replay");
             queue.cancel("m-replay");
+            assertThat(queue.dueAtOf("m-replay")).isEmpty();
             assertThat(queue.size()).isZero();
             assertThat(queue.dueBefore(9_000L, 10)).isEmpty();
         }
@@ -110,6 +113,7 @@ class MarchDueQueueEquivalenceTest {
             String label = queue.getClass().getSimpleName();
             queue.schedule("m-1", 1_000L);
             queue.cancel("m-1");
+            assertThat(queue.dueAtOf("m-1")).isEmpty();
             queue.cancel("m-1");
 
             assertThat(queue.size()).as("%s：已清空", label).isZero();

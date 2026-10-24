@@ -87,6 +87,7 @@ class SortedMarchDueQueueTest {
         // 加速：把到期时刻提前
         queue.reschedule("m1", NOW + 5_000L);
         assertThat(queue.size()).as("改期不增加队列长度").isEqualTo(1);
+        assertThat(queue.dueAtOf("m1")).hasValue(NOW+5_000L);
         assertThat(queue.sizeAt(NOW + 10_000L)).as("旧时刻的桶必须被清空，否则会重复触发").isZero();
         assertThat(queue.dueBefore(NOW + 5_000L, 10)).containsExactly("m1");
 
@@ -105,6 +106,7 @@ class SortedMarchDueQueueTest {
         queue.schedule("m1", NOW + 1000L);
         queue.cancel("m1");
         queue.cancel("m1");
+        assertThat(queue.dueAtOf("m1")).isEmpty();
         assertThat(queue.size()).isZero();
         assertThat(queue.dueBefore(NOW + 9999L, 10)).isEmpty();
     }
