@@ -762,7 +762,7 @@ class NationRallyEndpointTest {
     void strategicNationalRallyPlayerAttackerVictoryFlowsThroughHttpAndRecovery() throws Exception {
         DeterministicBattleSeedTestConfig.seed=2384L;
         Nation attacker=nation(4),defender=nation(2);
-        giveTroops(defender.king,1_000L);giveTroops(defender.mates.get(0),1_000L);
+        giveTroops(defender.king,"unit_cavalry_t4",100L);giveTroops(defender.mates.get(0),"unit_cavalry_t4",100L);
         String targetId="gate_south";
         var target=WorldTargets.from(configs).targets().stream()
                 .filter(row->row.definition().id().equals(targetId)).findFirst().orElseThrow();
@@ -776,9 +776,9 @@ class NationRallyEndpointTest {
 
         String defenderRallyId=post200("/rally/nation",defender.king,new NationRallyReq(newRequestId(),
                 new SocialCoord(coord.x(),coord.y()),SocialTargetType.STRATEGIC_TARGET,4,10,
-                List.of(new RallyTroop(UNIT,2L)),List.of())).get("rally").get("rallyId").asText();
+                List.of(new RallyTroop("unit_cavalry_t4",50L)),List.of())).get("rally").get("rallyId").asText();
         post200("/rally/join",defender.mates.get(0),new RallyJoinReq(newRequestId(),defenderRallyId,
-                List.of(new RallyTroop(UNIT,1L)),List.of()));
+                List.of(new RallyTroop("unit_cavalry_t4",50L)),List.of()));
         var defenderRally=socialStore.rallyOf(defenderRallyId).orElseThrow();
         long defenderRallyVersion=defenderRally.version();
         defenderRally.depart(defenderRally.prepareUntil()+1L);
@@ -787,12 +787,13 @@ class NationRallyEndpointTest {
         var defenderMarch=new com.ironoath.core.march.March(defenderMarchId,defender.king,
                 com.ironoath.core.world.Coord.of(coord.x()-10,coord.y()),coord,
                 defenderRally.prepareUntil()+1L,defenderRally.prepareUntil()+2L,
-                Map.of(UNIT,2L),List.of(),1_000,1,
+                Map.of("unit_cavalry_t4",100L),List.of(),1_000,1,
                 com.ironoath.core.march.March.TargetType.STRATEGIC_TARGET,targetId,
                 com.ironoath.core.march.March.Action.ATTACK);
         defenderMarch.attachToRally(defenderRallyId);
         defenderMarch.arrive(defenderMarch.arriveAt());
-        defenderMarch.holdStrategicVictory(Map.of(defender.king,defenderMarch.units()));
+        defenderMarch.holdStrategicVictory(Map.of(defender.king,Map.of("unit_cavalry_t4",50L),
+                defender.mates.get(0),Map.of("unit_cavalry_t4",50L)));
         assertThat(marchRepository.insertIfAbsent(defenderMarch)).isTrue();
         var occupied=new com.ironoath.web.world.TargetOccupationStore.Snapshot(targetId,
                 com.ironoath.core.world.WorldGenerator.EntityType.valueOf(target.definition().kind().name()),
@@ -815,12 +816,12 @@ class NationRallyEndpointTest {
         assertThat(wars.insertIfNoneActive(war)).isTrue();
         activeTestWarStartedAt=warStartedAt;
 
-        giveTroops(attacker.king,40_000L);giveTroops(attacker.mates.get(0),40_000L);
+        giveTroops(attacker.king,"unit_infantry_t4",100L);giveTroops(attacker.mates.get(0),"unit_infantry_t4",100L);
         String rallyId=post200("/rally/nation",attacker.king,new NationRallyReq(newRequestId(),
                 new SocialCoord(coord.x(),coord.y()),SocialTargetType.STRATEGIC_TARGET,4,10,
-                List.of(new RallyTroop(UNIT,30_000L)),List.of())).get("rally").get("rallyId").asText();
+                List.of(new RallyTroop("unit_infantry_t4",50L)),List.of())).get("rally").get("rallyId").asText();
         post200("/rally/join",attacker.mates.get(0),new RallyJoinReq(newRequestId(),rallyId,
-                List.of(new RallyTroop(UNIT,30_000L)),List.of()));
+                List.of(new RallyTroop("unit_infantry_t4",50L)),List.of()));
 
         var rally=socialStore.rallyOf(rallyId).orElseThrow();
         marchAppService.processDue(attacker.king,rally.prepareUntil()+1L);
@@ -858,6 +859,9 @@ class NationRallyEndpointTest {
             else assertThat(attackerIntent.after().status()).isEqualTo(com.ironoath.core.march.March.Status.STATIONED);
         }
         var defenderIntent=marchRecovery.defender();assertThat(defenderIntent).isNotNull();
+        assertThat(defenderIntent.disposition())
+                .as("该确定seed与近似战力场景必须覆盖守方幸存返程，而不只覆盖全灭删除")
+                .isEqualTo(com.ironoath.web.battle.StrategicBattleMarchOutcome.Disposition.RETURN);
         if(defenderIntent.disposition()==com.ironoath.web.battle.StrategicBattleMarchOutcome.Disposition.ANNIHILATED)
             assertThat(marchRepository.findById(defenderIntent.marchId())).isEmpty();
         else {
@@ -866,6 +870,12 @@ class NationRallyEndpointTest {
             assertThat(defenderIntent.disposition()).isEqualTo(com.ironoath.web.battle.StrategicBattleMarchOutcome.Disposition.RETURN);
             assertThat(marchDue.dueBefore(defenderIntent.after().returnArriveAt(),100)).contains(defenderIntent.marchId());
         }
+        long defenderReturningTroops=defenderIntent.after().units().values().stream().mapToLong(Long::longValue).sum();
+        marchAppService.processDue(defender.king,defenderIntent.after().returnArriveAt());
+        assertThat(marchRepository.findById(defenderIntent.marchId())).isEmpty();
+        long defenderArmyAfterReturn=armies.findByPlayerId(defender.king).orElseThrow().totalTroops()
+                +armies.findByPlayerId(defender.mates.get(0)).orElseThrow().totalTroops();
+        assertThat(defenderArmyAfterReturn).isEqualTo(100L+defenderReturningTroops);
 
         var killPlan=completed.combatPlan().killPlan();
         assertThat(killPlan).isNotNull();
@@ -1493,13 +1503,17 @@ class NationRallyEndpointTest {
     }
 
     private void giveTroops(String playerId, long count) {
+        giveTroops(playerId,UNIT,count);
+    }
+
+    private void giveTroops(String playerId,String unitId,long count) {
         ArmyState army = armies.findByPlayerId(playerId).orElse(null);
         if (army == null) {
             armies.insertIfAbsent(playerId, new ArmyState());
             army = armies.findByPlayerId(playerId).orElseThrow();
         }
         long version = armies.versionOf(playerId);
-        army.add(UNIT, count);
+        army.add(unitId, count);
         armies.save(playerId, army, version);
         // 给兵之后必须重算战力：圈层校验读的是存档里的匹配战力，只改军队不刷新存档
         // 会让"打自己的城"被判成实力悬殊而拒 —— 那是夹具漏了一步，不是产品逻辑
