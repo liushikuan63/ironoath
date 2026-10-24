@@ -16,10 +16,12 @@ import com.ironoath.core.player.PlayerPower;
 import com.ironoath.core.player.PlayerResourceState;
 import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.resource.ResourceIds;
+import com.ironoath.core.world.WorldRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.ironoath.web.dto.generated.AllianceCreateReq;
 import com.ironoath.web.dto.generated.AllianceIdReq;
 import com.ironoath.web.dto.generated.AllianceReviewReq;
+import com.ironoath.web.dto.generated.ChunkVersion;
 import com.ironoath.web.dto.generated.NationAppointReq;
 import com.ironoath.web.dto.generated.NationFoundReq;
 import com.ironoath.web.dto.generated.NationOffice;
@@ -29,6 +31,7 @@ import com.ironoath.web.dto.generated.RallyJoinReq;
 import com.ironoath.web.dto.generated.RallyTroop;
 import com.ironoath.web.dto.generated.SocialCoord;
 import com.ironoath.web.dto.generated.SocialTargetType;
+import com.ironoath.web.dto.generated.ViewportReq;
 import com.ironoath.web.dto.generated.WarDeclareReq;
 import com.ironoath.web.nation.NationLeaders;
 import com.ironoath.web.nation.NationPolicyBonuses;
@@ -42,6 +45,7 @@ import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.service.PowerRefreshService;
 import com.ironoath.web.service.ResourceRateService;
 import com.ironoath.web.service.StrategicTargetCircleGuard;
+import com.ironoath.web.service.WorldAppService;
 import com.ironoath.web.service.WorldTargets;
 import com.ironoath.web.social.SocialStore;
 import com.ironoath.web.store.mongo.MongoIndexes;
@@ -139,6 +143,8 @@ class NationRallyFortressMongoEndpointTest {
     @Autowired private TargetOccupationStore targetOccupations;
     @Autowired private StrategicGarrisonWithdrawal recovery;
     @Autowired private ResourceRateService resourceRates;
+    @Autowired private WorldAppService worldApp;
+    @Autowired private WorldRepository world;
     @Autowired private NationStore nationStore;
     @Autowired private WarStore wars;
     @Autowired private NationLeaders nationLeaders;
@@ -211,6 +217,30 @@ class NationRallyFortressMongoEndpointTest {
             assertThat(owner.garrison()).isEqualTo(TargetOccupationStore.Garrison.stationed(marchId));
             assertThat(targetOperations.findByTargetId(target.definition().id()).orElseThrow().completed()).isTrue();
             captures.add(owner);
+        }
+
+        int chunkSize=Math.toIntExact(configs.longParam("WORLD_CHUNK_SIZE"));
+        for(int index=0;index<fortresses.size();index++) {
+            var target=fortresses.get(index);var coord=target.coord();var owner=captures.get(index);
+            var fog=world.fogOf(nation.king());fog.exploreChunk(coord.chunkKey(chunkSize));
+            assertThat(world.saveFog(nation.king(),fog,fog.version())).isGreaterThan(fog.version());
+            var versions=new LinkedHashMap<String,Long>();
+            com.ironoath.web.dto.generated.WorldEntity entity=null;
+            for(int page=0;page<12 && entity==null;page++) {
+                var viewport=worldApp.viewport(nation.king(),new ViewportReq(coord.x(),coord.y(),1,
+                        versions.entrySet().stream().map(entry->new ChunkVersion(entry.getKey(),entry.getValue())).toList()));
+                for(var chunk:viewport.chunks()) {
+                    versions.put(chunk.key(),chunk.version());
+                    if(entity==null)entity=chunk.entities().stream()
+                            .filter(row->row.id().equals(target.definition().id())).findFirst().orElse(null);
+                }
+                if(entity==null)assertThat(viewport.staleChunks()).contains(coord.chunkKey(chunkSize));
+            }
+            assertThat(entity).as("Mongo ownership must appear in the production map read for %s",target.definition().id())
+                    .isNotNull();
+            assertThat(entity.ownerName()).as("map owner must match fresh Mongo occupation for %s",target.definition().id())
+                    .isEqualTo(owner.nationName());
+            assertThat(entity.terrainName()).isEqualTo(target.terrainName());
         }
 
         long settledAt=captures.stream().mapToLong(TargetOccupationStore.Snapshot::capturedAt).max().orElseThrow()+3_600_000L;
