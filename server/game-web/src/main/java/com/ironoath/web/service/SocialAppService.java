@@ -148,6 +148,7 @@ public class SocialAppService {
     private final com.ironoath.web.ws.SocialPushPublisher pushPublisher;
     private final com.ironoath.core.army.ArmyRepository armies;
     private final AttackGuardService attackGuard;
+    private final StrategicTargetCircleGuard strategicTargetCircleGuard;
     /** 联盟 ⊂ 国家：联盟解散时要把它从所属国家的成员表里摘掉（B13 §二冲突规则）。 */
     private final com.ironoath.web.nation.NationStore nations;
     /** 与 NationAppService 共用同一份议员席注入规则。 */
@@ -194,6 +195,7 @@ public class SocialAppService {
                             com.ironoath.web.ws.SocialPushPublisher pushPublisher,
                             com.ironoath.core.army.ArmyRepository armies,
                             AttackGuardService attackGuard,
+                            StrategicTargetCircleGuard strategicTargetCircleGuard,
                             com.ironoath.web.nation.NationStore nations,
                             com.ironoath.web.nation.NationLeaders nationLeaders,
                             com.ironoath.web.nation.NationMembership membership,
@@ -216,6 +218,7 @@ public class SocialAppService {
         this.pushPublisher = pushPublisher;
         this.armies = armies;
         this.attackGuard = attackGuard;
+        this.strategicTargetCircleGuard = strategicTargetCircleGuard;
         this.nations = nations;
         this.nationLeaders = nationLeaders;
         this.membership = membership;
@@ -2912,9 +2915,10 @@ public class SocialAppService {
         if (coord == null || targetType == null) {
             throw new BizException(ErrorCode.RALLY_PREPARE_INVALID, "集结必须指定目标坐标与目标类型");
         }
-        if(targetType==SocialTargetType.STRATEGIC_TARGET) {
-            throw new BizException(ErrorCode.RALLY_PREPARE_INVALID,"战略目标尚未开放争夺");
-        }
+        if(targetType==SocialTargetType.STRATEGIC_TARGET && scope!=Rally.Scope.NATION)
+            throw new BizException(ErrorCode.RALLY_PREPARE_INVALID,"战略目标争夺必须使用国家集结");
+        if(targetType==SocialTargetType.STRATEGIC_TARGET)
+            strategicTargetCircleGuard.guardRallyStart(playerId,com.ironoath.core.world.Coord.of(coord.x(),coord.y()),maxSize);
         // 武将校验排在扣兵之前：被拒时一个兵都不该动（与个人出征同一条纪律）
         heroAppService.requireOnMarch(playerId, heroes);
         // 三档各取自己那一份规则，一次算好往下传。原先这里写的是

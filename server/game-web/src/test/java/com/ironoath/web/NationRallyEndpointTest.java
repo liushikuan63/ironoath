@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.verify;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
@@ -22,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -31,6 +34,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import com.fasterxml.jackson.databind.JsonNode;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.json.JsonUtils;
+import com.ironoath.config.ConfigRegistry;
 import com.ironoath.core.army.ArmyRepository;
 import com.ironoath.core.army.ArmyState;
 import com.ironoath.core.player.PlayerRepository;
@@ -52,6 +56,8 @@ import com.ironoath.web.dto.generated.SocialCoord;
 import com.ironoath.web.dto.generated.SocialTargetType;
 import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.service.SocialAppService;
+import com.ironoath.web.service.StrategicTargetCircleGuard;
+import com.ironoath.web.service.WorldTargets;
 import com.ironoath.web.social.SocialStore;
 import com.ironoath.web.store.memory.InMemoryArmyStore;
 import com.ironoath.web.store.memory.InMemoryPlayerStore;
@@ -95,6 +101,8 @@ class NationRallyEndpointTest {
     @Autowired private SocialStore socialStore;
     @Autowired private com.ironoath.web.nation.NationStore nationStore;
     @Autowired private com.ironoath.web.service.PowerRefreshService powerRefreshService;
+    @Autowired private ConfigRegistry configs;
+    @SpyBean private StrategicTargetCircleGuard strategicTargetCircleGuard;
 
     /** 联盟名/标签与国名的序号：同一轮里要建好几个组织，重名会在 NAME_TAKEN 上报错而测不到逻辑。 */
     private int seq;
@@ -638,6 +646,26 @@ class NationRallyEndpointTest {
         assertThat(rally.get("initiatorId").asText()).isEqualTo(nation.king);
         assertThat(rally.get("joinedCount").asInt()).isEqualTo(1);
         assertThat(rally.get("status").asText()).isEqualTo("PREPARING");
+    }
+
+    @Test
+    @DisplayName("国家集结可选择固定战略目标，且出发前调用统一B08 garrison圈层守卫")
+    void nationalRallyCanSelectStrategicTargetThroughCircleGuard() throws Exception {
+        Nation nation=nation(4);giveTroops(nation.king,1_000L);
+        var gate=WorldTargets.from(configs).targets().stream()
+                .filter(target->target.definition().id().equals("gate_north")).findFirst().orElseThrow();
+        var coord=new com.ironoath.core.world.Coord(gate.coord().x(),gate.coord().y());
+        doNothing().when(strategicTargetCircleGuard).guardRallyStart(nation.king,coord,4);
+
+        JsonNode rally=post200("/rally/nation",nation.king,new NationRallyReq(newRequestId(),
+                new SocialCoord(coord.x(),coord.y()),SocialTargetType.STRATEGIC_TARGET,4,10,
+                List.of(new RallyTroop(UNIT,300L)),List.of())).get("rally");
+
+        assertThat(rally.get("scope").asText()).isEqualTo("NATION");
+        assertThat(rally.get("targetType").asText()).isEqualTo("STRATEGIC_TARGET");
+        assertThat(rally.get("targetCoord").get("x").asInt()).isEqualTo(coord.x());
+        assertThat(rally.get("targetCoord").get("y").asInt()).isEqualTo(coord.y());
+        verify(strategicTargetCircleGuard).guardRallyStart(nation.king,coord,4);
     }
 
     // ---------- 加入 ----------

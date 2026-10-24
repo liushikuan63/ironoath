@@ -141,6 +141,7 @@ public class MarchAppService {
     private final com.ironoath.web.nation.NationMembership membership;
     private final com.ironoath.web.world.StrategicGarrisonWithdrawal garrisonWithdrawal;
     private final StrategicTargetMarchAdvancer strategicTargetMarchAdvancer;
+    private final StrategicCombatArrivalProducer strategicCombatArrivalProducer;
 
     public MarchAppService(ConfigRegistry configs, MarchRepository marches, MarchDueQueue dueQueue,
                            WorldRepository world, ArmyRepository armies,
@@ -163,7 +164,8 @@ public class MarchAppService {
                           com.ironoath.web.nation.WarStore wars,
                           com.ironoath.web.nation.NationMembership membership,
                           com.ironoath.web.world.StrategicGarrisonWithdrawal garrisonWithdrawal,
-                          StrategicTargetMarchAdvancer strategicTargetMarchAdvancer) {
+                          StrategicTargetMarchAdvancer strategicTargetMarchAdvancer,
+                          StrategicCombatArrivalProducer strategicCombatArrivalProducer) {
         this.configs = configs;
         this.marches = marches;
         this.dueQueue = dueQueue;
@@ -193,6 +195,7 @@ public class MarchAppService {
         this.membership = membership;
         this.garrisonWithdrawal = garrisonWithdrawal;
         this.strategicTargetMarchAdvancer = strategicTargetMarchAdvancer;
+        this.strategicCombatArrivalProducer = strategicCombatArrivalProducer;
     }
 
     // ---------- 出征 ----------
@@ -844,7 +847,6 @@ public class MarchAppService {
         March.TargetType targetType = rallyTargetType(rally.targetType());
         WorldGenerator.Cell cell = worldAppService.cellAt(target);
         String targetId = targetEntityId(cell, target);
-        requireStrategicTargetClosed(cell);
         requireTargetOutsideRally(rally, targetType, target, targetId);
 
         Map<String, Integer> speeds = new LinkedHashMap<>();
@@ -965,6 +967,7 @@ public class MarchAppService {
             // 之后再也没有第二个能标记它的时刻，不在这里标就永久停在 DEPARTED
             markRallyArrived(march);
             boolean marchAlive = true;
+            boolean strategicCombatPublished=false;
             switch (march.action()) {
                 case GATHER -> {
                     march.startGathering(now);
@@ -991,6 +994,8 @@ public class MarchAppService {
                         LOG.error("战斗结算不确定，行军保持交战态并退出自动扫描，需核对伤亡/收益/战报 marchId={} playerId={}",march.id(),march.playerId(),uncertain);
                         return true;
                     }
+                    strategicCombatPublished=marchAlive && march.targetType()==March.TargetType.STRATEGIC_TARGET
+                            && march.status()==March.Status.FIGHTING;
                 }
                 case SCOUT -> {
                     generateReport(march, now);
@@ -1005,7 +1010,7 @@ public class MarchAppService {
                 knownReturn=registerKnownState(march,version);
             }
             world.bumpChunkVersion(march.to().chunkKey(chunkSize()));
-            if (marchAlive) { marches.save(march,version); }
+            if (marchAlive && !strategicCombatPublished) { marches.save(march,version); }
             if(marchAlive && march.status()==March.Status.RETURNING) dueQueue.reschedule(march.id(),march.returnArriveAt());
             if(knownReturn!=null) pendingReturns.remove(march.id(),knownReturn);
             // 派遣已预亮Fog，不能据此发探索资格；只在真实合法到达后沿既有chunk计主人。
@@ -1051,11 +1056,13 @@ public class MarchAppService {
      * COMBAT 屏障保留原交战态，不能把缺少战斗生产者误当作普通业务拒绝。
      */
     private boolean resolveAttack(March march,long now,long version) {
-        // 战略目标不属于通用“业务拒绝后原样返程”：没有COMBAT证明就没有战后去向。
-        // 保持入口关闭并明确失败，交战快照由advance先持久保存；本屏障不是战斗生产者。
-        if(march.targetType()==March.TargetType.STRATEGIC_TARGET)
-            throw new IllegalStateException("战略 COMBAT 发布与恢复尚未接通，不能把未战斗队伍原样返程");
         try {
+            if(march.targetType()==March.TargetType.STRATEGIC_TARGET) {
+                if(strategicCombatArrivalProducer==null)
+                    throw new IllegalStateException("战略 COMBAT 到达生产者未装配，保留原FIGHTING兵权");
+                strategicCombatArrivalProducer.publish(march,version,now);
+                return true;
+            }
             Map<String,Long> beneficiaries;
             try { beneficiaries=beneficiaries(march); }
             catch(RuntimeException preparationFailure) {
@@ -1463,7 +1470,7 @@ public class MarchAppService {
         if (world.cityAt(coord).isPresent()) {
             return March.TargetType.PLAYER_CITY;
         }
-        requireStrategicTargetClosed(cell);
+        if(cell.entityType().isStrategic())return March.TargetType.STRATEGIC_TARGET;
         if (cell.entityType() == WorldGenerator.EntityType.MONSTER) {
             return March.TargetType.MONSTER;
         }
@@ -1471,13 +1478,6 @@ public class MarchAppService {
             return March.TargetType.RESOURCE;
         }
         return March.TargetType.EMPTY;
-    }
-
-    /** 目标图层先落地；攻占链未接通时拒绝出兵，避免当空地驻扎或冒充野怪发奖。 */
-    private static void requireStrategicTargetClosed(WorldGenerator.Cell cell) {
-        if (cell.entityType().isStrategic()) {
-            throw new BizException(ErrorCode.WORLD_TARGET_INVALID, "该战略目标尚未开放争夺");
-        }
     }
 
     /**
@@ -1507,6 +1507,8 @@ public class MarchAppService {
                                 "这个资源点上没有人在采集，无从拦截（资源点本身不可攻击）");
                     }
                 }
+                case STRATEGIC_TARGET -> throw new BizException(ErrorCode.WORLD_TARGET_INVALID,
+                        "战略目标只能通过国家集结争夺");
                 default -> throw new BizException(ErrorCode.WORLD_TARGET_INVALID,
                         "只有野怪、玩家城与「有人正在采集的资源点」能被攻击，目标 ("
                                 + coord.x() + "," + coord.y() + ") 是 " + type

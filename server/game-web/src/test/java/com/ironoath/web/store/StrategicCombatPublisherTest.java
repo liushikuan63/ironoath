@@ -8,6 +8,7 @@ import com.ironoath.core.player.PlayerBrief;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.web.battle.CapturedStrategicBattle;
+import com.ironoath.web.battle.CapturedBattlePreparation;
 import com.ironoath.web.battle.StrategicRallyCasualties;
 import com.ironoath.web.lock.InJvmPlayerLock;
 import com.ironoath.web.nation.NationOperationLock;
@@ -175,6 +176,51 @@ class StrategicCombatPublisherTest {
         assertThat(report.defenderId()).isEqualTo(f.battle.target().targetId());
         assertThat(report.defenderName()).isEqualTo(target.definition().name());
         assertThat(report.attackerName()).isEqualTo("nick:"+report.attackerId());
+    }
+
+    @Test void actualArrivalProducerCapturesSIEGESimulationAndPublishesTheFrozenInput() {
+        var f=new Fixture(false,true);
+        var players=mock(com.ironoath.core.player.PlayerRepository.class);
+        var cities=mock(com.ironoath.core.city.CityRepository.class);
+        var heroRepo=mock(com.ironoath.core.hero.HeroRepository.class);
+        var inventory=mock(com.ironoath.core.bag.InventoryRepository.class);
+        var sources=new TreeSet<String>();
+        for(var side:List.of(f.battle.attacker(),f.battle.defender()))sources.addAll(side.rally().participants().keySet());
+        for(String id:sources) {
+            var save=mock(com.ironoath.core.player.PlayerSave.class);
+            when(save.tech()).thenReturn(com.ironoath.core.player.PlayerTech.empty());
+            when(save.power()).thenReturn(new com.ironoath.core.player.PlayerPower(1_000_000,1_000_000,1_000_000));
+            when(save.version()).thenReturn(1L);when(players.findByPlayerId(id)).thenReturn(Optional.of(save));
+            var city=mock(com.ironoath.core.city.CityState.class);when(city.buildings()).thenReturn(List.of());
+            when(cities.findVersionedByPlayerId(id)).thenReturn(Optional.of(new com.ironoath.core.city.CityRepository.VersionedCity(city,1)));
+            when(heroRepo.versionOf(id)).thenReturn(1L);when(heroRepo.findByPlayerId(id)).thenReturn(Optional.empty());
+            when(inventory.versionOf(id)).thenReturn(1L);when(inventory.findByPlayerId(id)).thenReturn(Optional.empty());
+        }
+        var factory=new com.ironoath.web.battle.BattleArmyFactory(f.cfg);
+        var heroMapper=new com.ironoath.web.battle.HeroBattleMapper(f.cfg,new com.ironoath.web.service.HeroStatsService(f.cfg),
+                new com.ironoath.web.hero.EquipLedgers(inventory,f.cfg),heroRepo,f.store);
+        var tech=new com.ironoath.web.battle.BattleTechBonuses(
+                new com.ironoath.web.battle.AllianceTechBonuses(f.store,f.cfg),new com.ironoath.web.tech.TechEffects(f.cfg),players);
+        var policies=new com.ironoath.web.nation.NationPolicyBonuses(f.cfg,f.store,mock(NationStore.class),
+                mock(com.ironoath.web.nation.NationLeaders.class),factory);
+        var preparation=new CapturedBattlePreparation(f.cfg,heroMapper,tech,policies);
+        var circle=mock(com.ironoath.web.service.StrategicTargetCircleGuard.class);
+        var seeds=mock(com.ironoath.web.reward.ServerSeedSource.class);when(seeds.nextSeed()).thenReturn(f.battle.result().seed());
+        var producer=new com.ironoath.web.service.StrategicCombatArrivalProducer(f.cfg,preparation,f.defenders,f.publisher,
+                f.marches,players,cities,heroRepo,inventory,f.store,circle,seeds);
+        var march=com.ironoath.core.march.March.fromSnapshot(f.battle.attacker().march());
+
+        f.locked(()->{producer.publish(march,f.battle.attacker().marchVersion(),f.battle.happenedAt());return null;});
+
+        var published=f.operations.findByTargetId(f.battle.target().targetId()).orElseThrow();
+        assertThat(published.completed()).isFalse();
+        assertThat(published.combatPlan().battle().formatVersion()).isEqualTo(2);
+        assertThat(published.combatPlan().battle().input().battleType()).isEqualTo(com.ironoath.battle.BattleType.SIEGE);
+        assertThat(published.combatPlan().battle().input().seed()).isEqualTo(f.battle.result().seed());
+        assertThat(published.combatPlan().reportPlan()).isNotNull();assertThat(published.combatPlan().killPlan()).isNotNull();
+        assertThat(published.combatPlan().warRecovery().reservation()).isNotNull();
+        verify(circle).guardArrival(eq(1_000_000L),any(StrategicTargetDefender.Defender.class),eq(f.battle.attacker().rally().participants().size()));
+        assertThat(f.marches.versionOf(march.id())).isEqualTo(f.battle.attacker().marchVersion());
     }
 
     @Test void bothOriginalPlayerRalliesMustAlreadyBeLocked() {

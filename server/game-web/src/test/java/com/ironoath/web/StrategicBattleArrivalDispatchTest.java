@@ -4,6 +4,7 @@ import com.ironoath.core.march.March;
 import com.ironoath.core.social.Rally;
 import com.ironoath.core.world.Coord;
 import com.ironoath.web.service.MarchAppService;
+import com.ironoath.web.service.StrategicCombatArrivalProducer;
 import com.ironoath.web.social.SocialStore;
 import java.util.List;
 import java.util.Map;
@@ -15,8 +16,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.verify;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 
-/** Until COMBAT publication/recovery exists, strategic arrival must preserve durable fighting custody. */
+/** Production arrival dispatch must publish only after durable FIGHTING custody and retain its due receipt. */
 class StrategicBattleArrivalDispatchTest {
     @Test
     void strategicAttackDoesNotSilentlyTurnIntoAnUnfoughtReturn() {
@@ -75,5 +81,35 @@ class StrategicBattleArrivalDispatchTest {
         assertThat(marches.findById(march.id()).orElseThrow().snapshot()).isEqualTo(frozen.snapshot());
         assertThat(marches.versionOf(march.id())).isEqualTo(1L);
         assertThat(due.dueBefore(121L,10)).containsExactly(march.id());
+    }
+
+    @Test
+    void actualArrivalCallsTheCombatProducerWithoutASecondMarchWrite() {
+        var march=new March("owned-strategic-publish","owned-attacker",Coord.of(10,10),Coord.of(256,216),110,120,
+                Map.of("unit_infantry_t4",10L),List.of(),100,1,March.TargetType.STRATEGIC_TARGET,
+                "gate_north",March.Action.ATTACK);
+        march.attachToRally("owned-strategic-publish-rally");
+        var marches=new com.ironoath.web.store.memory.InMemoryMarchStore(16);marches.insertIfAbsent(march);
+        var due=new com.ironoath.web.store.memory.SortedMarchDueQueue();due.schedule(march.id(),march.arriveAt());
+        var producer=mock(StrategicCombatArrivalProducer.class);
+        doAnswer(call->{
+            March captured=call.getArgument(0);long version=call.getArgument(1);long now=call.getArgument(2);
+            assertThat(captured.status()).isEqualTo(March.Status.FIGHTING);
+            assertThat(version).isEqualTo(1L);assertThat(now).isEqualTo(120L);return null;
+        }).when(producer).publish(any(March.class),anyLong(),anyLong());
+        var social=mock(SocialStore.class);var service=mock(MarchAppService.class,CALLS_REAL_METHODS);
+        ReflectionTestUtils.setField(service,"marches",marches);ReflectionTestUtils.setField(service,"dueQueue",due);
+        ReflectionTestUtils.setField(service,"socialStore",social);
+        ReflectionTestUtils.setField(service,"strategicCombatArrivalProducer",producer);
+        var configs=mock(com.ironoath.config.ConfigRegistry.class);when(configs.longParam("WORLD_CHUNK_SIZE")).thenReturn(16L);
+        ReflectionTestUtils.setField(service,"configs",configs);
+        ReflectionTestUtils.setField(service,"world",mock(com.ironoath.core.world.WorldRepository.class));
+        ReflectionTestUtils.setField(service,"questEvents",mock(com.ironoath.web.quest.QuestEvents.class));
+
+        assertThat((Boolean)ReflectionTestUtils.invokeMethod(service,"advanceDueMarchLocked",march.id(),120L)).isTrue();
+        verify(producer).publish(any(March.class),eq(1L),eq(120L));
+        assertThat(marches.findById(march.id()).orElseThrow().status()).isEqualTo(March.Status.FIGHTING);
+        assertThat(marches.versionOf(march.id())).isEqualTo(1L);
+        assertThat(due.dueBefore(120L,10)).containsExactly(march.id());
     }
 }

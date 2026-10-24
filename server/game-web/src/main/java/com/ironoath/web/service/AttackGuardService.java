@@ -193,6 +193,19 @@ public class AttackGuardService {
         }
     }
 
+    /** B08's configured √N circle test for a frozen strategic garrison, which has no city coordinate owner. */
+    public void guardStrategicCircle(long attackerMatchPower,long targetMatchPower,int rallySize) {
+        if(attackerMatchPower<0 || targetMatchPower<0 || rallySize<1)
+            throw new BizException(ErrorCode.PARAM_INVALID,"战略目标圈层来源战力或集结人数无效");
+        var check=PowerBandGuard.check(attackerMatchPower,targetMatchPower,rallySize,powerService.bandRules());
+        if(!check.allowed()) {
+            LOG.info("战略攻守被拒：超出B08战力圈层 集结人数={} 攻方={} 守方={} 区间=[{},{}] 原因={}",
+                    rallySize,attackerMatchPower,targetMatchPower,check.lowerBound(),check.upperBound(),check.reason());
+            throw new BizException(ErrorCode.MARCH_POWER_OUT_OF_BAND,check.message()
+                    +"（你的可攻击区间是 "+check.lowerBound()+" ~ "+check.upperBound()+"，对方 "+targetMatchPower+"）");
+        }
+    }
+
     /**
      * 外交关系是否允许打这一仗（B13 §5、验收 12，以及禁止项
      * 「不要让小队私人关系凌驾于国家外交关系之上」）。
