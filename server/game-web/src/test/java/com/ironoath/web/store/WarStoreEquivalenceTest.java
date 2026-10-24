@@ -861,6 +861,19 @@ class WarStoreEquivalenceTest {
             var released=store.findByStartedAt(T0).orElseThrow();
             store.captureGateForBattle(reservation,"n1","n2");
             assertThat(store.findByStartedAt(T0).orElseThrow().toSnapshot()).isEqualTo(released.toSnapshot());
+
+            var secondReservation=store.reserveBattle(gateId,2,"battle-gate-capture-next",T0+200L,
+                    List.of(new WarScoreBoard.BattleMember("P1","n1",2L))).orElseThrow();
+            var secondEvent=store.findByStartedAt(T0).orElseThrow()
+                    .freezeReservedBattleEvent(secondReservation.operationId(),java.util.Map.of("P1",0L));
+            assertThat(store.recordBattleEvent(secondEvent)).isEqualTo(secondEvent);
+            store.captureGateForBattle(secondReservation,"n1","n1");
+            assertThat(store.completeBattleOperation(T0,secondReservation.operationId())).isTrue();
+            var next=store.findByStartedAt(T0).orElseThrow();
+            assertThat(next.battleEvent(gateId).sequence()).isEqualTo(2L);
+            assertThat(next.totalKills()).isEqualTo(9L);
+            assertThat(next.toSnapshot().nations().stream().filter(row->row.nationId().equals("n1"))
+                    .findFirst().orElseThrow().score().buildingScore()).isEqualTo(score);
         }
     }
 

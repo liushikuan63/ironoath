@@ -227,7 +227,12 @@ public final class StrategicCombatRecovery {
         if(pending.isPresent() && !pending.get().equals(reservation))
             throw new IllegalStateException("原COMBAT War reservation回执与冻结计划不同");
         var existing=board.battleEvent(reservation.sourceId());
-        if(existing!=null && !existing.equals(event))throw new IllegalStateException("原COMBAT WarEvent存在同目标不同内容冲突");
+        if(existing!=null) {
+            if(existing.sequence()==event.sequence()) {
+                if(!existing.equals(event))throw new IllegalStateException("原COMBAT WarEvent存在同目标同代次不同内容冲突");
+            } else if(event.sequence()<existing.sequence() || event.operationId().equals(existing.operationId()))
+                throw new IllegalStateException("原COMBAT WarEvent过期或复用既有操作身份");
+        }
         if(pending.isEmpty() && !event.equals(existing))
             throw new IllegalStateException("原COMBAT War屏障已释放但缺少精确事件回执");
         try {

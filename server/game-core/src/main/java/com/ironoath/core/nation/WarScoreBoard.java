@@ -742,7 +742,9 @@ public final class WarScoreBoard {
             if(!old.equals(reservation))throw new IllegalStateException("同一目标原战斗预留载荷冲突");
             return Optional.of(old);
         }
-        if(battleEvents.containsKey(sourceId))throw new IllegalStateException("已记账战斗不能重新建立闭战预留");
+        var previous=battleEvents.get(sourceId);
+        if(previous!=null && (sequence<=previous.sequence() || operationId.equals(previous.operationId())))
+            throw new IllegalStateException("原COMBAT War预留代次必须递增且不能复用已记账operationId");
         if(pendingBattleReservations.values().stream().anyMatch(r->r.operationId().equals(operationId)))
             throw new IllegalStateException("原战斗操作已在其他目标预留");
         requireSiegeOrPrep();pendingBattleReservations.put(sourceId,reservation);return Optional.of(reservation);

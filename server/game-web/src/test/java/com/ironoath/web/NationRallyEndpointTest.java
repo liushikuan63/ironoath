@@ -128,6 +128,7 @@ class NationRallyEndpointTest {
     @Autowired private com.ironoath.web.world.StrategicGarrisonWithdrawal strategicRecovery;
     @Autowired private com.ironoath.web.world.TargetOccupationStore targetOccupations;
     @Autowired private com.ironoath.web.world.NeutralTargetGarrisonStore neutralGarrisons;
+    @Autowired private com.ironoath.web.world.StrategicTargetDefender strategicTargetDefender;
     @Autowired private com.ironoath.web.battle.BattleReportStore battleReports;
     @Autowired private com.ironoath.core.march.MarchDueQueue marchDue;
     @Autowired private com.ironoath.web.season.SeasonBoardStore seasonBoards;
@@ -779,34 +780,6 @@ class NationRallyEndpointTest {
         doNothing().when(strategicTargetCircleGuard).guardArrival(org.mockito.ArgumentMatchers.anyLong(),
                 org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyInt());
 
-        String defenderRallyId=post200("/rally/nation",defender.king,new NationRallyReq(newRequestId(),
-                new SocialCoord(coord.x(),coord.y()),SocialTargetType.STRATEGIC_TARGET,4,10,
-                List.of(new RallyTroop("unit_cavalry_t4",50L)),List.of())).get("rally").get("rallyId").asText();
-        post200("/rally/join",defender.mates.get(0),new RallyJoinReq(newRequestId(),defenderRallyId,
-                List.of(new RallyTroop("unit_cavalry_t4",50L)),List.of()));
-        var defenderRally=socialStore.rallyOf(defenderRallyId).orElseThrow();
-        long defenderRallyVersion=defenderRally.version();
-        defenderRally.depart(defenderRally.prepareUntil()+1L);
-        socialStore.saveRally(defenderRally,defenderRallyVersion);
-        String defenderMarchId="march-player-defender-"+UUID.randomUUID();
-        var defenderMarch=new com.ironoath.core.march.March(defenderMarchId,defender.king,
-                com.ironoath.core.world.Coord.of(coord.x()-10,coord.y()),coord,
-                defenderRally.prepareUntil()+1L,defenderRally.prepareUntil()+2L,
-                Map.of("unit_cavalry_t4",100L),List.of(),1_000,1,
-                com.ironoath.core.march.March.TargetType.STRATEGIC_TARGET,targetId,
-                com.ironoath.core.march.March.Action.ATTACK);
-        defenderMarch.attachToRally(defenderRallyId);
-        defenderMarch.arrive(defenderMarch.arriveAt());
-        defenderMarch.holdStrategicVictory(Map.of(defender.king,Map.of("unit_cavalry_t4",50L),
-                defender.mates.get(0),Map.of("unit_cavalry_t4",50L)));
-        assertThat(marchRepository.insertIfAbsent(defenderMarch)).isTrue();
-        var occupied=new com.ironoath.web.world.TargetOccupationStore.Snapshot(targetId,
-                com.ironoath.core.world.WorldGenerator.EntityType.valueOf(target.definition().kind().name()),
-                coord.x(),coord.y(),defender.nationId,"守方测试国",
-                defenderMarch.arriveAt(),"fixture-player-capture",1L,
-                com.ironoath.web.world.TargetOccupationStore.Garrison.stationed(defenderMarchId));
-        assertThat(targetOccupations.compareAndSet(occupied,0L)).isTrue();
-
         Path globalConfig=locateConfigDir().resolve("global.json");
         String originalGlobal=Files.readString(globalConfig);
         long warNow=System.currentTimeMillis();
@@ -826,21 +799,54 @@ class NationRallyEndpointTest {
             assertThat(gateIds).contains(targetId);
             gateIds.stream().filter(gateId->!gateId.equals(targetId))
                     .forEach(gateId->war.captureGate(attacker.nationId,gateId));
-            war.captureGate(defender.nationId,targetId);
             assertThat(war.gateCount(attacker.nationId)).isEqualTo(warRules.rules().gateCount()-1);
-            assertThat(war.gateCount(defender.nationId)).isEqualTo(1);
-            wars.save(war);
-            activeTestWarStartedAt=warStartedAt;
+            assertThat(war.gateCount(defender.nationId)).isZero();
+            wars.save(war);activeTestWarStartedAt=warStartedAt;
         } finally {
             configs.reload("global",com.ironoath.config.model.GlobalCfg.class,originalGlobal);
         }
 
-        giveTroops(attacker.king,"unit_infantry_t4",100L);giveTroops(attacker.mates.get(0),"unit_infantry_t4",100L);
+        giveTroops(defender.king,"unit_cavalry_t4",100_000L);
+        giveTroops(defender.mates.get(0),"unit_cavalry_t4",100_000L);
+        long defenderUncommittedBeforeRally=troopsOf(defender.king)+troopsOf(defender.mates.get(0))-100_000L;
+        String defenderRallyId=post200("/rally/nation",defender.king,new NationRallyReq(newRequestId(),
+                new SocialCoord(coord.x(),coord.y()),SocialTargetType.STRATEGIC_TARGET,4,10,
+                List.of(new RallyTroop("unit_cavalry_t4",50_000L)),List.of())).get("rally").get("rallyId").asText();
+        post200("/rally/join",defender.mates.get(0),new RallyJoinReq(newRequestId(),defenderRallyId,
+                List.of(new RallyTroop("unit_cavalry_t4",50_000L)),List.of()));
+        var defenderRally=socialStore.rallyOf(defenderRallyId).orElseThrow();
+        marchAppService.processDue(defender.king,defenderRally.prepareUntil()+1L);
+        String defenderMarchId="march_rally_"+defenderRallyId;
+        var firstApproach=marchRepository.findById(defenderMarchId).orElseThrow().snapshot();
+        marchAppService.processDue(defender.king,firstApproach.arriveAt());
+        var npcCombat=targetOperations.findByTargetId(targetId).orElseThrow();
+        assertThat(npcCombat.combatPlan().battle().defender()).isNull();
+        assertThat(npcCombat.combatPlan().battle().result().winner())
+                .as("第一波HTTP战斗先从初始NPC守军真实夺下关卡")
+                .isEqualTo(com.ironoath.battle.Winner.ATTACKER);
+        strategicRecovery.recoverPending();
+        assertThat(targetOperations.findByTargetId(targetId).orElseThrow().completed()).isTrue();
+        var defenderOccupation=targetOccupations.findByTargetIds(List.of(targetId)).get(targetId);
+        assertThat(defenderOccupation).as("NPC胜利后必须真实写入并绑定存活玩家驻军").isNotNull();
+        assertThat(defenderOccupation.nationId()).isEqualTo(defender.nationId);
+        assertThat(defenderOccupation.garrison()).isEqualTo(
+                com.ironoath.web.world.TargetOccupationStore.Garrison.stationed(defenderMarchId));
+        var stationedDefender=strategicTargetDefender.read(target);
+        assertThat(stationedDefender.initialNpc()).isFalse();
+        assertThat(stationedDefender.march()).isNotNull();
+        assertThat(stationedDefender.march().id()).isEqualTo(defenderMarchId);
+        var afterNpcCapture=wars.findByStartedAt(warStartedAt).orElseThrow();
+        assertThat(afterNpcCapture.phase()).isEqualTo(com.ironoath.core.nation.WarScoreBoard.Phase.PREPARATION);
+        assertThat(afterNpcCapture.gateCount(attacker.nationId)).isEqualTo(warRules.rules().gateCount()-1);
+        assertThat(afterNpcCapture.gateCount(defender.nationId)).isEqualTo(1);
+
+        giveTroops(attacker.king,"unit_infantry_t4",100_000L);
+        giveTroops(attacker.mates.get(0),"unit_infantry_t4",100_000L);
         String rallyId=post200("/rally/nation",attacker.king,new NationRallyReq(newRequestId(),
                 new SocialCoord(coord.x(),coord.y()),SocialTargetType.STRATEGIC_TARGET,4,10,
-                List.of(new RallyTroop("unit_infantry_t4",50L)),List.of())).get("rally").get("rallyId").asText();
+                List.of(new RallyTroop("unit_infantry_t4",50_000L)),List.of())).get("rally").get("rallyId").asText();
         post200("/rally/join",attacker.mates.get(0),new RallyJoinReq(newRequestId(),rallyId,
-                List.of(new RallyTroop("unit_infantry_t4",50L)),List.of()));
+                List.of(new RallyTroop("unit_infantry_t4",50_000L)),List.of()));
 
         var rally=socialStore.rallyOf(rallyId).orElseThrow();
         marchAppService.processDue(attacker.king,rally.prepareUntil()+1L);
@@ -849,21 +855,24 @@ class NationRallyEndpointTest {
         marchAppService.processDue(attacker.king,frozen.arriveAt());
 
         var pending=targetOperations.findByTargetId(targetId).orElseThrow();
+        assertThat(pending.completed()).isFalse();
+        assertThat(pending.sequence()).isEqualTo(2L);
+        assertThat(pending.combatPlan().battle().defender()).as("第二场COMBAT必须读取实际玩家驻军").isNotNull();
         assertThat(pending.combatPlan().battle().result().winner())
                 .as("seed=2384与冻结玩家驻军输入应复现真实攻方胜利")
                 .isEqualTo(com.ironoath.battle.Winner.ATTACKER);
-        assertThat(pending.combatPlan().battle().result().defKillsByMember())
-                .containsKey(defender.king);
+        assertThat(pending.combatPlan().battle().defender().currentMembers()).containsKey(defender.king);
         strategicRecovery.recoverPending();
 
         var completed=targetOperations.findByTargetId(targetId).orElseThrow();
         assertThat(completed.completed()).isTrue();
+        assertThat(completed.sequence()).as("同一关卡的第二次独立COMBAT必须递增目标代次").isEqualTo(2L);
         var owner=targetOccupations.findByTargetIds(List.of(targetId)).get(targetId);
         assertThat(owner.nationId()).isEqualTo(attacker.nationId);
         assertThat(owner.garrison()).isEqualTo(
                 com.ironoath.web.world.TargetOccupationStore.Garrison.stationed(attackerMarchId));
         assertThat(battleReports.reportsOf(attacker.king)).hasSize(1);
-        assertThat(battleReports.reportsOf(defender.king)).hasSize(1);
+        assertThat(battleReports.reportsOf(defender.king)).hasSize(2);
 
         var marchRecovery=completed.combatPlan().marchRecovery();
         assertThat(marchRecovery).isNotNull();
@@ -894,7 +903,7 @@ class NationRallyEndpointTest {
         assertThat(marchRepository.findById(defenderIntent.marchId())).isEmpty();
         long defenderArmyAfterReturn=armies.findByPlayerId(defender.king).orElseThrow().totalTroops()
                 +armies.findByPlayerId(defender.mates.get(0)).orElseThrow().totalTroops();
-        assertThat(defenderArmyAfterReturn).isEqualTo(100L+defenderReturningTroops);
+        assertThat(defenderArmyAfterReturn).isEqualTo(defenderUncommittedBeforeRally+defenderReturningTroops);
 
         var killPlan=completed.combatPlan().killPlan();
         assertThat(killPlan).isNotNull();
@@ -919,6 +928,12 @@ class NationRallyEndpointTest {
         assertThat(warRecovery.event()).isNotNull();
         var recordedWar=wars.findByStartedAt(reservation.warStartedAt()).orElseThrow();
         assertThat(recordedWar.battleEvent(targetId)).isEqualTo(warRecovery.event());
+        assertThat(recordedWar.battleEvent(targetId).sequence()).isEqualTo(2L);
+        long expectedWarKills=java.util.stream.Stream.of(npcCombat.combatPlan().battle(),pending.combatPlan().battle())
+                .mapToLong(battle->
+                        battle.result().atkKillsByMember().values().stream().mapToLong(Long::longValue).sum()
+                                +battle.result().defKillsByMember().values().stream().mapToLong(Long::longValue).sum()).sum();
+        assertThat(recordedWar.totalKills()).isEqualTo(expectedWarKills);
         assertThat(wars.pendingBattleReservation(reservation.warStartedAt(),reservation.operationId())).isEmpty();
         assertThat(recordedWar.gateCount(attacker.nationId)).isEqualTo(warRules.rules().gateCount());
         assertThat(recordedWar.gateCount(defender.nationId)).isZero();
