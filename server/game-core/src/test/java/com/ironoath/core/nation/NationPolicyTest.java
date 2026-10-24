@@ -404,7 +404,7 @@ class NationPolicyTest {
                 s.provinces(), s.holderAlliance(), s.techLevels(),
                 null, null, null, 0L, 0L, 0L,
                 s.lastTaxWeekKey(), s.lastTaxCredited(), s.spendWeekKey(), s.spentThisWeek(),
-                s.disbandedAt(), s.version()), rules());
+                s.disbandedAt(), s.version(),null), rules());
 
         assertThat(old.policyRound("king" , true, 0L).proposals()).isEmpty();
         assertThat(old.policyRound("king" , true, 0L).phase())

@@ -209,7 +209,7 @@ class NationTechTest {
                 snap.policyNextVoteAt(), snap.policyVoteOpenedAt(), snap.policyVoteEndsAt(),
                 snap.lastTaxWeekKey(),
                 snap.lastTaxCredited(), snap.spendWeekKey(), snap.spentThisWeek(),
-                snap.disbandedAt(), snap.version()), rules());
+                snap.disbandedAt(), snap.version(),null), rules());
 
         assertThat(rebuilt.techLevel(GRAIN)).as("干净的一行原样回来").isEqualTo(3);
         assertThat(rebuilt.techLevel("nt_mil_train"))
@@ -231,7 +231,7 @@ class NationTechTest {
                 null, null, null,
                 0L, 0L, 0L, snap.lastTaxWeekKey(),
                 snap.lastTaxCredited(), snap.spendWeekKey(), snap.spentThisWeek(),
-                snap.disbandedAt(), snap.version()), rules());
+                snap.disbandedAt(), snap.version(),null), rules());
 
         assertThat(old.techLevels()).isEmpty();
         assertThat(old.techLevel(GRAIN)).isZero();

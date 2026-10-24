@@ -17,6 +17,7 @@ import com.ironoath.web.nation.NationPolicyBonuses;
 import com.ironoath.web.nation.NationRulesAssembler;
 import com.ironoath.web.nation.NationStore;
 import com.ironoath.web.nation.NationTechBonuses;
+import com.ironoath.web.store.memory.InMemoryNationStore;
 import com.ironoath.web.store.memory.InMemoryTargetOccupationStore;
 import com.ironoath.web.tech.TechEffects;
 import com.ironoath.web.world.TargetOccupationStore;
@@ -37,6 +38,8 @@ class StrategicFortressOutputSettlementTest {
         var nation=Nation.found("nation-a","产出国","king-a","alliance-a",10,20,START,
                 new NationRulesAssembler(configs).rules());
         when(nations.findByAlliance("alliance-a")).thenReturn(Optional.of(nation));
+        when(nations.allianceNationEpochs("alliance-a")).thenReturn(List.of(
+                new NationStore.AllianceNationEpoch("nation-a",START,Long.MAX_VALUE)));
         when(leaders.bind(any())).thenAnswer(call->call.getArgument(0));
         var occupations=new InMemoryTargetOccupationStore();
         var forts=WorldTargets.from(configs).targets().stream()
@@ -83,5 +86,51 @@ class StrategicFortressOutputSettlementTest {
         assertThat(view.get(ResourceIds.GRAIN).current()).isEqualTo(sevenFortressRate+eightFortressRate);
         assertThat(viewPlayer.resource(ResourceIds.GRAIN).current()).isZero();
         verify(nations,times(4)).findByAlliance("alliance-a");
+    }
+
+    @Test void nationMembershipTransferSplitsFortressEligibilityAtTheJoinExitTimestamp() {
+        var configs=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
+        var social=mock(com.ironoath.web.social.SocialStore.class);var leaders=mock(NationLeaders.class);
+        var alliance=mock(Alliance.class);when(alliance.id()).thenReturn("alliance-a");
+        when(social.allianceOf("member-transfer")).thenReturn(Optional.of(alliance));
+        var rules=new NationRulesAssembler(configs);var nations=new InMemoryNationStore(rules);
+        Nation oldNation=Nation.found("nation-old","旧国","old-king","alliance-a",10,20,START-100,rules.rules());
+        assertThat(nations.insertIfAbsent(oldNation)).isTrue();
+        oldNation=nations.findById(oldNation.id()).orElseThrow();
+        oldNation.removeAlliance("alliance-a",false,"old-king",START+3_600_000);
+        nations.save(oldNation,oldNation.version());
+        Nation newNation=Nation.found("nation-new","新国","new-king","alliance-b",30,40,START-100,rules.rules());
+        assertThat(nations.insertIfAbsent(newNation)).isTrue();
+        newNation=nations.findById(newNation.id()).orElseThrow();
+        newNation.admitAlliance("alliance-a",START+3_600_000);nations.save(newNation,newNation.version());
+        when(leaders.bind(any())).thenAnswer(call->call.getArgument(0));
+        var occupations=new InMemoryTargetOccupationStore();
+        var forts=WorldTargets.from(configs).targets().stream()
+                .filter(target->target.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.FORTRESS)
+                .toList();
+        for(var target:forts)assertThat(occupations.compareAndSet(new TargetOccupationStore.Snapshot(
+                target.definition().id(),WorldGenerator.EntityType.valueOf(target.definition().kind().name()),
+                target.coord().x(),target.coord().y(),"nation-old","旧国",START-200,"capture-"+target.definition().id(),
+                1,TargetOccupationStore.Garrison.empty()),0)).isTrue();
+        var national=new NationTechBonuses(configs,social,nations,leaders);
+        var policy=new NationPolicyBonuses(configs,social,nations,leaders,mock(com.ironoath.web.battle.BattleArmyFactory.class));
+        var rates=new ResourceRateService(configs,new TechEffects(configs),national,policy,occupations);
+        var player=PlayerSave.createNew("member-transfer","device-transfer","转籍成员",1,START,1,
+                Map.of(ResourceIds.GRAIN,new PlayerResourceState(0,1_000_000,0,0,START)),PlayerPower.zero(),null);
+
+        var result=rates.settle(player,new com.ironoath.core.city.CityState(),START+7_200_000);
+
+        long base=configs.getResource(ResourceIds.GRAIN).basePerHour();
+        long oldNationRate=com.ironoath.core.resource.ResourceOutputCalculator.compute(
+                List.of(com.ironoath.core.resource.ResourceOutputCalculator.Line.flat("base",base)),1_600,0,0,
+                "combined").totalPerHour();
+        assertThat(result.credited().get(ResourceIds.GRAIN)).isEqualTo(oldNationRate+base);
+        assertThat(result.rates().perHour(ResourceIds.GRAIN)).isEqualTo(base);
+        assertThat(nations.nationAtAlliance("alliance-a",START+3_600_000,true)).map(Nation::id).contains("nation-old");
+        assertThat(nations.nationAtAlliance("alliance-a",START+3_600_000,false)).map(Nation::id).contains("nation-new");
+        var viewPlayer=PlayerSave.createNew("member-transfer","device-transfer-view","转籍成员",1,START,1,
+                Map.of(ResourceIds.GRAIN,new PlayerResourceState(0,1_000_000,0,0,START)),PlayerPower.zero(),null);
+        assertThat(rates.settledView(viewPlayer,new com.ironoath.core.city.CityState(),START+7_200_000)
+                .get(ResourceIds.GRAIN).current()).isEqualTo(oldNationRate+base);
     }
 }

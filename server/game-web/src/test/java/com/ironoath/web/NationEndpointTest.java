@@ -28,6 +28,7 @@ import com.ironoath.common.json.JsonUtils;
 import com.ironoath.common.num.FixedPoint;
 import com.ironoath.core.bot.BotProfile;
 import com.ironoath.core.nation.Nation.Office;
+import com.ironoath.core.nation.Nation;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerResourceState;
 import com.ironoath.core.player.PlayerSave;
@@ -386,6 +387,29 @@ class NationEndpointTest {
                         + "   改成对 id 形状本身断言（前缀 nation_ 与字段名 nationId= 都不许出现在玩家文案里）。")
                 .doesNotContain("nationId=").doesNotContain("nation_");
         assertThat(nationOf(k.nationB()).memberAllianceCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("国家入籍与退国HTTP写口持久精确成员epoch供离线产率分段使用")
+    void joinAndLeaveEndpointsPersistNationMembershipEpochs() throws Exception {
+        TwoKingdoms k=twoKingdoms();FreeAlliance f=freeAlliance();
+        post200("/nation/join",f.leader(),new NationJoinReq(newRequestId(),k.nationA()));
+        var joined=nationStore.findById(k.nationA()).orElseThrow()
+                .allianceMembershipPeriods(f.allianceId()).get(0);
+        assertThat(nationStore.nationAtAlliance(f.allianceId(),joined.fromAt(),true)).isEmpty();
+        assertThat(nationStore.nationAtAlliance(f.allianceId(),joined.fromAt(),false))
+                .map(Nation::id).contains(k.nationA());
+
+        post200("/nation/leave",f.leader(),new NationLeaveReq(newRequestId()));
+
+        var closed=nationStore.findById(k.nationA()).orElseThrow()
+                .allianceMembershipPeriods(f.allianceId());
+        assertThat(closed).hasSize(1);
+        assertThat(closed.get(0).fromAt()).isEqualTo(joined.fromAt());
+        assertThat(closed.get(0).untilAt()).isGreaterThanOrEqualTo(joined.fromAt());
+        assertThat(nationStore.nationAtAlliance(f.allianceId(),closed.get(0).untilAt(),true))
+                .map(Nation::id).contains(k.nationA());
+        assertThat(nationStore.nationAtAlliance(f.allianceId(),closed.get(0).untilAt(),false)).isEmpty();
     }
 
     @Test

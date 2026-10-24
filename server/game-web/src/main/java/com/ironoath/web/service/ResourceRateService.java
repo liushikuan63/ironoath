@@ -145,11 +145,12 @@ public class ResourceRateService {
 
     /** Deterministic event-time output used by lazy settlement and its historical fortress-rate segments. */
     public Rates compute(CityState city,PlayerTech tech,String playerId,long at) {
-        return compute(city,tech,playerId,at,false,null);
+        return compute(city,tech,playerId,at,false,null,null);
     }
 
     private Rates compute(CityState city,PlayerTech tech,String playerId,long at,boolean beforeFortressBoundary,
-            com.ironoath.web.nation.StrategicFortressOutputReadScope fortressScope) {
+            com.ironoath.web.nation.StrategicFortressOutputReadScope fortressScope,
+            com.ironoath.web.nation.NationOutputReadScope.MembershipTimeline membershipTimeline) {
         if (city == null) {
             throw new IllegalArgumentException("city 不得为 null");
         }
@@ -164,7 +165,7 @@ public class ResourceRateService {
         Map<String, ResourceOutputCalculator.Breakdown> breakdowns = new LinkedHashMap<>();
         Map<String, Long> caps = new LinkedHashMap<>();
         Long policyOutputPercent = null;
-        var nationRead = new com.ironoath.web.nation.NationOutputReadScope(playerId);
+        var nationRead = new com.ironoath.web.nation.NationOutputReadScope(playerId,membershipTimeline);
 
         for (ResourceCfg res : resources) {
             List<ResourceOutputCalculator.Line> baseLines = new ArrayList<>();
@@ -206,7 +207,7 @@ public class ResourceRateService {
                 policyOutputPercent = policyBonuses.outputPercent(playerId, nationRead);
             }
             long fortressPercent=res.kind()==ResourceCfg.Kind.BASE
-                    ?fortressScope.outputPercent(nationRead.resolvedNationId(),at,beforeFortressBoundary):0L;
+                    ?fortressScope.outputPercent(nationRead.nationIdAt(at,beforeFortressBoundary),at,beforeFortressBoundary):0L;
             breakdowns.put(res.id(), ResourceOutputCalculator.compute(baseLines,
                     resourceOutputPercent+policyOutputPercent+fortressPercent,0L,0L,"科技、国家、国策与要塞加成"));
             caps.put(res.id(), capacity);
@@ -296,15 +297,18 @@ public class ResourceRateService {
         List<String> harvested = new ArrayList<>();
         var fortressScope=player.resources().isEmpty()?com.ironoath.web.nation.StrategicFortressOutputReadScope.empty()
                 :com.ironoath.web.nation.StrategicFortressOutputReadScope.capture(configs,targetOccupations);
+        var membershipTimeline=player.resources().isEmpty()?null:nationTechBonuses.outputMembershipTimeline(player.playerId());
         long firstSettle=player.resources().values().stream().mapToLong(PlayerResourceState::lastSettle).min().orElse(now);
-        Set<Long> fortressChanges=Set.copyOf(fortressScope.changeTimes(Math.min(firstSettle,now),now));
+        var changes=new TreeSet<Long>(fortressScope.changeTimes(Math.min(firstSettle,now),now));
+        if(membershipTimeline!=null)changes.addAll(membershipTimeline.changeTimes(Math.min(firstSettle,now),now));
+        Set<Long> outputChanges=Set.copyOf(changes);
         var boundaries=new TreeSet<Long>(city.pendingFinishTimes(now));
-        boundaries.addAll(fortressChanges);
+        boundaries.addAll(outputChanges);
 
         // 逐个完成时刻切段：先按「收割前」的产率结算到该时刻，再收割，再进入下一段。
         // 这样升级带来的产率阶跃只影响它真正生效之后的时间。
         for (long milestone : boundaries) {
-            Segment seg = settleTo(player,city,milestone,fortressChanges.contains(milestone),fortressScope);
+            Segment seg = settleTo(player,city,milestone,outputChanges.contains(milestone),fortressScope,membershipTimeline);
             accumulate(credited, seg.credited());
             List<String> done = city.collectFinished(milestone);
             harvested.addAll(done);
@@ -313,7 +317,7 @@ public class ResourceRateService {
                         player.playerId(), milestone, done);
             }
         }
-        Segment tail = settleTo(player,city,now,false,fortressScope);
+        Segment tail = settleTo(player,city,now,false,fortressScope,membershipTimeline);
         accumulate(credited, tail.credited());
 
         for (Map.Entry<String, PlayerResourceState> e : player.resources().entrySet()) {
@@ -347,14 +351,17 @@ public class ResourceRateService {
         Rates rates=null;
         var fortressScope=player.resources().isEmpty()?com.ironoath.web.nation.StrategicFortressOutputReadScope.empty()
                 :com.ironoath.web.nation.StrategicFortressOutputReadScope.capture(configs,targetOccupations);
+        var membershipTimeline=player.resources().isEmpty()?null:nationTechBonuses.outputMembershipTimeline(player.playerId());
         Map<String, PlayerResourceState> out = new LinkedHashMap<>();
         long firstSettle=player.resources().values().stream().mapToLong(PlayerResourceState::lastSettle).min().orElse(now);
-        var boundaries=fortressScope.changeTimes(Math.min(firstSettle,now),now);
+        var changes=new TreeSet<Long>(fortressScope.changeTimes(Math.min(firstSettle,now),now));
+        if(membershipTimeline!=null)changes.addAll(membershipTimeline.changeTimes(Math.min(firstSettle,now),now));
+        var boundaries=List.copyOf(changes);
         for(long boundary:boundaries) {
-            rates=city==null?null:compute(city,player.tech(),player.playerId(),boundary,true,fortressScope);
+            rates=city==null?null:compute(city,player.tech(),player.playerId(),boundary,true,fortressScope,membershipTimeline);
             settleViewSegment(player,out,rates,boundary);
         }
-        rates = city == null ? null : compute(city, player.tech(), player.playerId(),now,false,fortressScope);
+        rates = city == null ? null : compute(city,player.tech(),player.playerId(),now,false,fortressScope,membershipTimeline);
         settleViewSegment(player,out,rates,now);
         return java.util.Collections.unmodifiableMap(out);
     }
@@ -384,8 +391,9 @@ public class ResourceRateService {
 
     /** 用「当前城建状态」的产率与容量，把所有资源结算到时刻 t 并写回存档。 */
     private Segment settleTo(PlayerSave player,CityState city,long t,boolean beforeFortressBoundary,
-            com.ironoath.web.nation.StrategicFortressOutputReadScope fortressScope) {
-        Rates rates=compute(city,player.tech(),player.playerId(),t,beforeFortressBoundary,fortressScope);
+            com.ironoath.web.nation.StrategicFortressOutputReadScope fortressScope,
+            com.ironoath.web.nation.NationOutputReadScope.MembershipTimeline membershipTimeline) {
+        Rates rates=compute(city,player.tech(),player.playerId(),t,beforeFortressBoundary,fortressScope,membershipTimeline);
         Map<String, Long> credited = new LinkedHashMap<>();
         // player.resources() 返回快照副本，遍历期间写回不会触发并发修改
         for (Map.Entry<String, PlayerResourceState> e : player.resources().entrySet()) {

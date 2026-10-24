@@ -184,6 +184,14 @@ public final class Nation {
      * @param policySlotCount 可同时生效的国策槽位数
      * @param warCooldownHours 宣战冷却（小时）
      */
+    /** Closed country-membership interval for one alliance; end time is exclusive. */
+    public record AllianceMembershipPeriod(String allianceId,long fromAt,long untilAt) {
+        public AllianceMembershipPeriod {
+            if(allianceId==null || allianceId.isBlank() || fromAt<0 || untilAt<fromAt)
+                throw new IllegalArgumentException("国家成员联盟的历史时段无效");
+        }
+    }
+
     public record LevelRule(long nationLevel, long memberCap, long officeCount,
                             long treasuryCap, long policySlotCount, long warCooldownHours) {
         public LevelRule {
@@ -420,6 +428,8 @@ public final class Nation {
     private long treasury;
     /** 成员联盟 id → 加入时刻。键是联盟而不是玩家：个人不单独入籍 */
     private final Map<String, Long> memberAlliances = new LinkedHashMap<>();
+    /** Closed intervals survive exit/re-entry and let lazy national output settle by membership time. */
+    private final List<AllianceMembershipPeriod> formerAllianceMemberships = new ArrayList<>();
     /** 官职 → 持有者。一个席位一个人，多席位官职用 List */
     private final Map<Office, List<String>> offices = new EnumMap<>(Office.class);
     /** 目标国家 → 外交关系。未登记的默认中立 */
@@ -583,7 +593,7 @@ public final class Nation {
                            long policyNextVoteAt, long policyVoteOpenedAt, long policyVoteEndsAt,
                            long lastTaxWeekKey, long lastTaxCredited,
                            long spendWeekKey, long spentThisWeek,
-                           long disbandedAt, long version) {
+                           long disbandedAt, long version,List<AllianceMembershipPeriod> formerAllianceMemberships) {
     }
 
     public Snapshot snapshot() {
@@ -604,7 +614,7 @@ public final class Nation {
                 new LinkedHashMap<>(activePolicies),
                 policyNextVoteAt, policyVoteOpenedAt, policyVoteEndsAt,
                 lastTaxWeekKey, lastTaxCredited,
-                spendWeekKey, spentThisWeek, disbandedAt, version);
+                spendWeekKey, spentThisWeek, disbandedAt, version,List.copyOf(formerAllianceMemberships));
     }
 
     /**
@@ -631,6 +641,9 @@ public final class Nation {
         nation.memberAlliances.clear();
         nation.memberAlliances.putAll(s.memberAlliances() == null
                 ? Map.of() : new LinkedHashMap<>(s.memberAlliances()));
+        nation.formerAllianceMemberships.clear();
+        nation.formerAllianceMemberships.addAll(s.formerAllianceMemberships()==null
+                ?List.of():s.formerAllianceMemberships());
         // 构造器给每个官职建了一个空列表，这里整份换成快照里的席位表（顺序保留：议员按加入先后）
         for (Office office : Office.values()) {
             List<String> holders = s.offices() == null ? null : s.offices().get(office);
@@ -822,9 +835,13 @@ public final class Nation {
      */
     public void removeAlliance(String allianceId, boolean expelled, String actorId, long now) {
         requireActive();
-        if (memberAlliances.remove(allianceId) == null) {
+        Long joinedAt=memberAlliances.get(allianceId);
+        if (joinedAt == null) {
             throw new IllegalStateException("该联盟不是本国成员");
         }
+        if(now<joinedAt)throw new IllegalArgumentException("国家成员退出时刻早于加入时刻");
+        memberAlliances.remove(allianceId);
+        closeAllianceMembership(allianceId,joinedAt,now);
         joinCooldownUntil.put(allianceId, now + rules.joinCooldownMillis());
         // 该联盟成员持有的官职一律收回：一个不在国里的联盟不该继续行使国家权力
         for (Map.Entry<Office, List<String>> entry : offices.entrySet()) {
@@ -1434,8 +1451,12 @@ public final class Nation {
      * 分成两个方法各写一遍的代价是将来只改得动一处，症状是「自动亡的国把钱静默吞了」。
      */
     private void tearDown(String operatorId, long now, String writeOffPayee, String writeOffReason) {
-        for (String allianceId : new LinkedHashSet<>(memberAlliances.keySet())) {
+        if(memberAlliances.values().stream().anyMatch(joinedAt->now<joinedAt))
+            throw new IllegalArgumentException("国家解散时刻早于成员联盟入籍时刻");
+        for (var member : new LinkedHashMap<>(memberAlliances).entrySet()) {
+            String allianceId=member.getKey();
             joinCooldownUntil.put(allianceId, now + rules.joinCooldownMillis());
+            closeAllianceMembership(allianceId,member.getValue(),now);
         }
         memberAlliances.clear();
         for (List<String> holders : offices.values()) {
@@ -1518,6 +1539,57 @@ public final class Nation {
 
     public boolean hasAlliance(String allianceId) {
         return memberAlliances.containsKey(allianceId);
+    }
+
+    /** Whether this alliance represented national members at a timestamp, on either side of that boundary. */
+    public boolean allianceMemberAt(String allianceId,long at,boolean beforeBoundary) {
+        if(allianceId==null || allianceId.isBlank() || at<0)return false;
+        Long currentStart=memberAlliances.get(allianceId);
+        if(currentStart!=null && (beforeBoundary?currentStart<at:currentStart<=at))return true;
+        for(var period:formerAllianceMemberships) {
+            if(!allianceId.equals(period.allianceId()))continue;
+            boolean inside=beforeBoundary?period.fromAt()<at && at<=period.untilAt()
+                    :period.fromAt()<=at && at<period.untilAt();
+            if(inside)return true;
+        }
+        return false;
+    }
+
+    public List<Long> allianceMembershipChangeTimes(String allianceId,long afterExclusive,long throughInclusive) {
+        if(afterExclusive<0 || throughInclusive<afterExclusive)
+            throw new IllegalArgumentException("国家成员变更查询区间无效");
+        var times=new java.util.TreeSet<Long>();
+        Long currentStart=memberAlliances.get(allianceId);
+        if(currentStart!=null)addMembershipChange(times,currentStart,afterExclusive,throughInclusive);
+        for(var period:formerAllianceMemberships)if(allianceId.equals(period.allianceId())) {
+            addMembershipChange(times,period.fromAt(),afterExclusive,throughInclusive);
+            addMembershipChange(times,period.untilAt(),afterExclusive,throughInclusive);
+        }
+        return List.copyOf(times);
+    }
+
+    public List<AllianceMembershipPeriod> formerAllianceMemberships() {
+        return List.copyOf(formerAllianceMemberships);
+    }
+
+    /** Closed and currently-active country intervals for one Alliance, sorted by start time. */
+    public List<AllianceMembershipPeriod> allianceMembershipPeriods(String allianceId) {
+        if(allianceId==null || allianceId.isBlank())return List.of();
+        var periods=new ArrayList<AllianceMembershipPeriod>();
+        for(var period:formerAllianceMemberships)if(allianceId.equals(period.allianceId()))periods.add(period);
+        Long activeFrom=memberAlliances.get(allianceId);
+        if(activeFrom!=null)periods.add(new AllianceMembershipPeriod(allianceId,activeFrom,Long.MAX_VALUE));
+        periods.sort(java.util.Comparator.comparingLong(AllianceMembershipPeriod::fromAt));
+        return List.copyOf(periods);
+    }
+
+    private void closeAllianceMembership(String allianceId,long fromAt,long untilAt) {
+        if(untilAt<fromAt)throw new IllegalArgumentException("国家成员退出时刻早于加入时刻");
+        if(untilAt>fromAt)formerAllianceMemberships.add(new AllianceMembershipPeriod(allianceId,fromAt,untilAt));
+    }
+
+    private static void addMembershipChange(java.util.Set<Long> times,long at,long afterExclusive,long throughInclusive) {
+        if(at>afterExclusive && at<=throughInclusive)times.add(at);
     }
 
     /** 某个联盟的入籍冷却截止时刻；无冷却为 0。 */

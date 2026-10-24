@@ -5,6 +5,7 @@ import com.ironoath.config.cfg.NationTechCfg;
 import com.ironoath.core.nation.Nation;
 import com.ironoath.core.resource.ResourceIds;
 import com.ironoath.web.social.SocialStore;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -52,6 +53,14 @@ public class NationTechBonuses {
      */
     public long outputPercent(String resourceId, String playerId) {
         return outputPercent(resourceId, playerId, null);
+    }
+
+    /** Capture country-membership epochs before a lazy settlement can mutate any resource balance. */
+    public NationOutputReadScope.MembershipTimeline outputMembershipTimeline(String playerId) {
+        if(playerId==null || playerId.isBlank())return new NationOutputReadScope.MembershipTimeline(null,List.of());
+        var alliance=social.allianceOf(playerId).orElse(null);
+        return alliance==null?new NationOutputReadScope.MembershipTimeline(null,List.of())
+                :new NationOutputReadScope.MembershipTimeline(alliance.id(),nations.allianceNationEpochs(alliance.id()));
     }
 
     /** Optional successful-lookup snapshot shared only by one resource calculation. */
@@ -115,10 +124,16 @@ public class NationTechBonuses {
             return null;
         }
         try {
-            java.util.function.Supplier<Nation> lookup = () -> social.allianceOf(playerId)
-                    .flatMap(alliance -> nations.findByAlliance(alliance.id()))
-                    .map(leaders::bind)
-                    .orElse(null);
+            java.util.function.Supplier<Nation> lookup = () -> {
+                String allianceId;
+                if(scope!=null && scope.hasMembershipTimeline())allianceId=scope.knownAllianceId();
+                else {
+                    var alliance=social.allianceOf(playerId).orElse(null);
+                    allianceId=alliance==null?null:alliance.id();
+                    if(scope!=null)scope.rememberAllianceId(playerId,allianceId,nations);
+                }
+                return allianceId==null?null:nations.findByAlliance(allianceId).map(leaders::bind).orElse(null);
+            };
             return scope == null ? lookup.get() : scope.resolve(playerId, lookup);
         } catch (RuntimeException e) {
             LOG.warn("国家科技加成读不到所属国家，按 0 计 playerId={} 原因={}", playerId, e.toString());

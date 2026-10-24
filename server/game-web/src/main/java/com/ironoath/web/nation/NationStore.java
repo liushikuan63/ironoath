@@ -21,6 +21,15 @@ import com.ironoath.core.nation.Nation;
  * 所以这条写回义务在 dev 与生产上是同一件事 —— 差异由 {@code NationStoreEquivalenceTest} 守着。
  */
 public interface NationStore {
+    record AllianceNationEpoch(String nationId,long fromAt,long untilAt) {
+        public AllianceNationEpoch {
+            if(nationId==null || nationId.isBlank() || fromAt<0 || untilAt<fromAt)
+                throw new IllegalArgumentException("Alliance国家归属时间段无效");
+        }
+        public boolean contains(long at,boolean beforeBoundary) {
+            return beforeBoundary?fromAt<at && at<=untilAt:fromAt<=at && at<untilAt;
+        }
+    }
 
     /**
      * 带乐观锁落库：<b>只有 {@code nation.version()} 与库里那一版相同才写</b>。
@@ -80,6 +89,51 @@ public interface NationStore {
 
     /** 某个联盟所属的国家（联盟 ⊂ 国家，一个联盟最多属于一个国家）。 */
     Optional<Nation> findByAlliance(String allianceId);
+
+    /**
+     * Historical nation membership at a lazy-output boundary. Current membership is the indexed fast path;
+     * implementations must also read retained closed alliance-membership intervals.
+     */
+    default Optional<Nation> nationAtAlliance(String allianceId,long at,boolean beforeBoundary) {
+        if(allianceId==null || allianceId.isBlank() || at<0)return Optional.empty();
+        var matches=allianceNationEpochs(allianceId).stream().filter(epoch->epoch.contains(at,beforeBoundary)).toList();
+        if(matches.size()>1)throw new IllegalStateException("联盟同一时刻命中多个国家成员时段 allianceId="+allianceId+" at="+at);
+        if(matches.isEmpty())return Optional.empty();
+        return findById(matches.get(0).nationId());
+    }
+
+    /** Snapshot the complete membership timeline once so later resource segments perform no history reads. */
+    default List<AllianceNationEpoch> allianceNationEpochs(String allianceId) {
+        if(allianceId==null || allianceId.isBlank())return List.of();
+        return membershipEpochs(allianceId,all());
+    }
+
+    static List<AllianceNationEpoch> membershipEpochs(String allianceId,Collection<Nation> nations) {
+        if(allianceId==null || allianceId.isBlank() || nations==null || nations.isEmpty())return List.of();
+        var epochs=nations.stream().flatMap(nation->nation.allianceMembershipPeriods(allianceId).stream()
+                .map(period->new AllianceNationEpoch(nation.id(),period.fromAt(),period.untilAt())))
+                .sorted(java.util.Comparator.comparingLong(AllianceNationEpoch::fromAt)
+                        .thenComparing(AllianceNationEpoch::nationId)).toList();
+        long previousUntil=-1;
+        for(var epoch:epochs) {
+            if(epoch.fromAt()<previousUntil)
+                throw new IllegalStateException("同一联盟国家成员时段重叠 allianceId="+allianceId);
+            previousUntil=Math.max(previousUntil,epoch.untilAt());
+        }
+        return epochs;
+    }
+
+    /** Ownership-rate settlement adds these exact join/exit times to its lazy segment boundary set. */
+    default List<Long> allianceMembershipChangeTimes(String allianceId,long afterExclusive,long throughInclusive) {
+        if(allianceId==null || allianceId.isBlank())return List.of();
+        var times=new java.util.TreeSet<Long>();
+        for(var epoch:allianceNationEpochs(allianceId)) {
+            if(epoch.fromAt()>afterExclusive && epoch.fromAt()<=throughInclusive)times.add(epoch.fromAt());
+            if(epoch.untilAt()>afterExclusive && epoch.untilAt()<=throughInclusive && epoch.untilAt()!=Long.MAX_VALUE)
+                times.add(epoch.untilAt());
+        }
+        return List.copyOf(times);
+    }
 
     /**
      * 一批联盟各自所属的国家（allianceId → 国家），口径与逐个 {@link #findByAlliance} 完全一致。

@@ -121,6 +121,38 @@ class NationStoreEquivalenceTest {
     }
 
     @Test
+    @DisplayName("入籍与退国历史在Mongo重建后仍能按时点唯一解析联盟国家")
+    void membershipEpochsSurviveStoreRestartAndCountryTransfer() {
+        for(NationStore store:bothStores()) {
+            String alliance="AL-time-transfer";long joined1=T0+10,exited1=T0+20,joined2=T0+30;
+            Nation first=nation("N-time-1","旧国");assertThat(store.insertIfAbsent(first)).isTrue();
+            first=store.findById(first.id()).orElseThrow();first.admitAlliance(alliance,joined1);store.save(first,first.version());
+            first=store.findById(first.id()).orElseThrow();first.removeAlliance(alliance,false,"K-N-time-1",exited1);
+            store.save(first,first.version());
+            Nation second=nation("N-time-2","新国");assertThat(store.insertIfAbsent(second)).isTrue();
+            second=store.findById(second.id()).orElseThrow();second.admitAlliance(alliance,joined2);store.save(second,second.version());
+            if(store instanceof MongoNationStore)store=newMongoStore();
+            assertThat(store.findByAlliance(alliance)).map(Nation::id).contains("N-time-2");
+
+            assertThat(store.nationAtAlliance(alliance,joined1-1,false)).isEmpty();
+            assertThat(store.nationAtAlliance(alliance,joined1,true)).isEmpty();
+            var atOldJoin=store.nationAtAlliance(alliance,joined1,false);
+            assertThat(atOldJoin.isPresent()).as("backend=%s oldEpochs=%s newEpochs=%s active=%s",store.getClass().getSimpleName(),
+                    store.findById("N-time-1").orElseThrow().formerAllianceMemberships(),
+                    store.findById("N-time-2").orElseThrow().formerAllianceMemberships(),
+                    store.findById("N-time-2").orElseThrow().memberAllianceIds())
+                    .isTrue();
+            assertThat(atOldJoin).map(Nation::id).contains("N-time-1");
+            assertThat(store.nationAtAlliance(alliance,exited1,true)).map(Nation::id).contains("N-time-1");
+            assertThat(store.nationAtAlliance(alliance,exited1,false)).isEmpty();
+            assertThat(store.nationAtAlliance(alliance,joined2,true)).isEmpty();
+            assertThat(store.nationAtAlliance(alliance,joined2,false)).map(Nation::id).contains("N-time-2");
+            assertThat(store.allianceMembershipChangeTimes(alliance,T0,T0+40))
+                    .containsExactly(joined1,exited1,joined2);
+        }
+    }
+
+    @Test
     @DisplayName("版本每次成功写入恰好前进一格，且不动调用方手里的对象")
     void versionAdvancesOncePerSuccessfulWrite() {
         for (NationStore store : bothStores()) {
@@ -369,7 +401,7 @@ class NationStoreEquivalenceTest {
     }
 
     @Test
-    @DisplayName("国家两条索引必须存在：name 唯一是「拦住静默重名」的那一道")
+    @DisplayName("国家唯一名、当前成员与历史成员索引都必须存在")
     void nationHasUniqueNameAndAllianceIndexes() {
         requireMongo();
         List<String> shapes = new ArrayList<>();
@@ -382,6 +414,10 @@ class NationStoreEquivalenceTest {
         });
         assertThat(shapes).as("现有索引：" + shapes)
                 .anySatisfy(shape -> assertThat(shape).contains("memberAllianceIds"));
+        assertThat(shapes).as("国家退盟/重入历史必须可按联盟索引读取：%s",shapes)
+                .anySatisfy(shape->assertThat(shape).contains("memberAllianceHistoryIds"));
+        assertThat(shapes).as("国家退盟/重入历史必须可按联盟索引读取：%s",shapes)
+                .anySatisfy(shape->assertThat(shape).contains("memberAllianceHistoryIds"));
         assertThat(uniques).as("name 索引必须真的是唯一索引：%s", shapes)
                 .anySatisfy(shape -> assertThat(shape).contains("name"));
     }

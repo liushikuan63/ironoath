@@ -212,11 +212,21 @@ public class NationPolicyBonuses {
 
     private Nation lookupNation(String playerId,NationOutputReadScope scope) {
         if(playerId==null || playerId.isBlank())return null;
-        java.util.function.Supplier<Nation> lookup=()->social.allianceOf(playerId)
-                .flatMap(alliance->nations.findByAlliance(alliance.id()))
-                // 仓储返回副本仍带父配置规则；到期投票在activePolicies里惰性结算，必须先换成捕获规则再绑定盟主。
-                .map(nation->capturedNationRules==null?nation:Nation.fromSnapshot(nation.snapshot(),capturedNationRules.rules()))
-                .map(leaders::bind).orElse(null);
+        java.util.function.Supplier<Nation> lookup=()->{
+            String allianceId;
+            if(scope!=null && scope.hasMembershipTimeline())allianceId=scope.knownAllianceId();
+            else {
+                var alliance=social.allianceOf(playerId).orElse(null);
+                allianceId=alliance==null?null:alliance.id();
+                if(scope!=null)scope.rememberAllianceId(playerId,allianceId,nations);
+            }
+            if(allianceId==null)return null;
+            // 仓储返回副本仍带父配置规则；到期投票在activePolicies里惰性结算，必须先换成捕获规则再绑定盟主。
+            var found=nations.findByAlliance(allianceId).orElse(null);
+            if(found==null)return null;
+            var captured=capturedNationRules==null?found:Nation.fromSnapshot(found.snapshot(),capturedNationRules.rules());
+            return leaders.bind(captured);
+        };
         return scope==null?lookup.get():scope.resolve(playerId,lookup);
     }
 }

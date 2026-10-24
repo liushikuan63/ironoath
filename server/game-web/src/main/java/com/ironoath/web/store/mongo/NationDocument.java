@@ -18,6 +18,7 @@ public record NationDocument(
         @Id String nationId,
         String name,
         List<String> memberAllianceIds,
+        List<String> memberAllianceHistoryIds,
         Nation.Snapshot state) {
 
     /** 集合名。集中定义避免各处散落字符串。 */
@@ -25,7 +26,12 @@ public record NationDocument(
 
     static NationDocument fromDomain(Nation nation) {
         Nation.Snapshot state = nation.snapshot();
-        return new NationDocument(state.id(), state.name(),
-                List.copyOf(nation.memberAllianceIds()), state);
+        return new NationDocument(state.id(),state.name(),List.copyOf(nation.memberAllianceIds()),
+                memberAllianceHistoryIds(state),state);
+    }
+
+    static List<String> memberAllianceHistoryIds(Nation.Snapshot state) {
+        return state.formerAllianceMemberships().stream().map(Nation.AllianceMembershipPeriod::allianceId)
+                .distinct().sorted().toList();
     }
 }

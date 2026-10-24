@@ -87,6 +87,43 @@ class NationSystemTest {
     }
 
     @Test
+    @DisplayName("入籍、退国和冷却后重入的资格时点随国家快照往返")
+    void allianceMembershipEligibilityUsesItsHistoricalNationIntervals() {
+        Nation nation=newNation();long joined=2_000L,exited=3_000L,rejoined=exited+DAY+1L;
+        nation.admitAlliance("a2",joined);
+        assertThatThrownBy(()->nation.removeAlliance("a2",false,"king",joined-1))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(nation.hasAlliance("a2")).as("无效旧时刻不能先删成员再失败").isTrue();
+        nation.removeAlliance("a2",false,"king",exited);
+        nation.admitAlliance("a2",rejoined);
+
+        assertThat(nation.allianceMemberAt("a2",joined-1,false)).isFalse();
+        assertThat(nation.allianceMemberAt("a2",joined,true)).isFalse();
+        assertThat(nation.allianceMemberAt("a2",joined,false)).isTrue();
+        assertThat(nation.allianceMemberAt("a2",exited,true)).isTrue();
+        assertThat(nation.allianceMemberAt("a2",exited,false)).isFalse();
+        assertThat(nation.allianceMemberAt("a2",rejoined,true)).isFalse();
+        assertThat(nation.allianceMemberAt("a2",rejoined,false)).isTrue();
+        assertThat(nation.allianceMembershipChangeTimes("a2",1_000L,rejoined+1))
+                .containsExactly(joined,exited,rejoined);
+        assertThat(Nation.fromSnapshot(nation.snapshot(),rules())
+                .allianceMembershipChangeTimes("a2",1_000L,rejoined+1)).containsExactly(joined,exited,rejoined);
+    }
+
+    @Test
+    @DisplayName("解散国家也闭合仍在籍联盟的成员时段")
+    void disbandClosesActiveAllianceMembershipEpochs() {
+        Nation nation=newNation();
+        nation.disband("king",2_000L);
+        assertThat(nation.allianceMemberAt("a1",1_999L,true)).isTrue();
+        assertThat(nation.allianceMemberAt("a1",2_000L,true)).isTrue();
+        assertThat(nation.allianceMemberAt("a1",2_000L,false)).isFalse();
+        assertThat(nation.allianceMembershipChangeTimes("a1",1_000L,2_001L)).containsExactly(2_000L);
+        assertThat(Nation.fromSnapshot(nation.snapshot(),rules()).formerAllianceMemberships())
+                .containsExactly(new Nation.AllianceMembershipPeriod("a1",1_000L,2_000L));
+    }
+
+    @Test
     @DisplayName("admitBlockFor 分开给出三条拒绝理由，而文案与 admitAlliance 抛出的那句同源")
     void admitBlockSeparatesReasonsSoTheWebCanMapCodes() {
         Nation nation = newNation();

@@ -83,6 +83,7 @@ public final class MongoNationStore implements NationStore {
         Update update = new Update()
                 .set("name", next.name())
                 .set("memberAllianceIds", List.copyOf(nation.memberAllianceIds()))
+                .set("memberAllianceHistoryIds",NationDocument.memberAllianceHistoryIds(next))
                 .set("state", next);
         var result = mongo.updateFirst(query, update, NationDocument.class, NationDocument.COLLECTION);
         if (result.getMatchedCount() == 0L) {
@@ -176,6 +177,36 @@ public final class MongoNationStore implements NationStore {
         return Optional.ofNullable(mongo.findOne(
                 Query.query(Criteria.where("memberAllianceIds").is(allianceId)),
                 NationDocument.class, NationDocument.COLLECTION)).map(this::toDomain);
+    }
+
+    @Override
+    public Optional<Nation> nationAtAlliance(String allianceId,long at,boolean beforeBoundary) {
+        if(allianceId==null || allianceId.isBlank() || at<0)return Optional.empty();
+        var matches=allianceNationEpochs(allianceId).stream().filter(epoch->epoch.contains(at,beforeBoundary)).toList();
+        if(matches.size()>1)throw new IllegalStateException("联盟同一时刻命中多个Mongo国家成员时段 allianceId="+allianceId+" at="+at);
+        return matches.isEmpty()?Optional.empty():findById(matches.get(0).nationId());
+    }
+
+    @Override
+    public List<NationStore.AllianceNationEpoch> allianceNationEpochs(String allianceId) {
+        if(allianceId==null || allianceId.isBlank())return List.of();
+        var either=new Criteria().orOperator(Criteria.where("memberAllianceIds").is(allianceId),
+                Criteria.where("memberAllianceHistoryIds").is(allianceId));
+        List<Nation> candidates=mongo.find(Query.query(either),NationDocument.class,NationDocument.COLLECTION)
+                .stream().map(this::toDomain).toList();
+        return NationStore.membershipEpochs(allianceId,candidates);
+    }
+
+    @Override
+    public List<Long> allianceMembershipChangeTimes(String allianceId,long afterExclusive,long throughInclusive) {
+        if(allianceId==null || allianceId.isBlank())return List.of();
+        var times=new java.util.TreeSet<Long>();
+        for(var epoch:allianceNationEpochs(allianceId)) {
+            if(epoch.fromAt()>afterExclusive && epoch.fromAt()<=throughInclusive)times.add(epoch.fromAt());
+            if(epoch.untilAt()>afterExclusive && epoch.untilAt()<=throughInclusive && epoch.untilAt()!=Long.MAX_VALUE)
+                times.add(epoch.untilAt());
+        }
+        return List.copyOf(times);
     }
 
     /**

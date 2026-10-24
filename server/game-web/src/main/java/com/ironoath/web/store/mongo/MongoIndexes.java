@@ -111,6 +111,9 @@ public final class MongoIndexes {
         String byMemberAlliance = nationIndexes.ensureIndex(new Index()
                 .on("memberAllianceIds", Sort.Direction.ASC)
                 .named("idx_member_alliance_ids"));
+        String byMemberAllianceHistory = nationIndexes.ensureIndex(new Index()
+                .on("memberAllianceHistoryIds", Sort.Direction.ASC)
+                .named("idx_nation_member_alliance_history"));
         // 国战战事：findLatest 是「按 startedAt 降序取第一条」，这一条索引给那个排序一个确定来源。
         // 与 nation 那两条同理，建它不是为了快（一场仗一份文档），而是为了让两套实现排序读到同一批：
         // 内存版按 startedAt 取最大、Mongo 按这一列降序取首条，缺索引时 Mongo 仍给同一条，
