@@ -8203,3 +8203,6 @@ TEST_EXIT=0
 
 
 | #2395 NPC pending COMBAT不解引用玩家守方 | 本格原子本地提交，未推送 | 有效RED2/1/0/0，NPC精确空指针且玩家对照通过；只对真实玩家侧追加Rally锁，NPC不造锁。修后双分支准确锁集/原pending槽/不读live守方与明确unsupported屏障，相关九类92/0/0/0、check51/harness52/client1415/tools73全过，独立只读审查无Critical/Important/Minor | D:/tmp/ironoath-2395-npc-pending-red.log、npc-pending-related-green.log、check.log、review.patch、receipt.json | 只修锁预检，COMBAT恢复owner/效果仍未做。本格未重复全量build，最近全量为5f1c6719主3425+balance7/client1415；不冒充当前新全量结果。原Goal/全国收益/B19/数值坐标/真实运行仍开放；地形待选，不推/原库不写/5000不跑。|
+
+
+| #2395 当前提交全量构建读数更新 | 当前验证本格记录，未推送 | HEAD 35369081 当前现跑 build.sh EXIT0；主服务端3426/0/0/0、balance-sim7/0/0/0、客户端1415/0/0；静态门51、harness52、工具73通过。相较本格提交后先前只跑92类，本格此更新补足当前整仓全量证据，不虚报原提交时结果 | D:/tmp/ironoath-b13-current-full-build-20261024.log、current-full-build-20261024.json；Mongo只读列表回执：原生库仍在、随机ironoath_contract库0个 | build不是完整B13验收：没有真实StrategicCombat生产publisher调用、攻占恢复链/War成员实际引擎贡献/全国要塞收益/B19/真实玩家闭环；玩家库未写，5000未跑，无推送。|
