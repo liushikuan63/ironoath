@@ -95,6 +95,8 @@ public class WorldAppService {
      */
     private final com.ironoath.web.ws.PushGateway pushGateway;
     private final TargetOccupationStore occupations;
+    private final TargetOperationStore targetOperations;
+    private record OccupationView(Map<String,TargetOccupationStore.Snapshot> owners,Map<String,Long> operationVersions) {}
 
     public WorldAppService(ConfigRegistry configs, WorldRepository world,
                            PlayerRepository players, TimeService timeService,
@@ -111,6 +113,7 @@ public class WorldAppService {
         this.botSpawn = botSpawn;
         this.pushGateway = pushGateway;
         this.occupations = occupations;
+        this.targetOperations=targetOperations;
         var initialTargets=WorldTargets.from(configs);
         validateOccupationCatalog(initialTargets,occupations.findAll(initialTargets.targets().size()+1));
         validateOperationCatalog(initialTargets,targetOperations);
@@ -305,7 +308,7 @@ public class WorldAppService {
         java.util.List<WorldEntity> out = new java.util.ArrayList<>();
         Map<Coord, String> cityIndex = cityIndex();
         var targets = WorldTargets.from(configs);
-        var owners = occupationSnapshot(targets);
+        var owners = occupationSnapshot(targets).owners();
         for (String key : keys) {
             if (fog.chunks().contains(key)) {
                 out.addAll(entitiesOf(key, rules, cityIndex,targets,owners));
@@ -417,7 +420,7 @@ public class WorldAppService {
         // 发布坐标/名称或由坐标解析的战略地形变化时 world_target.version 必须递增，回滚须刷新客户端地图缓存。
         long targetLayerVersion = configs.rawTable("world_target").version();
         var targets = WorldTargets.from(configs);
-        var owners = occupationSnapshot(targets);
+        var ownership=occupationSnapshot(targets);var owners=ownership.owners();
 
         for (String key : wanted) {
             long serverVersion = Math.addExact(world.chunkVersion(key), targetLayerVersion);
@@ -426,6 +429,8 @@ public class WorldAppService {
                     serverVersion=Math.addExact(serverVersion,owner.version());
                 }
             }
+            for(var target:targets.targets())if(target.coord().chunkKey(rules.chunkSize()).equals(key))
+                serverVersion=Math.addExact(serverVersion,ownership.operationVersions().getOrDefault(target.definition().id(),0L));
             boolean isExplored = fog.chunks().contains(key);
             if (isExplored) {
                 explored.add(key);
@@ -668,10 +673,45 @@ public class WorldAppService {
     }
 
     /** 一次视野用同一份版本/归属快照，避免版本已变而下发旧拥有者。 */
-    private Map<String,TargetOccupationStore.Snapshot> occupationSnapshot(WorldTargets targets) {
-        var owners=occupations.findByTargetIds(targets.targets().stream().map(t->t.definition().id()).toList());
-        validateOccupationCatalog(targets,owners);
-        return owners;
+    private OccupationView occupationSnapshot(WorldTargets targets) {
+        var targetIds=targets.targets().stream().map(t->t.definition().id()).toList();
+        for(int attempt=0;attempt<2;attempt++) {
+            // Recovery writes owner/neutral facts before the operation-complete CAS. Read operation state on both
+            // sides of the occupation read so one viewport never combines an old owner with a completed receipt.
+            var beforeOperations=operationSnapshot(targets);
+            var owners=new LinkedHashMap<>(occupations.findByTargetIds(targetIds));
+            validateOccupationCatalog(targets,owners);
+            var afterOperations=operationSnapshot(targets);
+            if(!beforeOperations.equals(afterOperations))continue;
+            var operationVersions=new LinkedHashMap<String,Long>();
+            for(var entry:afterOperations.entrySet()) {
+                String id=entry.getKey();var slot=entry.getValue();operationVersions.put(id,slot.version());
+                if(slot.completed())continue;
+                TargetOccupationStore.Snapshot original=slot.kind()==TargetOperationStore.Kind.WITHDRAWAL
+                        ?slot.plan().before():slot.combatPlan().battle().target().defender().occupation();
+                if(original==null)owners.remove(id);else owners.put(id,original);
+            }
+            validateOccupationCatalog(targets,owners);
+            return new OccupationView(Map.copyOf(owners),Map.copyOf(operationVersions));
+        }
+        throw new IllegalStateException("地图目标归属与COMBAT操作跨存储快照持续变化，请重读后重试");
+    }
+
+    private Map<String,TargetOperationStore.Snapshot> operationSnapshot(WorldTargets targets) {
+        var snapshots=new LinkedHashMap<String,TargetOperationStore.Snapshot>();
+        var ids=targetOperations.findAllTargetIds(targets.targets().size()+1);
+        var batch=targetOperations.findByTargetIds(ids);
+        for(String id:ids) {
+            var slot=batch.get(id);
+            if(slot==null)throw new IllegalStateException("目标操作目录快照缺档");
+            if(!id.equals(slot.targetId()))throw new IllegalStateException("目标操作主键与快照目标不一致");
+            var anchor=slot.anchor();var configured=targets.at(Coord.of(anchor.x(),anchor.y()));
+            if(configured==null || !configured.definition().id().equals(id)
+                    || !configured.definition().kind().name().equals(anchor.kind().name()))
+                throw new IllegalStateException("目标操作视图锚点与配置目录不一致");
+            snapshots.put(id,slot);
+        }
+        return Map.copyOf(snapshots);
     }
 
     private static void validateOccupationCatalog(WorldTargets targets,

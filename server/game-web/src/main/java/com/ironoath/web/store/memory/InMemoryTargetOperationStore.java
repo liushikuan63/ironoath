@@ -3,6 +3,8 @@ package com.ironoath.web.store.memory;
 import com.ironoath.web.world.TargetOperationStore;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -10,6 +12,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class InMemoryTargetOperationStore implements TargetOperationStore {
     private final ConcurrentHashMap<String,Snapshot> states=new ConcurrentHashMap<>();
     @Override public Optional<Snapshot> findByTargetId(String id){return Optional.ofNullable(states.get(id));}
+    @Override public Map<String,Snapshot> findByTargetIds(Collection<String> ids){
+        if(ids==null || ids.isEmpty())return Map.of();var out=new LinkedHashMap<String,Snapshot>();
+        ids.stream().filter(java.util.Objects::nonNull).distinct().sorted().forEach(id->{var state=states.get(id);if(state!=null)out.put(id,state);});
+        return Map.copyOf(out);
+    }
     @Override public Optional<Snapshot> findByOperationId(String op){
         if(op==null || op.isBlank())return Optional.empty();
         return states.values().stream().filter(s->s.operationId().equals(op)).findFirst();

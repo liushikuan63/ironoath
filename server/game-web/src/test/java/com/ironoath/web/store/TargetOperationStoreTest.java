@@ -58,6 +58,8 @@ class TargetOperationStoreTest {
         assertThat(store.compareAndSet(next,2)).isTrue();assertThat(store.compareAndSet(done,1)).isFalse();
         if(b==Backend.MONGO)store=new MongoTargetOperationStore(db.template());
         assertThat(store.findByTargetId("gate_north")).contains(next);
+        assertThat(store.findByTargetIds(List.of("gate_north","gate_south")))
+                .containsEntry("gate_north",next).doesNotContainKey("gate_south");
         assertThat(store.findByOperationId(next.plan().operationId())).contains(next);
         assertThat(store.findByOperationId(first.operationId())).isEmpty();
         assertThat(store.findAllTargetIds(2)).containsExactly("gate_north");
@@ -96,5 +98,6 @@ class TargetOperationStoreTest {
         db.template().updateFirst(new org.springframework.data.mongodb.core.query.Query(),new org.springframework.data.mongodb.core.query.Update().unset("state.plan"),"world_target_operation");
         assertThat(store.pendingTargetIds(List.of("gate_north","gate_south"))).containsExactly("gate_north");
         assertThatThrownBy(()->store.findByTargetId("gate_north")).isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(()->store.findByTargetIds(List.of("gate_north"))).isInstanceOf(RuntimeException.class);
     }
 }

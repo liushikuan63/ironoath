@@ -11,6 +11,8 @@ import org.springframework.data.domain.Sort;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /** 单文档版本CAS，不建默认槽、不清集合；未知写入只由完整独立回执确认。 */
 public final class MongoTargetOperationStore implements TargetOperationStore {
@@ -24,6 +26,14 @@ public final class MongoTargetOperationStore implements TargetOperationStore {
     }
     @Override public Optional<Snapshot> findByTargetId(String id){
         return read(mongo.findById(id,TargetOperationDocument.class,TargetOperationDocument.COLLECTION));
+    }
+    @Override public Map<String,Snapshot> findByTargetIds(Collection<String> ids){
+        if(ids==null || ids.isEmpty())return Map.of();var query=Query.query(Criteria.where("_id").in(ids)).with(Sort.by("_id"));
+        var out=new LinkedHashMap<String,Snapshot>();
+        for(var document:mongo.find(query,TargetOperationDocument.class,TargetOperationDocument.COLLECTION)) {
+            var state=read(document).orElseThrow();out.put(document.targetId(),state);
+        }
+        return Map.copyOf(out);
     }
     @Override public Optional<Snapshot> findByOperationId(String op){
         if(op==null || op.isBlank())return Optional.empty();

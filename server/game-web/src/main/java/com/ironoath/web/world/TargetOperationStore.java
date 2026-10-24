@@ -3,6 +3,7 @@ package com.ironoath.web.world;
 import com.ironoath.core.march.March;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -80,6 +81,8 @@ public interface TargetOperationStore {
     private static March.Snapshot freeze(March.Snapshot source){return March.fromSnapshot(source).snapshot();}
 
     Optional<Snapshot> findByTargetId(String targetId);
+    /** A bounded catalog batch, so viewport recovery projection does not fan out one read per strategic target. */
+    Map<String,Snapshot> findByTargetIds(Collection<String> targetIds);
     /** 仅查询仍保留的当前槽；不是全历史RPC响应缓存。 */
     Optional<Snapshot> findByOperationId(String operationId);
     /** 只读候选ID，不解码计划；坏目标可逐项隔离，不挡住其他固定目标。 */

@@ -195,7 +195,8 @@ public final class StrategicGarrisonWithdrawal {
         if(slot.completed())return;
         if(slot.kind()==TargetOperationStore.Kind.COMBAT) {
             if(combatRecovery==null)throw state("战略战斗操作尚未确认恢复，不能按撤防或归队推进");
-            combatRecovery.recoverHospitalReceipts(slot);
+            var hospital=combatRecovery.recoverHospitalReceipts(slot);
+            combatRecovery.recoverTargetState(slot,hospital);
             return;
         }
         var plan=withdrawal(slot);var target=requireTarget(slot.targetId());
