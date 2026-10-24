@@ -299,8 +299,8 @@ class StrategicCombatRecoveryMongoTest {
         assertThat(wars.reserveBattle(battle.target().targetId(),1,plan.operationId(),battle.happenedAt(),members)).isPresent();
 
         var armies=new MongoArmyStore(db.template());
-        for(var side:List.of(battle.attacker(),battle.defender()))for(String player:side.currentMembers().keySet()) {
-            var army=new ArmyState();army.add("unit_infantry_t4",100);assertThat(armies.insertIfAbsent(player,army)).isTrue();
+        for(var side:List.of(battle.attacker(),battle.defender()))for(var member:side.currentMembers().entrySet()) {
+            var army=new ArmyState();member.getValue().forEach(army::add);assertThat(armies.insertIfAbsent(member.getKey(),army)).isTrue();
         }
         var marches=new MongoMarchStore(db.template(),32);var originalVersions=new java.util.LinkedHashMap<String,Long>();
         var originalMarches=new java.util.LinkedHashMap<String,March.Snapshot>();
@@ -332,6 +332,80 @@ class StrategicCombatRecoveryMongoTest {
             assertThat(marchRead.findById(id).orElseThrow().snapshot()).isEqualTo(snapshot);
             assertThat(marchRead.versionOf(id)).isEqualTo(originalVersions.get(id));
         });
+    }
+
+    @Test void npcDefenseVictoryPersistsOnlyEngineSurvivorsWithoutCreatingAnOwner() {
+        var battle=StrategicCombatSlotTest.battle(2380,false,false);
+        assertThat(battle.result().winner()).isEqualTo(com.ironoath.battle.Winner.DEFENDER);
+        assertThat(battle.npcSurvivors()).isNotEmpty();
+        var plan=TargetOperationStore.CombatPlan.create(battle,1);var operations=new MongoTargetOperationStore(db.template());
+        assertThat(operations.compareAndSet(TargetOperationStore.Snapshot.combat(1,false,plan),0)).isTrue();
+        var armies=new MongoArmyStore(db.template());
+        for(String player:battle.attacker().currentMembers().keySet()) {
+            var army=new ArmyState();army.add("unit_infantry_t4",100);assertThat(armies.insertIfAbsent(player,army)).isTrue();
+        }
+        var march=March.fromSnapshot(battle.attacker().march());var marches=new MongoMarchStore(db.template(),32);
+        assertThat(marches.insertIfAbsent(march)).isTrue();
+        while(marches.versionOf(march.id())<battle.attacker().marchVersion())marches.save(march,marches.versionOf(march.id()));
+        var occupations=new MongoTargetOccupationStore(db.template());var neutral=new MongoNeutralTargetGarrisonStore(db.template());
+        var recovery=new StrategicCombatRecovery(new MongoTargetOperationStore(db.template()),new MongoArmyStore(db.template()),
+                new MongoMarchStore(db.template(),32),new MongoTargetOccupationStore(db.template()),
+                new MongoNeutralTargetGarrisonStore(db.template()),mock(com.ironoath.web.nation.NationStore.class));
+        var pending=new MongoTargetOperationStore(db.template()).findByTargetId(battle.target().targetId()).orElseThrow();
+        var hospital=recovery.recoverHospitalReceipts(pending);
+        assertThat(hospital.result().winner()).isEqualTo(com.ironoath.battle.Winner.DEFENDER);
+        recovery.recoverTargetState(pending,hospital);
+
+        var neutralRead=new MongoNeutralTargetGarrisonStore(db.template()).findByTargetIds(List.of(battle.target().targetId()));
+        assertThat(neutralRead).containsKey(battle.target().targetId());
+        var persistedNeutral=neutralRead.get(battle.target().targetId());
+        assertThat(persistedNeutral.phase()).isEqualTo(com.ironoath.web.world.NeutralTargetGarrisonStore.Phase.NEUTRAL);
+        assertThat(persistedNeutral.initialTroops()).isEqualTo(battle.target().defender().troops());
+        assertThat(persistedNeutral.troops()).isEqualTo(battle.npcSurvivors());
+        assertThat(new MongoTargetOccupationStore(db.template()).findByTargetIds(List.of(battle.target().targetId())))
+                .doesNotContainKey(battle.target().targetId());
+        assertThat(new MongoTargetOperationStore(db.template()).findByTargetId(battle.target().targetId()))
+                .contains(TargetOperationStore.Snapshot.combat(1,false,plan));
+    }
+
+    @Test void playerAttackerVictoryPersistsOwnershipAgainstTheFrozenPlayerOwner() {
+        var battle=StrategicCombatSlotTest.battle(2384,true,false);
+        assertThat(battle.result().winner()).isEqualTo(com.ironoath.battle.Winner.ATTACKER);
+        var plan=TargetOperationStore.CombatPlan.create(battle,1);var operations=new MongoTargetOperationStore(db.template());
+        assertThat(operations.compareAndSet(TargetOperationStore.Snapshot.combat(1,false,plan),0)).isTrue();
+        var armies=new MongoArmyStore(db.template());
+        for(var side:List.of(battle.attacker(),battle.defender()))for(var member:side.currentMembers().entrySet()) {
+            var army=new ArmyState();member.getValue().forEach(army::add);
+            assertThat(armies.insertIfAbsent(member.getKey(),army)).isTrue();
+        }
+        var marches=new MongoMarchStore(db.template(),32);
+        for(var side:List.of(battle.attacker(),battle.defender())) {
+            var march=March.fromSnapshot(side.march());assertThat(marches.insertIfAbsent(march)).isTrue();
+            while(marches.versionOf(march.id())<side.marchVersion())marches.save(march,marches.versionOf(march.id()));
+        }
+        var configs=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
+        var nationRules=new NationRulesAssembler(configs);var nations=new MongoNationStore(db.template(),nationRules);
+        var attacker=Nation.found(battle.attacker().rally().nationId(),"进攻国",battle.attacker().rally().initiatorId(),
+                "owned-attacker-alliance",0,0,100,nationRules.rules());assertThat(nations.insertIfAbsent(attacker)).isTrue();
+        var originalOwner=battle.target().defender().occupation();var occupations=new MongoTargetOccupationStore(db.template());
+        assertThat(originalOwner).isNotNull();assertThat(occupations.compareAndSet(originalOwner,0)).isTrue();
+        var recovery=new StrategicCombatRecovery(new MongoTargetOperationStore(db.template()),new MongoArmyStore(db.template()),
+                new MongoMarchStore(db.template(),32),new MongoTargetOccupationStore(db.template()),
+                new MongoNeutralTargetGarrisonStore(db.template()),new MongoNationStore(db.template(),nationRules));
+        var pending=new MongoTargetOperationStore(db.template()).findByTargetId(battle.target().targetId()).orElseThrow();
+        var hospital=recovery.recoverHospitalReceipts(pending);
+        assertThat(hospital.result().winner()).isEqualTo(com.ironoath.battle.Winner.ATTACKER);
+        recovery.recoverTargetState(pending,hospital);
+
+        var ownerRead=new MongoTargetOccupationStore(db.template()).findByTargetIds(List.of(battle.target().targetId()));
+        assertThat(ownerRead).containsKey(battle.target().targetId());
+        var captured=ownerRead.get(battle.target().targetId());
+        assertThat(captured.nationId()).isEqualTo(attacker.id());
+        assertThat(captured.garrison()).isEqualTo(com.ironoath.web.world.TargetOccupationStore.Garrison
+                .stationed(battle.attacker().march().id()));
+        assertThat(captured.version()).isEqualTo(originalOwner.version()+1);
+        assertThat(new MongoTargetOperationStore(db.template()).findByTargetId(battle.target().targetId()))
+                .contains(TargetOperationStore.Snapshot.combat(1,false,plan));
     }
 
     private static StrategicBattleHospitalSettlement recoveryFromFreshStores(TargetOperationStore.CombatPlan plan) {
