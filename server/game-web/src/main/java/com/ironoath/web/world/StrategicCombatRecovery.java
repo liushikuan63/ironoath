@@ -13,6 +13,7 @@ import com.ironoath.web.battle.StrategicBattleMarchOutcome;
 import com.ironoath.web.battle.StrategicWoundSettlement;
 import com.ironoath.web.battle.BattleReport;
 import com.ironoath.web.battle.BattleReportService;
+import com.ironoath.web.rank.RankBoardService;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -31,6 +32,7 @@ public final class StrategicCombatRecovery {
     private final NationStore nations;
     private final MarchDueQueue due;
     private final BattleReportService reports;
+    private final RankBoardService ranks;
 
     public StrategicCombatRecovery(TargetOperationStore operations,ArmyRepository armies,MarchRepository marches) {
         this(operations,armies,marches,null,null,null,null);
@@ -52,10 +54,17 @@ public final class StrategicCombatRecovery {
     public StrategicCombatRecovery(TargetOperationStore operations,ArmyRepository armies,MarchRepository marches,
             TargetOccupationStore occupations,NeutralTargetGarrisonStore neutralGarrisons,NationStore nations,
             MarchDueQueue due,BattleReportService reports) {
+        this(operations,armies,marches,occupations,neutralGarrisons,nations,due,reports,null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public StrategicCombatRecovery(TargetOperationStore operations,ArmyRepository armies,MarchRepository marches,
+            TargetOccupationStore occupations,NeutralTargetGarrisonStore neutralGarrisons,NationStore nations,
+            MarchDueQueue due,BattleReportService reports,RankBoardService ranks) {
         this.operations=Objects.requireNonNull(operations);this.armies=Objects.requireNonNull(armies);
         this.marches=Objects.requireNonNull(marches);
         this.occupations=occupations;this.neutralGarrisons=neutralGarrisons;this.nations=nations;
-        this.due=due;this.reports=reports;
+        this.due=due;this.reports=reports;this.ranks=ranks;
     }
 
     /**
@@ -154,6 +163,17 @@ public final class StrategicCombatRecovery {
                 || !Objects.equals(hospital.plan().reportPlan(),reportPlan))
             throw new IllegalArgumentException("医院结果不属于当前pending COMBAT报告计划");
         var saved=reports.recordStrategic(reportPlan,hospital.result());
+        requireCurrentPending(slot);
+        return saved;
+    }
+
+    /** Apply the original-season member KILL deltas with one row-scoped replay receipt per human member. */
+    public List<com.ironoath.web.season.SeasonBoardStore.ScopedIncrement> recoverSeasonKills(TargetOperationStore.Snapshot slot) {
+        requireCurrentPending(slot);
+        if(ranks==null)throw new IllegalStateException("战略KILL恢复榜仓储未装配，保留COMBAT pending");
+        var plan=slot.combatPlan().killPlan();
+        if(plan==null)throw new IllegalStateException("原COMBAT缺赛季KILL成员回执计划");
+        var saved=ranks.recordStrategicKills(plan);
         requireCurrentPending(slot);
         return saved;
     }

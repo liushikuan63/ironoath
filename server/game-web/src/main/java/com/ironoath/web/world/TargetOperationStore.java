@@ -39,13 +39,18 @@ public interface TargetOperationStore {
         }
     }
     record CombatPlan(String operationId,long sequence,com.ironoath.web.battle.CapturedStrategicBattle battle,
-                      MarchRecoveryPlan marchRecovery,com.ironoath.web.battle.StrategicBattleReportPlan reportPlan) {
+                      MarchRecoveryPlan marchRecovery,com.ironoath.web.battle.StrategicBattleReportPlan reportPlan,
+                      com.ironoath.web.battle.StrategicBattleKillPlan killPlan) {
         public CombatPlan(String operationId,long sequence,com.ironoath.web.battle.CapturedStrategicBattle battle) {
-            this(operationId,sequence,battle,null,null);
+            this(operationId,sequence,battle,null,null,null);
         }
         public CombatPlan(String operationId,long sequence,com.ironoath.web.battle.CapturedStrategicBattle battle,
                 MarchRecoveryPlan marchRecovery) {
-            this(operationId,sequence,battle,marchRecovery,null);
+            this(operationId,sequence,battle,marchRecovery,null,null);
+        }
+        public CombatPlan(String operationId,long sequence,com.ironoath.web.battle.CapturedStrategicBattle battle,
+                MarchRecoveryPlan marchRecovery,com.ironoath.web.battle.StrategicBattleReportPlan reportPlan) {
+            this(operationId,sequence,battle,marchRecovery,reportPlan,null);
         }
         public CombatPlan {
             if(sequence<1 || battle==null || !Objects.equals(operationId,"battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion()))
@@ -84,15 +89,39 @@ public interface TargetOperationStore {
                         throw new IllegalArgumentException("COMBAT战报内容身份/英雄列表与原集结不一致");
                 }
             }
+            if(killPlan!=null) {
+                if(!killPlan.operationId().equals(operationId) || killPlan.sequence()!=sequence
+                        || !killPlan.sourceId().equals(battle.target().targetId()))
+                    throw new IllegalArgumentException("COMBAT季榜KILL计划与原目标操作/代次不一致");
+                var sourceKills=new java.util.LinkedHashMap<String,Long>();
+                sourceKills.putAll(battle.result().atkKillsByMember());sourceKills.putAll(battle.result().defKillsByMember());
+                if(killPlan.active()) {
+                    var originalPlayers=new java.util.HashSet<String>(battle.attacker().currentMembers().keySet());
+                    if(battle.defender()!=null)originalPlayers.addAll(battle.defender().currentMembers().keySet());
+                    var plannedPlayers=killPlan.members().stream()
+                            .map(com.ironoath.web.battle.StrategicBattleKillPlan.Member::playerId)
+                            .collect(java.util.stream.Collectors.toSet());
+                    if(!plannedPlayers.equals(originalPlayers))
+                        throw new IllegalArgumentException("活跃赛季COMBAT KILL计划未覆盖全部原成员身份");
+                }
+                for(var member:killPlan.members()) {
+                    var expected=sourceKills.get(member.playerId());
+                    if(expected==null || expected.longValue()!=member.kills())
+                        throw new IllegalArgumentException("COMBAT季榜KILL贡献与引擎成员击杀来源不一致");
+                }
+            }
         }
         public static CombatPlan create(com.ironoath.web.battle.CapturedStrategicBattle battle,long sequence) {
             return new CombatPlan("battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion(),sequence,battle);
         }
         public CombatPlan withMarchRecovery(MarchRecoveryPlan recovery) {
-            return new CombatPlan(operationId,sequence,battle,recovery,reportPlan);
+            return new CombatPlan(operationId,sequence,battle,recovery,reportPlan,killPlan);
         }
         public CombatPlan withReportPlan(com.ironoath.web.battle.StrategicBattleReportPlan reports) {
-            return new CombatPlan(operationId,sequence,battle,marchRecovery,reports);
+            return new CombatPlan(operationId,sequence,battle,marchRecovery,reports,killPlan);
+        }
+        public CombatPlan withKillPlan(com.ironoath.web.battle.StrategicBattleKillPlan kills) {
+            return new CombatPlan(operationId,sequence,battle,marchRecovery,reportPlan,kills);
         }
     }
     record WithdrawalPlan(String operationId,long sequence,long happenedAt,
@@ -183,7 +212,8 @@ public interface TargetOperationStore {
             var before=current.combatPlan();var after=next.combatPlan();
             if(before==null || after==null || !Objects.equals(before.operationId(),after.operationId())
                     || before.sequence()!=after.sequence() || !Objects.equals(before.battle(),after.battle())
-                    || !Objects.equals(before.reportPlan(),after.reportPlan()))return false;
+                    || !Objects.equals(before.reportPlan(),after.reportPlan())
+                    || !Objects.equals(before.killPlan(),after.killPlan()))return false;
             if(current.completed())return false;
             if(next.completed())return Objects.equals(before,after);
             return before.marchRecovery()==null && after.marchRecovery()!=null;

@@ -4,6 +4,8 @@ import com.ironoath.core.army.ArmyRepository;
 import com.ironoath.core.march.March;
 import com.ironoath.core.march.MarchDueQueue;
 import com.ironoath.core.social.Rally;
+import com.ironoath.core.player.PlayerBrief;
+import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.web.battle.CapturedStrategicBattle;
 import com.ironoath.web.battle.StrategicRallyCasualties;
@@ -11,6 +13,11 @@ import com.ironoath.web.lock.InJvmPlayerLock;
 import com.ironoath.web.nation.NationOperationLock;
 import com.ironoath.web.nation.WarRulesAssembler;
 import com.ironoath.web.nation.WarStore;
+import com.ironoath.web.nation.NationStore;
+import com.ironoath.web.nation.NationMembership;
+import com.ironoath.web.bot.BotRegistry;
+import com.ironoath.web.rank.RankBoardService;
+import com.ironoath.web.season.SeasonRulesAssembler;
 import com.ironoath.core.nation.WarScoreBoard;
 import com.ironoath.web.service.SocialAppService;
 import com.ironoath.web.social.SocialStore;
@@ -45,6 +52,7 @@ class StrategicCombatPublisherTest {
         final StrategicTargetDefender defenders;
         final WarStore wars;
         final TargetOperationStore operations;
+        final RankBoardService ranks;
         final StrategicCombatPublisher publisher;
         Fixture(boolean mongo,boolean player) {
             battle=StrategicCombatSlotTest.battle(2394,player,true,false);
@@ -67,10 +75,24 @@ class StrategicCombatPublisherTest {
                 assertThat(owners.compareAndSet(battle.target().defender().occupation(),0)).isTrue();
             defenders=new StrategicTargetDefender(cfg,owners,marches,store,new InMemoryNeutralTargetGarrisonStore());
             targetLocks=new StrategicGarrisonWithdrawal(cfg,operations,owners,marches,mock(MarchDueQueue.class),defenders,social,lock);
-            publisher=new StrategicCombatPublisher(cfg,operations,marches,defenders,store,social,targetLocks,wars);
+            var players=mock(PlayerRepository.class);var bots=mock(BotRegistry.class);
+            when(bots.humanOnly(anyString(),anyString())).thenAnswer(call->call.getArgument(0));
+            when(players.findBriefs(anyCollection())).thenAnswer(call->{
+                var out=new LinkedHashMap<String,PlayerBrief>();
+                for(String id:(Collection<String>)call.getArgument(0))out.put(id,new PlayerBrief(id,"rank:"+id,1,0,0));
+                return out;
+            });
+            var rankRules=mock(SeasonRulesAssembler.class);
+            when(rankRules.timelineRules(org.mockito.ArgumentMatchers.anyLong())).thenReturn(new com.ironoath.core.season.SeasonTimeline.Rules(
+                    List.of(new com.ironoath.core.season.SeasonTimeline.Stage(1,
+                            com.ironoath.core.season.SeasonTimeline.Phase.EXPAND,0,30)),"season-test"));
+            var seasonBoards=new InMemorySeasonBoardStore();
+            ranks=new RankBoardService(seasonBoards,store,mock(NationStore.class),new NationMembership(store,mock(NationStore.class)),
+                    players,bots,cfg,rankRules,mock(com.ironoath.common.time.TimeService.class));
+            publisher=new StrategicCombatPublisher(cfg,operations,marches,defenders,store,social,targetLocks,wars,ranks);
         }
         StrategicCombatPublisher publisherWith(TargetOperationStore port) {
-            return new StrategicCombatPublisher(cfg,port,marches,defenders,store,social,targetLocks,wars);
+            return new StrategicCombatPublisher(cfg,port,marches,defenders,store,social,targetLocks,wars,ranks);
         }
         void install(StrategicRallyCasualties side) {
             var identity=side.rally();
@@ -96,6 +118,7 @@ class StrategicCombatPublisherTest {
         assertThat(slot.completed()).isFalse();assertThat(slot.sequence()).isEqualTo(1);
         assertThat(slot.combatPlan().battle()).isEqualTo(f.battle);
         assertThat(slot.combatPlan().reportPlan()).isNotNull();
+        assertThat(slot.combatPlan().killPlan().seasonId()).isEqualTo("season-test");
         assertThat(f.operations.findByTargetId(slot.targetId())).contains(slot);
         assertThat(f.wars.pendingBattleReservation(100,slot.operationId())).isPresent()
                 .get().extracting(com.ironoath.core.nation.WarScoreBoard.BattleReservation::sourceId).isEqualTo(slot.targetId());
@@ -123,6 +146,20 @@ class StrategicCombatPublisherTest {
         assertThat(reports.recipients()).allSatisfy(recipient->{
             assertThat(recipient.attackerName()).isEqualTo("nick:"+f.battle.attacker().rally().initiatorId());
             assertThat(recipient.defenderName()).isEqualTo("nick:"+f.battle.defender().rally().initiatorId());
+        });
+        var kills=slot.combatPlan().killPlan();
+        assertThat(kills).as("COMBAT publication must persist original-season, per-member KILL identities and engine deltas")
+                .isNotNull();
+        assertThat(kills.sourceId()).isEqualTo(slot.targetId());assertThat(kills.sequence()).isEqualTo(slot.sequence());
+        var expectedKillOwners=new java.util.TreeSet<>(f.battle.attacker().currentMembers().keySet());
+        expectedKillOwners.addAll(f.battle.defender().currentMembers().keySet());
+        var engineKills=new java.util.HashMap<String,Long>(f.battle.result().atkKillsByMember());
+        engineKills.putAll(f.battle.result().defKillsByMember());
+        assertThat(kills.members()).extracting(com.ironoath.web.battle.StrategicBattleKillPlan.Member::playerId)
+                .containsExactlyElementsOf(expectedKillOwners);
+        assertThat(kills.members()).allSatisfy(member->{
+            assertThat(member.kills()).isEqualTo(engineKills.get(member.playerId()));
+            assertThat(member.displayName()).isEqualTo("rank:"+member.playerId());
         });
     }
 

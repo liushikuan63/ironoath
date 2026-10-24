@@ -200,6 +200,7 @@ public final class StrategicGarrisonWithdrawal {
             var marchPlan=combatRecovery.freezeMarchOutcomes(slot);
             combatRecovery.recoverMarchOutcomes(marchPlan);
             combatRecovery.recoverReports(marchPlan,hospital);
+            combatRecovery.recoverSeasonKills(marchPlan);
             return;
         }
         var plan=withdrawal(slot);var target=requireTarget(slot.targetId());

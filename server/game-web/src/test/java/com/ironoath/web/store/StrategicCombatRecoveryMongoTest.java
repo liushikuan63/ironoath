@@ -9,6 +9,8 @@ import com.ironoath.web.battle.CapturedStrategicBattle;
 import com.ironoath.web.battle.StrategicRallyCasualties;
 import com.ironoath.web.battle.StrategicBattleHospitalSettlement;
 import com.ironoath.web.battle.StrategicBattleReportPlan;
+import com.ironoath.web.battle.StrategicBattleKillPlan;
+import com.ironoath.web.rank.RankBoardService;
 import com.ironoath.web.nation.WarRulesAssembler;
 import com.ironoath.web.nation.NationRulesAssembler;
 import com.ironoath.web.store.mongo.*;
@@ -59,6 +61,34 @@ class StrategicCombatRecoveryMongoTest {
         for(var report:first)assertThat(readStore.findById(report.reportId())).contains(report);
         assertThat(readStore.reportsOf(battle.attacker().rally().initiatorId())).containsExactly(first.get(0));
         assertThat(readStore.reportsOf(battle.defender().rally().initiatorId())).containsExactly(first.get(1));
+    }
+
+    @Test void strategicEngineKillsUseOriginalSeasonScopedMongoReceipts() {
+        var battle=StrategicCombatSlotTest.battle(2406,true,true);
+        String operationId="battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion();
+        var engineKills=new java.util.TreeMap<String,Long>();
+        engineKills.putAll(battle.result().atkKillsByMember());engineKills.putAll(battle.result().defKillsByMember());
+        var members=engineKills.entrySet().stream().map(entry->new StrategicBattleKillPlan.Member(
+                entry.getKey(),"frozen:"+entry.getKey(),entry.getValue(),true)).toList();
+        var plan=new StrategicBattleKillPlan(1,battle.target().targetId(),1,operationId,"season-test",members);
+        var configs=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
+        java.util.function.Supplier<RankBoardService> service=()->new RankBoardService(new MongoSeasonBoardStore(db.template()),
+                mock(com.ironoath.web.social.SocialStore.class),mock(com.ironoath.web.nation.NationStore.class),
+                mock(com.ironoath.web.nation.NationMembership.class),mock(com.ironoath.core.player.PlayerRepository.class),
+                mock(com.ironoath.web.bot.BotRegistry.class),configs,mock(com.ironoath.web.season.SeasonRulesAssembler.class),
+                mock(com.ironoath.common.time.TimeService.class));
+        var first=service.get().recordStrategicKills(plan);
+        var replay=service.get().recordStrategicKills(plan);
+        assertThat(replay).isEqualTo(first).hasSize(members.size());
+        var board=new MongoSeasonBoardStore(db.template()).board("season-test",com.ironoath.core.season.SeasonSettlement.Board.KILL);
+        var actual=board.stream().collect(java.util.stream.Collectors.toMap(
+                com.ironoath.core.season.SeasonSettlement.Entry::id,com.ironoath.core.season.SeasonSettlement.Entry::score));
+        var expected=engineKills.entrySet().stream().collect(java.util.stream.Collectors.toMap(Map.Entry::getKey,Map.Entry::getValue));
+        assertThat(actual).isEqualTo(expected);
+        for(var member:members)assertThat(new MongoSeasonBoardStore(db.template()).scopedIncrementOf("season-test",
+                com.ironoath.core.season.SeasonSettlement.Board.KILL,member.playerId(),battle.target().targetId()))
+                .contains(new com.ironoath.web.season.SeasonBoardStore.ScopedIncrement(battle.target().targetId(),1,
+                        operationId,member.playerId(),member.displayName(),member.kills()));
     }
 
     @Test void admittedHospitalReceiptsSurviveRecoveryRestartWithoutAdvancingThePendingCombat() {

@@ -29,6 +29,8 @@ import com.ironoath.web.dto.generated.RankType;
 import com.ironoath.web.nation.NationMembership;
 import com.ironoath.web.nation.NationStore;
 import com.ironoath.web.season.SeasonBoardStore;
+import com.ironoath.web.battle.CapturedStrategicBattle;
+import com.ironoath.web.battle.StrategicBattleKillPlan;
 import com.ironoath.web.season.SeasonRulesAssembler;
 import com.ironoath.web.social.SocialStore;
 
@@ -124,6 +126,50 @@ public class RankBoardService {
         }
         boards.accumulate(seasonId, SeasonSettlement.Board.KILL,
                 new SeasonSettlement.Entry(playerId, name == null ? playerId : name, kills), kills);
+    }
+
+    /** Freeze original season, human eligibility, display names and engine member kills before COMBAT publication. */
+    public StrategicBattleKillPlan freezeStrategicKills(CapturedStrategicBattle battle,String operationId,long sequence) {
+        if(battle==null || operationId==null || operationId.isBlank() || sequence<1)
+            throw new IllegalArgumentException("原战略KILL冻结来源/操作/代次缺失");
+        String seasonId=seasonIdOrNull(battle.happenedAt());String sourceId=battle.target().targetId();
+        if(seasonId==null)return new StrategicBattleKillPlan(1,sourceId,sequence,operationId,null,List.of());
+        var contributions=new java.util.TreeMap<String,Long>();
+        battle.attacker().currentMembers().keySet().forEach(id->contributions.put(id,battle.result().atkKillsByMember().get(id)));
+        if(battle.defender()!=null)battle.defender().currentMembers().keySet()
+                .forEach(id->contributions.put(id,battle.result().defKillsByMember().get(id)));
+        if(contributions.values().stream().anyMatch(java.util.Objects::isNull))
+            throw new IllegalStateException("原战斗缺逐成员引擎击杀来源，拒绝冻结KILL");
+        var humans=new java.util.HashSet<String>();
+        contributions.keySet().forEach(id->{if(bots.humanOnly(id,"战略战斗击杀榜")!=null)humans.add(id);});
+        var briefs=humans.isEmpty()?Map.<String,PlayerBrief>of():players.findBriefs(humans);
+        var members=new java.util.ArrayList<StrategicBattleKillPlan.Member>(contributions.size());
+        for(var contribution:contributions.entrySet()) {
+            String id=contribution.getKey();boolean eligible=humans.contains(id);var brief=briefs.get(id);
+            String name=!eligible || brief==null || brief.nickName()==null || brief.nickName().isBlank()
+                    ?id:brief.nickName();
+            members.add(new StrategicBattleKillPlan.Member(id,name,contribution.getValue(),eligible));
+        }
+        return new StrategicBattleKillPlan(1,sourceId,sequence,operationId,seasonId,members);
+    }
+
+    /** Apply the event-scoped KILL increments; each player's score and replay receipt share one persisted row. */
+    public List<SeasonBoardStore.ScopedIncrement> recordStrategicKills(StrategicBattleKillPlan plan) {
+        if(plan==null)throw new IllegalArgumentException("原战略KILL计划缺失");
+        if(!plan.active())return List.of();
+        var saved=new java.util.ArrayList<SeasonBoardStore.ScopedIncrement>(plan.members().size());
+        for(var member:plan.members()) {
+            if(!member.leaderboardEligible())continue;
+            var increment=new SeasonBoardStore.ScopedIncrement(plan.sourceId(),plan.sequence(),plan.operationId(),
+                    member.playerId(),member.displayName(),member.kills());
+            var recorded=boards.recordScopedIncrement(plan.seasonId(),SeasonSettlement.Board.KILL,increment);
+            if(!increment.equals(recorded))throw new IllegalStateException("原战略KILL增量回执载荷不一致");
+            var readback=boards.scopedIncrementOf(plan.seasonId(),SeasonSettlement.Board.KILL,member.playerId(),plan.sourceId())
+                    .orElseThrow(()->new IllegalStateException("原战略KILL增量写后独立回执缺失"));
+            if(!increment.equals(readback))throw new IllegalStateException("原战略KILL增量独立回执与冻结计划不一致");
+            saved.add(readback);
+        }
+        return List.copyOf(saved);
     }
 
     /**
@@ -654,7 +700,11 @@ public class RankBoardService {
     }
 
     private String seasonIdOrNull() {
-        String seasonId = assembler.timelineRules().seasonId();
+        return seasonIdOrNull(time.serverNow());
+    }
+
+    private String seasonIdOrNull(long now) {
+        String seasonId = assembler.timelineRules(now).seasonId();
         return seasonId == null || seasonId.isBlank() ? null : seasonId;
     }
 }

@@ -8,7 +8,10 @@ import com.ironoath.core.lock.PlayerLock;
 import com.ironoath.core.march.March;
 import com.ironoath.core.march.MarchDueQueue;
 import com.ironoath.core.march.MarchRepository;
+import com.ironoath.core.player.PlayerBrief;
+import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.web.lock.InJvmPlayerLock;
+import com.ironoath.web.bot.BotRegistry;
 import com.ironoath.web.service.SocialAppService;
 import com.ironoath.web.service.StrategicTargetMarchAdvancer;
 import com.ironoath.web.store.memory.InMemoryTargetOccupationStore;
@@ -30,6 +33,9 @@ import com.ironoath.web.battle.BattleReportService;
 import com.ironoath.web.rank.RankBoardService;
 import com.ironoath.web.nation.NationMembership;
 import com.ironoath.web.store.memory.InMemoryBattleReportStore;
+import com.ironoath.web.store.memory.InMemorySeasonBoardStore;
+import com.ironoath.web.social.SocialStore;
+import com.ironoath.web.season.SeasonRulesAssembler;
 import com.ironoath.web.world.StrategicGarrisonWithdrawal;
 import com.ironoath.web.world.StrategicCombatRecovery;
 import com.ironoath.web.world.StrategicTargetDefender;
@@ -41,6 +47,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -49,6 +56,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -60,9 +69,12 @@ class StrategicCombatPendingLockRecoveryTest {
         var battle=StrategicCombatSlotTest.battle(2399,true,true);
         assertThat(battle.result().winner()).isEqualTo(com.ironoath.battle.Winner.DRAW);
         var configs=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
+        var rankedOut= battle.defender().rally().initiatorId();var rankFixture=new RankFixture(configs,Set.of(rankedOut));
+        var operationId="battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion();
         var plan=TargetOperationStore.CombatPlan.create(battle,1).withReportPlan(StrategicBattleReportPlan.create(battle,
-                "battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion(),
+                operationId,
                 battle.happenedAt()+configs.longParam("BATTLE_REPORT_TTL_SECONDS")*1000L,"attacker","defender"));
+        plan=plan.withKillPlan(rankFixture.service.freezeStrategicKills(battle,operationId,1));
         var operations=new InMemoryTargetOperationStore();assertThat(operations.compareAndSet(TargetOperationStore.Snapshot.combat(1,false,plan),0)).isTrue();
         var owners=new InMemoryTargetOccupationStore();var originalOwner=battle.target().defender().occupation();
         assertThat(originalOwner).isNotNull();assertThat(owners.compareAndSet(originalOwner,0)).isTrue();
@@ -91,11 +103,11 @@ class StrategicCombatPendingLockRecoveryTest {
         var social=mock(SocialAppService.class);when(social.runRalliesDepartureLocked(anyCollection(),any())).thenAnswer(call->((Supplier<?>)call.getArgument(1)).get());
         var battleReports=new InMemoryBattleReportStore();
         var reportService=new BattleReportService(configs,battleReports,mock(com.ironoath.common.time.TimeService.class),
-                social,mock(RankBoardService.class),wars,mock(NationMembership.class));
+                social,rankFixture.service,wars,mock(NationMembership.class));
         var due=new SortedMarchDueQueue();
         var withdrawal=new StrategicGarrisonWithdrawal(configs,operations,owners,marches,
                 due,defenders,social,new InJvmPlayerLock(),new StrategicCombatRecovery(operations,armies,marches,
-                owners,new InMemoryNeutralTargetGarrisonStore(),nationStore,due,reportService));
+                owners,new InMemoryNeutralTargetGarrisonStore(),nationStore,due,reportService,rankFixture.service));
 
         var advancer=new StrategicTargetMarchAdvancer(configs,marches,defenders,social,withdrawal,operations);
         var attackMarch=March.fromSnapshot(battle.attacker().march());var advanced=new java.util.concurrent.atomic.AtomicInteger();
@@ -113,6 +125,20 @@ class StrategicCombatPendingLockRecoveryTest {
         var defenderReports=battleReports.reportsOf(battle.defender().rally().initiatorId());
         assertThat(defenderReports).hasSize(1);
         assertThat(defenderReports.get(0).result().defKillsByMember()).isEqualTo(battle.result().defKillsByMember());
+        var expectedKills=new LinkedHashMap<String,Long>();
+        expectedKills.putAll(battle.result().atkKillsByMember());expectedKills.putAll(battle.result().defKillsByMember());
+        expectedKills.remove(rankedOut);
+        var initialKillRows=rankFixture.boards.board("season-test",com.ironoath.core.season.SeasonSettlement.Board.KILL);
+        var actualKillScores=initialKillRows.stream().collect(java.util.stream.Collectors.toMap(
+                com.ironoath.core.season.SeasonSettlement.Entry::id,com.ironoath.core.season.SeasonSettlement.Entry::score));
+        assertThat(actualKillScores).isEqualTo(expectedKills);
+        for(var member:plan.killPlan().members()) {
+            var receipt=rankFixture.boards.scopedIncrementOf("season-test",com.ironoath.core.season.SeasonSettlement.Board.KILL,
+                    member.playerId(),plan.killPlan().sourceId());
+            if(member.leaderboardEligible())assertThat(receipt).contains(new com.ironoath.web.season.SeasonBoardStore.ScopedIncrement(
+                    plan.killPlan().sourceId(),plan.killPlan().sequence(),plan.operationId(),member.playerId(),member.displayName(),member.kills()));
+            else assertThat(receipt).isEmpty();
+        }
         var ownerAfter=owners.findByTargetIds(List.of(battle.target().targetId())).get(battle.target().targetId());
         if(battle.result().winner()==com.ironoath.battle.Winner.ATTACKER) {
             assertThat(ownerAfter.nationId()).isEqualTo(attackerNation.id());
@@ -156,6 +182,8 @@ class StrategicCombatPendingLockRecoveryTest {
         });
         assertThat(battleReports.reportsOf(battle.attacker().rally().initiatorId())).containsExactly(attackerReport);
         assertThat(battleReports.reportsOf(battle.defender().rally().initiatorId())).containsExactly(defenderReports.get(0));
+        assertThat(rankFixture.boards.board("season-test",com.ironoath.core.season.SeasonSettlement.Board.KILL))
+                .isEqualTo(initialKillRows);
         var pendingAfterReplay=operations.findByTargetId(battle.target().targetId()).orElseThrow();
         assertThat(pendingAfterReplay).isEqualTo(pendingAfterFirst);
         assertThat(wars.pendingBattleReservation(battle.happenedAt()-10,plan.operationId())).isPresent();
@@ -166,12 +194,14 @@ class StrategicCombatPendingLockRecoveryTest {
         assertThat(battle.result().winner()).isEqualTo(com.ironoath.battle.Winner.ATTACKER);
         assertThat(battle.npcSurvivors()).isNotEmpty();
         var configs=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));var owners=new InMemoryTargetOccupationStore();
+        var rankFixture=new RankFixture(configs);
         var targetName=com.ironoath.web.service.WorldTargets.from(configs).targets().stream()
                 .filter(target->target.definition().id().equals(battle.target().targetId())).findFirst().orElseThrow().definition().name();
         var operationId="battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion();
         var reportPlan=StrategicBattleReportPlan.create(battle,operationId,
                 battle.happenedAt()+configs.longParam("BATTLE_REPORT_TTL_SECONDS")*1000L,"attacker",targetName);
-        var plan=TargetOperationStore.CombatPlan.create(battle,1).withReportPlan(reportPlan);
+        var plan=TargetOperationStore.CombatPlan.create(battle,1).withReportPlan(reportPlan)
+                .withKillPlan(rankFixture.service.freezeStrategicKills(battle,operationId,1));
         var operations=new InMemoryTargetOperationStore();
         assertThat(operations.compareAndSet(TargetOperationStore.Snapshot.combat(1,false,plan),0)).isTrue();
         var neutral=new InMemoryNeutralTargetGarrisonStore();var armies=new InMemoryArmyStore();
@@ -198,8 +228,9 @@ class StrategicCombatPendingLockRecoveryTest {
         when(social.runRalliesDepartureLocked(anyCollection(),any())).thenAnswer(call->((Supplier<?>)call.getArgument(1)).get());
         var battleReports=new InMemoryBattleReportStore();
         var reportService=new BattleReportService(configs,battleReports,mock(com.ironoath.common.time.TimeService.class),
-                social,mock(RankBoardService.class),wars,mock(NationMembership.class));
-        var due=new SortedMarchDueQueue();var recovery=new StrategicCombatRecovery(operations,armies,marches,owners,neutral,nationStore,due,reportService);
+                social,rankFixture.service,wars,mock(NationMembership.class));
+        var due=new SortedMarchDueQueue();var recovery=new StrategicCombatRecovery(operations,armies,marches,owners,neutral,nationStore,
+                due,reportService,rankFixture.service);
         due.schedule(attacker.id(),battle.attacker().march().arriveAt());
         var targetOperations=new StrategicGarrisonWithdrawal(configs,operations,owners,marches,due,defenderReader,social,
                 new InJvmPlayerLock(),recovery);
@@ -225,6 +256,11 @@ class StrategicCombatPendingLockRecoveryTest {
         assertThat(persistedReport.reportId()).isEqualTo(com.ironoath.web.battle.BattleReport.idForOperation(plan.operationId(),
                 battle.attacker().rally().initiatorId()));
         assertThat(persistedReport.defenderName()).isEqualTo(targetName);
+        var expectedKills=battle.result().atkKillsByMember();
+        var actualKillScores=rankFixture.boards.board(plan.killPlan().seasonId(),com.ironoath.core.season.SeasonSettlement.Board.KILL)
+                .stream().collect(java.util.stream.Collectors.toMap(com.ironoath.core.season.SeasonSettlement.Entry::id,
+                        com.ironoath.core.season.SeasonSettlement.Entry::score));
+        assertThat(actualKillScores).isEqualTo(expectedKills);
         var pending=operations.findByTargetId(battle.target().targetId()).orElseThrow();
         assertThat(pending.completed()).isFalse();assertThat(pending.combatPlan().battle()).isEqualTo(battle);
         assertThat(pending.combatPlan().marchRecovery()).isNotNull();
@@ -263,5 +299,30 @@ class StrategicCombatPendingLockRecoveryTest {
         assertThat(lockSets).containsExactly(expected.stream().sorted().toList());
         assertThat(operations.findByTargetId(slot.targetId())).contains(slot);
         verify(defenders,never()).read(any());
+    }
+
+    private static final class RankFixture {
+        final InMemorySeasonBoardStore boards=new InMemorySeasonBoardStore();
+        final Set<String> bots;
+        final RankBoardService service;
+        RankFixture(ConfigRegistry configs) {this(configs,Set.of());}
+        RankFixture(ConfigRegistry configs,Set<String> bots) {
+            this.bots=Set.copyOf(bots);
+            var social=mock(SocialStore.class);var nations=mock(NationStore.class);
+            var players=mock(PlayerRepository.class);var botRegistry=mock(BotRegistry.class);
+            when(botRegistry.humanOnly(anyString(),anyString())).thenAnswer(call->this.bots.contains(call.getArgument(0))?null:call.getArgument(0));
+            when(players.findBriefs(anyCollection())).thenAnswer(call->{
+                var out=new LinkedHashMap<String,PlayerBrief>();
+                for(String id:(java.util.Collection<String>)call.getArgument(0))
+                    out.put(id,new PlayerBrief(id,"rank:"+id,1,0,0));
+                return out;
+            });
+            var rules=mock(SeasonRulesAssembler.class);
+            when(rules.timelineRules(org.mockito.ArgumentMatchers.anyLong())).thenReturn(new com.ironoath.core.season.SeasonTimeline.Rules(
+                    List.of(new com.ironoath.core.season.SeasonTimeline.Stage(1,
+                            com.ironoath.core.season.SeasonTimeline.Phase.EXPAND,0,30)),"season-test"));
+            service=new RankBoardService(boards,social,nations,new NationMembership(social,nations),players,botRegistry,
+                    configs,rules,mock(com.ironoath.common.time.TimeService.class));
+        }
     }
 }

@@ -9,6 +9,7 @@ import com.ironoath.web.nation.WarStore;
 import com.ironoath.web.service.SocialAppService;
 import com.ironoath.web.service.WorldTargets;
 import com.ironoath.web.social.SocialStore;
+import com.ironoath.web.rank.RankBoardService;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -32,15 +33,17 @@ public final class StrategicCombatPublisher {
     private final SocialAppService social;
     private final StrategicGarrisonWithdrawal targetLocks;
     private final WarStore wars;
+    private final RankBoardService ranks;
 
     public StrategicCombatPublisher(ConfigRegistry configs,TargetOperationStore operations,MarchRepository marches,
             StrategicTargetDefender defenders,SocialStore rallies,SocialAppService social,
-            StrategicGarrisonWithdrawal targetLocks,WarStore wars) {
+            StrategicGarrisonWithdrawal targetLocks,WarStore wars,RankBoardService ranks) {
         this.configs=Objects.requireNonNull(configs);this.operations=Objects.requireNonNull(operations);
         this.marches=Objects.requireNonNull(marches);this.defenders=Objects.requireNonNull(defenders);
         this.rallies=Objects.requireNonNull(rallies);this.social=Objects.requireNonNull(social);
         this.targetLocks=Objects.requireNonNull(targetLocks);
         this.wars=Objects.requireNonNull(wars);
+        this.ranks=Objects.requireNonNull(ranks);
     }
 
     public TargetOperationStore.Snapshot publish(CapturedStrategicBattle battle) {
@@ -83,7 +86,8 @@ public final class StrategicCombatPublisher {
         long version=current==null?0:current.version();
         long sequence=current==null?1:Math.addExact(current.sequence(),1);
         var reportPlan=freezeReportPlan(battle,operationId,target.definition().name());
-        var combat=TargetOperationStore.CombatPlan.create(battle,sequence).withReportPlan(reportPlan);
+        var killPlan=ranks.freezeStrategicKills(battle,operationId,sequence);
+        var combat=TargetOperationStore.CombatPlan.create(battle,sequence).withReportPlan(reportPlan).withKillPlan(killPlan);
         var next=TargetOperationStore.Snapshot.combat(Math.addExact(version,1),false,combat);
         reserveWarBattle(battle,sequence,operationId);
         try {
