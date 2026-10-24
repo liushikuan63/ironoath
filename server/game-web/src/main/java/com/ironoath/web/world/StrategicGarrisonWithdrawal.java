@@ -9,6 +9,7 @@ import com.ironoath.core.march.MarchDueQueue;
 import com.ironoath.core.march.MarchRepository;
 import com.ironoath.web.service.SocialAppService;
 import com.ironoath.web.service.WorldTargets;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -31,14 +32,23 @@ public final class StrategicGarrisonWithdrawal {
     private final StrategicTargetDefender defenders;
     private final SocialAppService social;
     private final PlayerLock locks;
+    private final StrategicCombatRecovery combatRecovery;
     private final ThreadLocal<String> targetScope=new ThreadLocal<>();
     private static final class ContextChanged extends RuntimeException {}
 
     public StrategicGarrisonWithdrawal(ConfigRegistry configs,TargetOperationStore operations,
             TargetOccupationStore occupations,MarchRepository marches,MarchDueQueue due,
             StrategicTargetDefender defenders,SocialAppService social,PlayerLock locks) {
+        this(configs,operations,occupations,marches,due,defenders,social,locks,null);
+    }
+
+    @Autowired
+    public StrategicGarrisonWithdrawal(ConfigRegistry configs,TargetOperationStore operations,
+            TargetOccupationStore occupations,MarchRepository marches,MarchDueQueue due,
+            StrategicTargetDefender defenders,SocialAppService social,PlayerLock locks,
+            StrategicCombatRecovery combatRecovery) {
         this.configs=configs;this.operations=operations;this.occupations=occupations;this.marches=marches;
-        this.due=due;this.defenders=defenders;this.social=social;this.locks=locks;
+        this.due=due;this.defenders=defenders;this.social=social;this.locks=locks;this.combatRecovery=combatRecovery;
     }
 
     /** 当前槽仍留存时按冻结主人鉴权重放；完成后只回执，不重新创建March或队列。 */
@@ -128,8 +138,12 @@ public final class StrategicGarrisonWithdrawal {
             candidates=operations.pendingTargetIds(ids);
         } catch(RuntimeException unavailable){LOG.error("目标操作候选读取失败，战略推进仍须经过单目标完成屏障",unavailable);return;}
         for(String target:candidates) {
-            try{recoverTarget(target,null);}
-            catch(RuntimeException failure){LOG.error("目标撤防计划待恢复，保留原兵权/代次 targetId={}",target,failure);}
+            try {
+                var after=recoverTarget(target,null);
+                if(after!=null && !after.completed())LOG.info("战略目标COMBAT仍有后续恢复步骤，保留pending槽 targetId={} operationId={}",
+                        target,after.operationId());
+            }
+            catch(RuntimeException failure){LOG.error("战略目标操作待恢复，保留原COMBAT/撤防计划和代次 targetId={}",target,failure);}
         }
     }
 
@@ -138,7 +152,12 @@ public final class StrategicGarrisonWithdrawal {
         return withTarget(observed.targetId(),()->{
             var slot=operations.findByTargetId(observed.targetId()).orElse(null);
             if(slot!=null && !slot.completed()) {
-                if(!sameContext(withdrawal(slot),observed))throw state("目标由另一集结恢复中，请稍后重试");
+                if(slot.kind()==TargetOperationStore.Kind.WITHDRAWAL) {
+                    if(!sameContext(withdrawal(slot),observed))throw state("目标由另一集结恢复中，请稍后重试");
+                } else {
+                    if(combatRecovery==null)throw state("战略战斗操作尚未确认恢复，不能按撤防或归队推进");
+                    if(!combatRecovery.ownsMarch(slot,observed.id()))throw state("原COMBAT不属于当前行军，不能推进归队");
+                }
                 applyLocked(slot);
             }
             var confirmed=operations.findByTargetId(observed.targetId()).orElse(null);
@@ -156,13 +175,15 @@ public final class StrategicGarrisonWithdrawal {
             if(observed==null || (requiredOperation!=null && !requiredOperation.equals(observed.operationId())))return null;
             if(observed.completed())return observed;
             try {
-                return social.runRallyDepartureLocked(withdrawal(observed).stationed().rallyId(),()->withTarget(target,()->{
+                return runOperationRalliesLocked(observed,()->withTarget(target,()->{
                     var latest=operations.findByTargetId(target).orElseThrow(ContextChanged::new);
-                    if(!sameContext(withdrawal(observed),withdrawal(latest)))throw new ContextChanged();
+                    if(!observed.equals(latest))throw new ContextChanged();
                     if(requiredOperation!=null && !requiredOperation.equals(latest.operationId()))return null;
                     applyLocked(latest);
                     var done=operations.findByTargetId(target).orElseThrow();
-                    if(!done.completed() || !withdrawal(done).equals(withdrawal(latest)))throw new ContextChanged();
+                    if(!done.completed())return done;
+                    if(done.kind()!=latest.kind() || !java.util.Objects.equals(done.plan(),latest.plan())
+                            || !java.util.Objects.equals(done.combatPlan(),latest.combatPlan()))throw new ContextChanged();
                     return done;
                 }));
             } catch(ContextChanged changed){ /* 仅在外层重新分派。 */ }
@@ -172,6 +193,11 @@ public final class StrategicGarrisonWithdrawal {
 
     private void applyLocked(TargetOperationStore.Snapshot slot) {
         if(slot.completed())return;
+        if(slot.kind()==TargetOperationStore.Kind.COMBAT) {
+            if(combatRecovery==null)throw state("战略战斗操作尚未确认恢复，不能按撤防或归队推进");
+            combatRecovery.recoverHospitalReceipts(slot);
+            return;
+        }
         var plan=withdrawal(slot);var target=requireTarget(slot.targetId());
         if(target.coord().x()!=plan.before().x() || target.coord().y()!=plan.before().y()
                 || !target.definition().kind().name().equals(plan.before().kind().name()))
@@ -211,6 +237,21 @@ public final class StrategicGarrisonWithdrawal {
             try{if(!doneConfirmed(done))throw unknown;}
             catch(RuntimeException readFailure){if(readFailure!=unknown)unknown.addSuppressed(readFailure);throw unknown;}
         }
+    }
+
+    private <T> T runOperationRalliesLocked(TargetOperationStore.Snapshot slot,Supplier<T> action) {
+        if(slot.kind()==TargetOperationStore.Kind.WITHDRAWAL)
+            return social.runRallyDepartureLocked(withdrawal(slot).stationed().rallyId(),action);
+        var battle=slot.combatPlan().battle();var rallyIds=new java.util.TreeSet<String>();
+        rallyIds.add(requireRally(March.fromSnapshot(battle.attacker().march())));
+        if(battle.defender()!=null)rallyIds.add(requireRally(March.fromSnapshot(battle.defender().march())));
+        return social.runRalliesDepartureLocked(List.copyOf(rallyIds),action);
+    }
+
+    private static String requireRally(March march) {
+        if(march==null || !march.isRallyMarch() || march.rallyId()==null || march.rallyId().isBlank())
+            throw state("原COMBAT缺少Rally锁身份");
+        return march.rallyId();
     }
 
     private boolean returnConfirmed(TargetOperationStore.WithdrawalPlan plan) {

@@ -47,6 +47,7 @@ class StrategicGarrisonWithdrawalTest {
                     Rally.Status.PREPARING,null,256,216,"STRATEGIC_TARGET",1);rally.depart(110);
             when(social.rallyOf(original.rallyId())).thenReturn(Optional.of(rally));
             doAnswer(inv->((Supplier<?>)inv.getArgument(1)).get()).when(app).runRallyDepartureLocked(anyString(),any());
+            doAnswer(inv->((Supplier<?>)inv.getArgument(1)).get()).when(app).runRalliesDepartureLocked(anyCollection(),any());
         }
         StrategicGarrisonWithdrawal service(){return new StrategicGarrisonWithdrawal(configs,ops,owners,marches,due,
                 new StrategicTargetDefender(configs,owners,marches,social,new com.ironoath.web.store.memory.InMemoryNeutralTargetGarrisonStore()),app,locks);}
@@ -78,7 +79,9 @@ class StrategicGarrisonWithdrawalTest {
                 .isInstanceOf(com.ironoath.common.BizException.class).hasMessageContaining("战斗操作");
         service.recoverPending();
         assertThat(advanced.get()).isZero();assertThat(f.ops.findByTargetId("gate_north")).contains(pending);
-        verifyNoInteractions(f.marches,f.owners,f.due,f.app);
+        verifyNoInteractions(f.marches,f.owners,f.due);
+        verify(f.app).runRalliesDepartureLocked(eq(List.of("owned-combat-rally")),any());
+        verifyNoMoreInteractions(f.app);
     }
 
     @ParameterizedTest @EnumSource(Backend.class)
