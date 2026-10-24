@@ -54,6 +54,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -283,6 +284,130 @@ class StrategicCombatPendingLockRecoveryTest {
         assertThat(wars.findByStartedAt(battle.happenedAt()-10).orElseThrow().battleEvent(battle.target().targetId()))
                 .isEqualTo(warEvent);
         assertThat(wars.pendingBattleReservation(battle.happenedAt()-10,plan.operationId())).isEmpty();
+    }
+
+    @Test void npcDefenderVictoryReplaysTheWholeCombatWithoutInventingAnOwner() {
+        var battle=StrategicCombatSlotTest.battle(2380,false,false);
+        assertThat(battle.result().winner()).isEqualTo(com.ironoath.battle.Winner.DEFENDER);
+        assertThat(battle.npcSurvivors()).isNotEmpty();
+        var recovered=recoverWholeOperation(battle);
+        assertThat(recovered.slot().completed()).isTrue();
+        assertThat(recovered.owners().findByTargetIds(List.of(battle.target().targetId()))).doesNotContainKey(battle.target().targetId());
+        var neutral=recovered.neutral().findByTargetIds(List.of(battle.target().targetId())).get(battle.target().targetId());
+        assertThat(neutral.phase()).isEqualTo(InMemoryNeutralTargetGarrisonStore.Phase.NEUTRAL);
+        assertThat(neutral.troops()).isEqualTo(battle.npcSurvivors());
+        assertThat(recovered.reports().reportsOf(battle.attacker().rally().initiatorId())).hasSize(1);
+        var expectedKills=battle.result().atkKillsByMember();
+        var actualKills=recovered.rankBoards().board("season-test",com.ironoath.core.season.SeasonSettlement.Board.KILL)
+                .stream().collect(java.util.stream.Collectors.toMap(com.ironoath.core.season.SeasonSettlement.Entry::id,
+                        com.ironoath.core.season.SeasonSettlement.Entry::score));
+        assertThat(actualKills).isEqualTo(expectedKills);
+        assertMarchOutcomeApplied(recovered,StrategicRallyCasualties.Side.ATTACKER);
+        assertThat(recovered.wars().findByStartedAt(battle.happenedAt()-10).orElseThrow()
+                .battleEvent(battle.target().targetId())).isEqualTo(recovered.slot().combatPlan().warRecovery().event());
+        assertThat(recovered.wars().pendingBattleReservation(battle.happenedAt()-10,
+                recovered.slot().operationId())).isEmpty();
+    }
+
+    @Test void playerAttackerVictoryCompletesOwnershipReportsMarchAndWarFromTheFrozenResult() {
+        var battle=StrategicCombatSlotTest.battle(2384,true,false);
+        assertThat(battle.result().winner()).isEqualTo(com.ironoath.battle.Winner.ATTACKER);
+        var recovered=recoverWholeOperation(battle);
+        assertThat(recovered.slot().completed()).isTrue();
+        var owner=recovered.owners().findByTargetIds(List.of(battle.target().targetId())).get(battle.target().targetId());
+        assertThat(owner.nationId()).isEqualTo(battle.attacker().rally().nationId());
+        assertThat(owner.garrison()).isEqualTo(TargetOccupationStore.Garrison.stationed(battle.attacker().march().id()));
+        assertThat(recovered.reports().reportsOf(battle.attacker().rally().initiatorId())).hasSize(1);
+        assertThat(recovered.reports().reportsOf(battle.defender().rally().initiatorId())).hasSize(1);
+        var expectedKills=new java.util.HashMap<String,Long>(battle.result().atkKillsByMember());
+        expectedKills.putAll(battle.result().defKillsByMember());
+        var actualKills=recovered.rankBoards().board("season-test",com.ironoath.core.season.SeasonSettlement.Board.KILL)
+                .stream().collect(java.util.stream.Collectors.toMap(com.ironoath.core.season.SeasonSettlement.Entry::id,
+                        com.ironoath.core.season.SeasonSettlement.Entry::score));
+        assertThat(actualKills).isEqualTo(expectedKills);
+        assertMarchOutcomeApplied(recovered,StrategicRallyCasualties.Side.ATTACKER);
+        assertMarchOutcomeApplied(recovered,StrategicRallyCasualties.Side.DEFENDER);
+        assertThat(recovered.wars().findByStartedAt(battle.happenedAt()-10).orElseThrow()
+                .battleEvent(battle.target().targetId())).isEqualTo(recovered.slot().combatPlan().warRecovery().event());
+        assertThat(recovered.wars().pendingBattleReservation(battle.happenedAt()-10,
+                recovered.slot().operationId())).isEmpty();
+    }
+
+    private record WholeRecovery(TargetOperationStore.Snapshot slot,InMemoryTargetOccupationStore owners,
+            InMemoryNeutralTargetGarrisonStore neutral,InMemoryMarchStore marches,InMemoryBattleReportStore reports,
+            InMemoryWarStore wars,InMemorySeasonBoardStore rankBoards,SortedMarchDueQueue due) {}
+
+    private static void assertMarchOutcomeApplied(WholeRecovery recovered,StrategicRallyCasualties.Side side) {
+        var recovery=recovered.slot().combatPlan().marchRecovery();
+        var intent=side==StrategicRallyCasualties.Side.ATTACKER?recovery.attacker():recovery.defender();
+        assertThat(intent).isNotNull();var observed=recovered.marches().findById(intent.marchId());
+        if(intent.disposition()==StrategicBattleMarchOutcome.Disposition.ANNIHILATED)assertThat(observed).isEmpty();
+        else assertThat(observed).map(March::snapshot).contains(intent.after());
+        Long returnAt=intent.after()==null?null:intent.after().returnArriveAt();
+        if(returnAt!=null)assertThat(recovered.due().dueAtOf(intent.marchId())).hasValue(returnAt);
+        else assertThat(recovered.due().dueAtOf(intent.marchId())).isEmpty();
+    }
+
+    private static WholeRecovery recoverWholeOperation(com.ironoath.web.battle.CapturedStrategicBattle battle) {
+        var configs=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));var rankFixture=new RankFixture(configs);
+        String operationId="battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion();
+        String targetName=com.ironoath.web.service.WorldTargets.from(configs).targets().stream()
+                .filter(target->target.definition().id().equals(battle.target().targetId())).findFirst().orElseThrow()
+                .definition().name();
+        var reportPlan=StrategicBattleReportPlan.create(battle,operationId,
+                battle.happenedAt()+configs.longParam("BATTLE_REPORT_TTL_SECONDS")*1000L,"attacker",
+                battle.defender()==null?targetName:"defender");
+        var killPlan=rankFixture.service.freezeStrategicKills(battle,operationId,1);
+        var plan=TargetOperationStore.CombatPlan.create(battle,1).withReportPlan(reportPlan).withKillPlan(killPlan);
+        var operations=new InMemoryTargetOperationStore();
+        var owners=new InMemoryTargetOccupationStore();
+        if(battle.target().defender().occupation()!=null)
+            assertThat(owners.compareAndSet(battle.target().defender().occupation(),0)).isTrue();
+        var neutral=new InMemoryNeutralTargetGarrisonStore();var armies=new InMemoryArmyStore();
+        var marches=new InMemoryMarchStore(32);var due=new SortedMarchDueQueue();
+        var sides=new ArrayList<StrategicRallyCasualties>();sides.add(battle.attacker());
+        if(battle.defender()!=null)sides.add(battle.defender());
+        for(var side:sides) {
+            for(var member:side.currentMembers().entrySet()) {
+                var army=new ArmyState();member.getValue().forEach(army::add);
+                assertThat(armies.insertIfAbsent(member.getKey(),army)).isTrue();
+            }
+            var march=March.fromSnapshot(side.march());assertThat(marches.insertIfAbsent(march)).isTrue();
+            while(marches.versionOf(march.id())<side.marchVersion())marches.save(march,marches.versionOf(march.id()));
+            due.schedule(march.id(),march.arriveAt());
+        }
+        var nationRules=new NationRulesAssembler(configs);var nationStore=mock(NationStore.class);
+        var attackerNation=Nation.found(battle.attacker().rally().nationId(),"进攻国",
+                battle.attacker().rally().initiatorId(),"owned-attacker-alliance",0,0,100,nationRules.rules());
+        when(nationStore.findById(attackerNation.id())).thenReturn(Optional.of(attackerNation));
+        var warRules=new WarRulesAssembler(configs);var wars=new InMemoryWarStore(warRules);
+        var war=new WarScoreBoard(warRules.rules(),battle.happenedAt()-10,battle.attacker().rally().nationId(),
+                battle.happenedAt()+1000);
+        war.registerNation(battle.attacker().rally().nationId());
+        if(battle.defender()!=null)war.registerNation(battle.defender().rally().nationId());else war.registerNation("owned-opponent");
+        assertThat(wars.insertIfNoneActive(war)).isTrue();var members=new ArrayList<WarScoreBoard.BattleMember>();
+        addMembers(members,battle.attacker(),battle.result().atkKillsByMember());
+        if(battle.defender()!=null)addMembers(members,battle.defender(),battle.result().defKillsByMember());
+        var reservation=wars.reserveBattle(battle.target().targetId(),1,operationId,battle.happenedAt(),members).orElseThrow();
+        plan=plan.withWarRecovery(new TargetOperationStore.WarRecoveryPlan(reservation,null));
+        assertThat(operations.compareAndSet(TargetOperationStore.Snapshot.combat(1,false,plan),0)).isTrue();
+        var reports=new InMemoryBattleReportStore();var social=mock(SocialAppService.class);
+        when(social.runRalliesDepartureLocked(anyCollection(),any())).thenAnswer(call->((Supplier<?>)call.getArgument(1)).get());
+        var reportService=new BattleReportService(configs,reports,mock(com.ironoath.common.time.TimeService.class),
+                social,rankFixture.service,wars,mock(NationMembership.class));
+        var recovery=new StrategicCombatRecovery(operations,armies,marches,owners,neutral,nationStore,due,reportService,
+                rankFixture.service,wars);
+        var pending=operations.findByTargetId(battle.target().targetId()).orElseThrow();
+        var hospital=recovery.recoverHospitalReceipts(pending);recovery.recoverTargetState(pending,hospital);
+        var withMarch=recovery.freezeMarchOutcomes(operations.findByTargetId(battle.target().targetId()).orElseThrow());
+        recovery.recoverMarchOutcomes(withMarch);
+        var withEvent=recovery.freezeWarEvent(operations.findByTargetId(battle.target().targetId()).orElseThrow(),hospital);
+        recovery.recoverWarEvent(withEvent);
+        var completedRef=new java.util.concurrent.atomic.AtomicReference<TargetOperationStore.Snapshot>();
+        assertThatCode(()->completedRef.set(recovery.completeCombat(
+                operations.findByTargetId(battle.target().targetId()).orElseThrow(),hospital))).doesNotThrowAnyException();
+        var completed=completedRef.get();
+        return new WholeRecovery(completed,owners,neutral,marches,reports,wars,rankFixture.boards,due);
     }
 
     private static void addMembers(List<WarScoreBoard.BattleMember> out,StrategicRallyCasualties side,Map<String,Long> kills) {
