@@ -56,11 +56,14 @@ public class NationTechBonuses {
     }
 
     /** Capture country-membership epochs before a lazy settlement can mutate any resource balance. */
-    public NationOutputReadScope.MembershipTimeline outputMembershipTimeline(String playerId) {
+    public NationOutputReadScope.MembershipTimeline outputMembershipTimeline(String playerId,long observedAt) {
         if(playerId==null || playerId.isBlank())return new NationOutputReadScope.MembershipTimeline(null,List.of());
         var alliance=social.allianceOf(playerId).orElse(null);
-        return alliance==null?new NationOutputReadScope.MembershipTimeline(null,List.of())
-                :new NationOutputReadScope.MembershipTimeline(alliance.id(),nations.allianceNationEpochs(alliance.id()));
+        String currentAllianceId=alliance==null?null:alliance.id();
+        var memberEpochs=social.allianceMembershipEpochs(playerId,currentAllianceId,observedAt);
+        var outputEpochs=memberEpochs.stream().map(epoch->new NationOutputReadScope.AllianceEligibilityEpoch(
+                epoch.allianceId(),epoch.fromAt(),epoch.untilAt(),nations.allianceNationEpochs(epoch.allianceId()))).toList();
+        return new NationOutputReadScope.MembershipTimeline(currentAllianceId,outputEpochs);
     }
 
     /** Optional successful-lookup snapshot shared only by one resource calculation. */

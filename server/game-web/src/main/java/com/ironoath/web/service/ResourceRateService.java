@@ -297,7 +297,7 @@ public class ResourceRateService {
         List<String> harvested = new ArrayList<>();
         var fortressScope=player.resources().isEmpty()?com.ironoath.web.nation.StrategicFortressOutputReadScope.empty()
                 :com.ironoath.web.nation.StrategicFortressOutputReadScope.capture(configs,targetOccupations);
-        var membershipTimeline=player.resources().isEmpty()?null:nationTechBonuses.outputMembershipTimeline(player.playerId());
+        var membershipTimeline=player.resources().isEmpty()?null:nationTechBonuses.outputMembershipTimeline(player.playerId(),now);
         long firstSettle=player.resources().values().stream().mapToLong(PlayerResourceState::lastSettle).min().orElse(now);
         var changes=new TreeSet<Long>(fortressScope.changeTimes(Math.min(firstSettle,now),now));
         if(membershipTimeline!=null)changes.addAll(membershipTimeline.changeTimes(Math.min(firstSettle,now),now));
@@ -351,7 +351,7 @@ public class ResourceRateService {
         Rates rates=null;
         var fortressScope=player.resources().isEmpty()?com.ironoath.web.nation.StrategicFortressOutputReadScope.empty()
                 :com.ironoath.web.nation.StrategicFortressOutputReadScope.capture(configs,targetOccupations);
-        var membershipTimeline=player.resources().isEmpty()?null:nationTechBonuses.outputMembershipTimeline(player.playerId());
+        var membershipTimeline=player.resources().isEmpty()?null:nationTechBonuses.outputMembershipTimeline(player.playerId(),now);
         Map<String, PlayerResourceState> out = new LinkedHashMap<>();
         long firstSettle=player.resources().values().stream().mapToLong(PlayerResourceState::lastSettle).min().orElse(now);
         var changes=new TreeSet<Long>(fortressScope.changeTimes(Math.min(firstSettle,now),now));

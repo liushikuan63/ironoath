@@ -446,7 +446,7 @@ public class SocialAppService {
                     throw new BizException(ErrorCode.ALLIANCE_CREATE_COST_LACK, e.getMessage());
                 }
                 // 建档：expectedVersion=0 表示"我认为它还不存在"
-                store.saveAlliance(alliance, 0L);
+                store.saveAlliance(alliance, 0L, now);
                 // 入盟时小队自动转为联盟内分队，功能全部保留（关键设计点 1、验收 1）
                 store.squadOf(playerId).ifPresent(squad -> {
                     long expectedSquadVersion = squad.version();
@@ -596,7 +596,7 @@ public class SocialAppService {
                 } catch (IllegalStateException e) {
                     throw new BizException(ErrorCode.ALLIANCE_FULL, e.getMessage());
                 }
-                store.saveAlliance(alliance, expectedAllianceVersion);
+                store.saveAlliance(alliance, expectedAllianceVersion, now);
                 // 关键设计点 1：入盟时小队转为分队，功能全部保留
                 store.squadOf(req.applicantId()).ifPresent(squad -> {
                     long expectedSquadVersion = squad.version();
@@ -777,7 +777,7 @@ public class SocialAppService {
                             "不能踢盟主：要换人请走 /alliance/transfer");
                 }
                 alliance.kick(playerId, target);
-                store.saveAlliance(alliance, expectedAllianceVersion);
+                store.saveAlliance(alliance, expectedAllianceVersion, now);
                 // 与 allianceLeave 同一套收尾：成员索引不解的话，被踢的人之后每次
                 // 读 /social/summary 都会指回这个已经没有他位置的联盟
                 store.unbindAllianceMember(alliance.id(), target);
@@ -901,7 +901,7 @@ public class SocialAppService {
                 } catch (IllegalStateException e) {
                     throw new BizException(ErrorCode.ALLIANCE_NOT_LEADER, e.getMessage());
                 }
-                store.saveAlliance(alliance, expectedAllianceVersion);
+                store.saveAlliance(alliance, expectedAllianceVersion, now);
                 store.unbindAllianceMember(alliance.id(), playerId);
                 onMemberLeftAlliance(playerId, alliance.id(), now);
                 return summary(playerId, now);

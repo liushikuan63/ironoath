@@ -125,12 +125,15 @@ class NationRosterEquivalenceTest {
         seedAlliance("AL-ab", "后入籍的盟", "AB2", "P-ab1");
         seedNation("AL-zh", "AL-ab");
 
-        // 解散：两套实现都是"档没了"（内存删 map 键，Mongo 整档删除），而国家的成员联盟行
+        // 解散后内存移除活跃档，Mongo 保留不对玩家可见的历史档；国家的成员联盟行
         // 不一定在同一条流程里被清 —— 这一格测的就是真撞上时两边的名单是不是同一截
-        Alliance leaving = Alliance.create("AL-ab", "后入籍的盟", "AB2", "P-ab1", 1_000L,
-                socialRules.allianceRules());
-        memorySocial.removeAlliance(leaving);
-        newMongoSocial().removeAlliance(leaving);
+        Alliance memoryLeaving=memorySocial.allianceById("AL-ab").orElseThrow();
+        memoryLeaving.disband("P-ab1",T0+1_000L);
+        memorySocial.removeAlliance(memoryLeaving);
+        SocialStore mongoSocial=newMongoSocial();
+        Alliance mongoLeaving=mongoSocial.allianceById("AL-ab").orElseThrow();
+        mongoLeaving.disband("P-ab1",T0+1_000L);
+        mongoSocial.removeAlliance(mongoLeaving);
 
         List<String> memory = roster(memorySocial, memoryNations);
         List<String> mongo = roster(newMongoSocial(), newMongoNation());

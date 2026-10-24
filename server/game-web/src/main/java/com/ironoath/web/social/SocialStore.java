@@ -37,6 +37,17 @@ import com.ironoath.core.social.Squad;
  */
 public interface SocialStore {
 
+    /** A player's eligibility interval in one social alliance, using [fromAt, untilAt). */
+    record AllianceMembershipEpoch(String allianceId,long fromAt,long untilAt) {
+        public AllianceMembershipEpoch {
+            if(allianceId==null || allianceId.isBlank() || fromAt<0 || untilAt<fromAt)
+                throw new IllegalArgumentException("联盟成员时间段无效");
+        }
+        public boolean contains(long at,boolean beforeBoundary) {
+            return beforeBoundary?fromAt<at && at<=untilAt:fromAt<=at && at<untilAt;
+        }
+    }
+
     /** 一条聊天记录。 */
     record ChatMessage(String messageId, String channel, String senderId, String senderName,
                        String content, long sentAt) {
@@ -134,6 +145,11 @@ public interface SocialStore {
      */
     long saveAlliance(Alliance alliance, long expectedVersion);
 
+    /** Versioned alliance save that atomically records member additions/removals at {@code changedAt}. */
+    default long saveAlliance(Alliance alliance,long expectedVersion,long changedAt) {
+        return saveAlliance(alliance,expectedVersion);
+    }
+
     Optional<Alliance> allianceOf(String playerId);
 
     /**
@@ -163,6 +179,26 @@ public interface SocialStore {
     List<Alliance> allAlliances();
 
     Optional<Alliance> allianceById(String allianceId);
+
+    /** Historical alliance membership for lazy resource settlement; implementations must retain closed intervals. */
+    default List<AllianceMembershipEpoch> allianceMembershipEpochs(String playerId) {
+        return List.of();
+    }
+
+    /**
+     * Snapshot retained membership epochs and lazily open an epoch at {@code observedAt} when a current
+     * member predates history storage. Implementations should persist that conservative legacy baseline.
+     */
+    default List<AllianceMembershipEpoch> allianceMembershipEpochs(
+            String playerId,String currentAllianceId,long observedAt) {
+        List<AllianceMembershipEpoch> epochs=new java.util.ArrayList<>(allianceMembershipEpochs(playerId));
+        boolean hasOpenCurrent=currentAllianceId!=null && epochs.stream().anyMatch(epoch->
+                currentAllianceId.equals(epoch.allianceId()) && epoch.untilAt()==Long.MAX_VALUE);
+        if(currentAllianceId!=null && !hasOpenCurrent)
+            epochs.add(new AllianceMembershipEpoch(currentAllianceId,observedAt,Long.MAX_VALUE));
+        return epochs.stream().sorted(java.util.Comparator.comparingLong(AllianceMembershipEpoch::fromAt)
+                .thenComparing(AllianceMembershipEpoch::allianceId)).toList();
+    }
 
     boolean allianceNameTaken(String name);
 

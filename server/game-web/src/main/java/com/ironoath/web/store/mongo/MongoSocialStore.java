@@ -2,6 +2,7 @@ package com.ironoath.web.store.mongo;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -10,6 +11,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.domain.Sort;
@@ -186,6 +188,15 @@ public final class MongoSocialStore implements SocialStore {
 
     @Override
     public long saveAlliance(Alliance alliance, long expectedVersion) {
+        return saveAlliance(alliance,expectedVersion,null);
+    }
+
+    @Override
+    public long saveAlliance(Alliance alliance,long expectedVersion,long changedAt) {
+        return saveAlliance(alliance,expectedVersion,Long.valueOf(changedAt));
+    }
+
+    private long saveAlliance(Alliance alliance,long expectedVersion,Long changedAt) {
         Objects.requireNonNull(alliance, "alliance 不得为 null");
         if (mongo.exists(Query.query(Criteria.where("name").is(alliance.name())
                         .and("_id").ne(alliance.id())), AllianceDocument.class,
@@ -197,8 +208,10 @@ public final class MongoSocialStore implements SocialStore {
                 AllianceDocument.COLLECTION)) {
             throw allianceTagConflict(alliance.tag());
         }
-        AllianceDocument document = AllianceDocument.fromDomain(alliance);
         if (expectedVersion <= 0L) {
+            List<AllianceDocument.MemberEpochEntry> epochs=changedAt==null?List.of():alliance.memberIds().stream()
+                    .map(playerId->new AllianceDocument.MemberEpochEntry(playerId,changedAt,Long.MAX_VALUE)).toList();
+            AllianceDocument document=AllianceDocument.fromDomain(alliance,epochs);
             try {
                 mongo.insert(document, AllianceDocument.COLLECTION);
             } catch (DuplicateKeyException e) {
@@ -218,13 +231,49 @@ public final class MongoSocialStore implements SocialStore {
             }
             return alliance.version();
         }
+        AllianceDocument stored=changedAt==null?null:mongo.findById(alliance.id(),AllianceDocument.class,
+                AllianceDocument.COLLECTION);
+        List<AllianceDocument.MemberEpochEntry> epochs=changedAt==null?null:
+                applyMembershipChanges(stored,alliance,changedAt);
+        AllianceDocument document=AllianceDocument.fromDomain(alliance,epochs==null?List.of():epochs);
         var result = mongo.updateFirst(Query.query(Criteria.where("_id").is(alliance.id())
                         .and("version").is(expectedVersion)),
-                document.toUpdate(), AllianceDocument.class, AllianceDocument.COLLECTION);
+                changedAt==null?document.toUpdate():document.toUpdateWithMembershipEpochs(),
+                AllianceDocument.class, AllianceDocument.COLLECTION);
         if (result.getMatchedCount() == 0L) {
             rejectAsStaleOrMissing("联盟", alliance.id(), expectedVersion, AllianceDocument.COLLECTION);
         }
         return alliance.version();
+    }
+
+    private static List<AllianceDocument.MemberEpochEntry> applyMembershipChanges(
+            AllianceDocument before,Alliance after,long at) {
+        if(before==null)throw new IllegalStateException("联盟不存在，无法记录成员历史 id="+after.id());
+        if(at<0)throw new IllegalArgumentException("成员变更时刻不得为负");
+        List<AllianceDocument.MemberEpochEntry> epochs=new ArrayList<>(before.membershipEpochs()==null
+                ?List.of():before.membershipEpochs());
+        Set<String> oldMembers=new LinkedHashSet<>();
+        for(var member:before.members())oldMembers.add(member.playerId());
+        Set<String> newMembers=new LinkedHashSet<>(after.memberIds());
+        for(String playerId:oldMembers)if(!newMembers.contains(playerId)) {
+            for(int i=epochs.size()-1;i>=0;i--) {
+                var epoch=epochs.get(i);
+                if(playerId.equals(epoch.playerId()) && epoch.untilAt()==Long.MAX_VALUE) {
+                    if(at<epoch.fromAt())throw new IllegalStateException("联盟退会时刻早于加入时刻 playerId="+playerId);
+                    epochs.set(i,new AllianceDocument.MemberEpochEntry(playerId,epoch.fromAt(),at));
+                    break;
+                }
+            }
+        }
+        for(String playerId:newMembers)if(!oldMembers.contains(playerId)) {
+            if(epochs.stream().anyMatch(epoch->playerId.equals(epoch.playerId())
+                    && epoch.untilAt()==Long.MAX_VALUE))
+                throw new IllegalStateException("联盟已有未闭合成员时间段 playerId="+playerId);
+            epochs.add(new AllianceDocument.MemberEpochEntry(playerId,at,Long.MAX_VALUE));
+        }
+        epochs.sort(Comparator.comparing(AllianceDocument.MemberEpochEntry::playerId)
+                .thenComparingLong(AllianceDocument.MemberEpochEntry::fromAt));
+        return List.copyOf(epochs);
     }
 
     @Override
@@ -233,6 +282,53 @@ public final class MongoSocialStore implements SocialStore {
                         Query.query(Criteria.where("members.playerId").is(playerId)),
                         AllianceDocument.class, AllianceDocument.COLLECTION))
                 .map(document -> document.toDomain(rules.allianceRules()));
+    }
+
+    @Override
+    public List<AllianceMembershipEpoch> allianceMembershipEpochs(String playerId) {
+        if(playerId==null || playerId.isBlank())return List.of();
+        List<AllianceMembershipEpoch> out=new ArrayList<>();
+        List<AllianceDocument> documents=mongo.find(Query.query(Criteria.where("membershipEpochs.playerId").is(playerId)),
+                AllianceDocument.class,AllianceDocument.COLLECTION);
+        for(var document:documents)for(var epoch:safeMembershipEpochs(document)) {
+            if(playerId.equals(epoch.playerId()))out.add(new AllianceMembershipEpoch(document.allianceId(),
+                    epoch.fromAt(),epoch.untilAt()));
+        }
+        out.sort(Comparator.comparingLong(AllianceMembershipEpoch::fromAt)
+                .thenComparing(AllianceMembershipEpoch::allianceId));
+        return List.copyOf(out);
+    }
+
+    @Override
+    public List<AllianceMembershipEpoch> allianceMembershipEpochs(
+            String playerId,String currentAllianceId,long observedAt) {
+        if(playerId==null || playerId.isBlank() || currentAllianceId==null || currentAllianceId.isBlank())
+            return allianceMembershipEpochs(playerId);
+        if(observedAt<0)throw new IllegalArgumentException("成员观察时刻不得为负");
+        for(int attempt=0;attempt<3;attempt++) {
+            AllianceDocument current=mongo.findById(currentAllianceId,AllianceDocument.class,
+                    AllianceDocument.COLLECTION);
+            if(current==null || current.members().stream().noneMatch(member->playerId.equals(member.playerId())))
+                return allianceMembershipEpochs(playerId);
+            List<AllianceDocument.MemberEpochEntry> epochs=new ArrayList<>(safeMembershipEpochs(current));
+            if(epochs.stream().anyMatch(epoch->playerId.equals(epoch.playerId())
+                    && epoch.untilAt()==Long.MAX_VALUE))return allianceMembershipEpochs(playerId);
+            List<AllianceMembershipEpoch> historical=allianceMembershipEpochs(playerId);
+            if(historical.stream().anyMatch(epoch->epoch.untilAt()==Long.MAX_VALUE))
+                throw new IllegalStateException("玩家已有未闭合联盟成员时间段 playerId="+playerId);
+            epochs.add(new AllianceDocument.MemberEpochEntry(playerId,observedAt,Long.MAX_VALUE));
+            var update=mongo.updateFirst(Query.query(Criteria.where("_id").is(currentAllianceId)
+                            .and("version").is(current.version())
+                            .and("members.playerId").is(playerId)),
+                    new Update().set("membershipEpochs",List.copyOf(epochs)),
+                    AllianceDocument.class,AllianceDocument.COLLECTION);
+            if(update.getMatchedCount()>0)return allianceMembershipEpochs(playerId);
+        }
+        throw new IllegalStateException("联盟成员历史基线并发更新失败 playerId="+playerId+" allianceId="+currentAllianceId);
+    }
+
+    private static List<AllianceDocument.MemberEpochEntry> safeMembershipEpochs(AllianceDocument document) {
+        return document.membershipEpochs()==null?List.of():document.membershipEpochs();
     }
 
     /**
@@ -275,16 +371,16 @@ public final class MongoSocialStore implements SocialStore {
         List<Alliance> out = new ArrayList<>();
         for (AllianceDocument document : mongo.find(query, AllianceDocument.class,
                 AllianceDocument.COLLECTION)) {
-            out.add(document.toDomain(rules.allianceRules()));
+            if(document.disbandedAt()<=0)out.add(document.toDomain(rules.allianceRules()));
         }
         return List.copyOf(out);
     }
 
     @Override
     public Optional<Alliance> allianceById(String allianceId) {
-        return Optional.ofNullable(mongo.findById(allianceId, AllianceDocument.class,
-                        AllianceDocument.COLLECTION))
-                .map(document -> document.toDomain(rules.allianceRules()));
+        AllianceDocument document=mongo.findById(allianceId,AllianceDocument.class,AllianceDocument.COLLECTION);
+        return Optional.ofNullable(document).filter(value->value.disbandedAt()<=0)
+                .map(value -> value.toDomain(rules.allianceRules()));
     }
 
     @Override
@@ -314,7 +410,32 @@ public final class MongoSocialStore implements SocialStore {
     @Override
     public void removeAlliance(Alliance alliance) {
         Objects.requireNonNull(alliance, "alliance 不得为 null");
-        mongo.remove(Query.query(Criteria.where("_id").is(alliance.id())), AllianceDocument.COLLECTION);
+        AllianceDocument before=mongo.findById(alliance.id(),AllianceDocument.class,AllianceDocument.COLLECTION);
+        if(before==null)return;
+        if(before.disbandedAt()>0)return;
+        long closedAt=alliance.disbandedAt();
+        if(closedAt<=0)throw new IllegalArgumentException("解散联盟必须带有效disbandedAt");
+        long expectedVersion=alliance.version()-1L;
+        if(before.version()!=expectedVersion)
+            rejectAsStaleOrMissing("联盟",alliance.id(),expectedVersion,AllianceDocument.COLLECTION);
+        List<AllianceDocument.MemberEpochEntry> epochs=new ArrayList<>(safeMembershipEpochs(before));
+        for(var member:before.members()) {
+            for(int i=epochs.size()-1;i>=0;i--) {
+                var epoch=epochs.get(i);
+                if(member.playerId().equals(epoch.playerId()) && epoch.untilAt()==Long.MAX_VALUE) {
+                    if(closedAt<epoch.fromAt())throw new IllegalStateException("联盟解散时刻早于成员加入时刻 playerId="+member.playerId());
+                    epochs.set(i,new AllianceDocument.MemberEpochEntry(member.playerId(),epoch.fromAt(),closedAt));
+                    break;
+                }
+            }
+        }
+        AllianceDocument archived=AllianceDocument.fromDomain(alliance,epochs);
+        String archiveKey="__disbanded__"+UUID.randomUUID();
+        Update update=archived.toUpdateWithMembershipEpochs().set("name",archiveKey).set("tag",archiveKey);
+        var result=mongo.updateFirst(Query.query(Criteria.where("_id").is(alliance.id())
+                        .and("version").is(expectedVersion)),update,AllianceDocument.class,AllianceDocument.COLLECTION);
+        if(result.getMatchedCount()==0)
+            rejectAsStaleOrMissing("联盟",alliance.id(),expectedVersion,AllianceDocument.COLLECTION);
     }
 
     // ---------- 解散保护期（验收 7） ----------

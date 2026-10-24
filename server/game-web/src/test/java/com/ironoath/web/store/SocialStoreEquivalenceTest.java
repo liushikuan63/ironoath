@@ -264,12 +264,84 @@ class SocialStoreEquivalenceTest {
             String label = store.getClass().getSimpleName();
             Alliance alliance = richAlliance("AL-1", "铁盟", "IRON");
             store.saveAlliance(alliance, 0L);
+            alliance.disband("P-1",T0+1);
             store.removeAlliance(alliance);
 
             assertThat(store.allianceById("AL-1")).as("%s：按 id 查不到", label).isEmpty();
             assertThat(store.allianceOf("P-2")).as("%s：成员反查查不到", label).isEmpty();
             assertThat(store.allianceNameTaken("铁盟")).as("%s：名字释放", label).isFalse();
             assertThat(store.allianceTagTaken("IRON")).as("%s：标签释放", label).isFalse();
+        }
+    }
+
+    @Test
+    @DisplayName("联盟成员加入、退出、重入与解散按精确时点保留经济资格区间")
+    void allianceMembershipEpochsSurviveLeaveRejoinAndDisband() {
+        for(SocialStore store:bothStores()) {
+            String label=store.getClass().getSimpleName();
+            store.saveAlliance(allianceWith("AL-EPOCH","历史盟","HIST","P-1"),0L,T0);
+            Alliance alliance=store.allianceById("AL-EPOCH").orElseThrow();
+            long expected=alliance.version();
+            alliance.join("P-2");
+            store.saveAlliance(alliance,expected,T0+100L);
+
+            alliance=store.allianceById("AL-EPOCH").orElseThrow();
+            expected=alliance.version();
+            alliance.leave("P-2");
+            store.saveAlliance(alliance,expected,T0+200L);
+
+            alliance=store.allianceById("AL-EPOCH").orElseThrow();
+            expected=alliance.version();
+            alliance.join("P-2");
+            store.saveAlliance(alliance,expected,T0+300L);
+            alliance=store.allianceById("AL-EPOCH").orElseThrow();
+            alliance.disband("P-1",T0+400L);
+            store.removeAlliance(alliance);
+            store.removeAlliance(alliance);
+
+            assertThat(store.allianceMembershipEpochs("P-2")).as("%s retains both closed membership intervals",label)
+                    .containsExactly(
+                            new SocialStore.AllianceMembershipEpoch("AL-EPOCH",T0+100L,T0+200L),
+                            new SocialStore.AllianceMembershipEpoch("AL-EPOCH",T0+300L,T0+400L));
+            assertThat(store.allianceMembershipEpochs("P-1")).as("%s closes founder epoch at disband",label)
+                    .containsExactly(new SocialStore.AllianceMembershipEpoch("AL-EPOCH",T0,T0+400L));
+            assertThat(store.allianceById("AL-EPOCH")).as("%s hides disbanded alliance",label).isEmpty();
+            assertThat(store.allianceOf("P-2")).as("%s removes active member lookup",label).isEmpty();
+            assertThat(store.allianceNameTaken("历史盟")).as("%s releases archived name",label).isFalse();
+            assertThat(store.allianceTagTaken("HIST")).as("%s releases archived tag",label).isFalse();
+        }
+    }
+
+    @Test
+    @DisplayName("旧联盟成员首次读取只从观察时刻建立资格基线，且基线持久幂等")
+    void legacyAllianceMemberStartsAtFirstObservedTimeWithoutInventedPast() {
+        for(SocialStore store:bothStores()) {
+            String label=store.getClass().getSimpleName();
+            store.saveAlliance(allianceWith("AL-LEGACY","旧盟","OLD","P-1"),0L);
+            var first=store.allianceMembershipEpochs("P-1","AL-LEGACY",T0+500L);
+            assertThat(first).as("%s never invents an unknown join time before the first observed baseline",label)
+                    .containsExactly(new SocialStore.AllianceMembershipEpoch("AL-LEGACY",T0+500L,Long.MAX_VALUE));
+            assertThat(store.allianceMembershipEpochs("P-1","AL-LEGACY",T0+900L))
+                    .as("%s keeps the durable baseline across later resource reads",label)
+                    .containsExactly(new SocialStore.AllianceMembershipEpoch("AL-LEGACY",T0+500L,Long.MAX_VALUE));
+        }
+    }
+
+    @Test
+    @DisplayName("解散提交沿用被解散前的版本CAS，不能归档并发更新后的新档")
+    void staleDisbandCannotArchiveNewerAllianceVersion() {
+        for(SocialStore store:bothStores()) {
+            store.saveAlliance(allianceWith("AL-DISBAND-CAS","并发解散盟","CAS","P-1"),0L,T0);
+            Alliance stale=store.allianceById("AL-DISBAND-CAS").orElseThrow();
+            Alliance current=store.allianceById("AL-DISBAND-CAS").orElseThrow();
+            long expected=current.version();
+            current.addFund(1L);
+            store.saveAlliance(current,expected);
+            stale.disband("P-1",T0+100L);
+
+            assertThatThrownBy(()->store.removeAlliance(stale))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("乐观锁冲突");
+            assertThat(store.allianceById("AL-DISBAND-CAS")).isPresent();
         }
     }
 

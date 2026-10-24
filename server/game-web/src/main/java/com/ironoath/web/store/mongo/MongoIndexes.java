@@ -235,6 +235,9 @@ public final class MongoIndexes {
         String byAllianceMember = allianceIndexes.ensureIndex(new Index()
                 .on("members.playerId", Sort.Direction.ASC)
                 .named("idx_social_alliance_member"));
+        String byAllianceMembershipHistory = allianceIndexes.ensureIndex(new Index()
+                .on("membershipEpochs.playerId", Sort.Direction.ASC)
+                .named("idx_social_alliance_membership_player"));
         mongo.indexOps(RallyDepartureDocument.COLLECTION).ensureIndex(new Index()
                 .on("plan.departAt", Sort.Direction.ASC).named("idx_rally_departure_time"));
         mongo.indexOps(RallySettlementDocument.COLLECTION).ensureIndex(new Index()
@@ -290,7 +293,7 @@ public final class MongoIndexes {
                 + "；" + ActivityProgressDocument.COLLECTION + " → " + byActivityWindow
                 + "；" + SquadDocument.COLLECTION + " → " + uniqueSquadName + " / " + bySquadMember
                 + "；" + AllianceDocument.COLLECTION + " → " + uniqueAllianceName + " / "
-                + uniqueAllianceTag + " / " + byAllianceMember
+                + uniqueAllianceTag + " / " + byAllianceMember + " / " + byAllianceMembershipHistory
                 + "；" + RallyDocument.COLLECTION + " → " + byRallyGroup + " / " + byRallyDue
                 + "；" + SocialApplicationDocument.COLLECTION + " → " + byApplicationAlliance
                 + "；" + MarchDueDocument.COLLECTION + ".{dueAt} → " + byMarchDueAt

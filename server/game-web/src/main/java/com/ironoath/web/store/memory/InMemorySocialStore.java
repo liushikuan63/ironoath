@@ -46,6 +46,7 @@ public final class InMemorySocialStore implements SocialStore {
 
     private final Map<String, Alliance> alliancesById = new LinkedHashMap<>();
     private final Map<String, String> allianceIdByPlayer = new HashMap<>();
+    private final Map<String, List<AllianceMembershipEpoch>> allianceMembershipByPlayer = new HashMap<>();
 
     /**
      * 集结（rallyId → Rally）。
@@ -181,6 +182,15 @@ public final class InMemorySocialStore implements SocialStore {
 
     @Override
     public synchronized long saveAlliance(Alliance alliance, long expectedVersion) {
+        return saveAlliance(alliance,expectedVersion,null);
+    }
+
+    @Override
+    public synchronized long saveAlliance(Alliance alliance,long expectedVersion,long changedAt) {
+        return saveAlliance(alliance,expectedVersion,Long.valueOf(changedAt));
+    }
+
+    private long saveAlliance(Alliance alliance,long expectedVersion,Long changedAt) {
         String allianceNameOwner = allianceIdByName.get(alliance.name());
         if (allianceNameOwner != null && !allianceNameOwner.equals(alliance.id())) {
             throw new IllegalStateException("联盟名已被其它联盟占用：" + alliance.name()
@@ -193,6 +203,7 @@ public final class InMemorySocialStore implements SocialStore {
         }
         Alliance stored = alliancesById.get(alliance.id());
         requireExpectedVersion("联盟", alliance.id(), stored == null ? null : stored.version(), expectedVersion);
+        if(changedAt!=null)recordMembershipChanges(stored,alliance,changedAt);
         alliancesById.put(alliance.id(), alliance.copy());
         allianceIdByName.put(alliance.name(), alliance.id());
         allianceIdByTag.put(alliance.tag(), alliance.id());
@@ -200,6 +211,32 @@ public final class InMemorySocialStore implements SocialStore {
             allianceIdByPlayer.put(playerId, alliance.id());
         }
         return alliance.version();
+    }
+
+    private void recordMembershipChanges(Alliance before,Alliance after,long at) {
+        if(at<0)throw new IllegalArgumentException("成员变更时刻不得为负");
+        Set<String> oldMembers=before==null?Set.of():new LinkedHashSet<>(before.memberIds());
+        Set<String> newMembers=new LinkedHashSet<>(after.memberIds());
+        for(String playerId:oldMembers)if(!newMembers.contains(playerId))closeMembershipEpoch(after.id(),playerId,at);
+        for(String playerId:newMembers)if(!oldMembers.contains(playerId)) {
+            List<AllianceMembershipEpoch> epochs=allianceMembershipByPlayer.computeIfAbsent(playerId,k->new ArrayList<>());
+            if(epochs.stream().anyMatch(epoch->epoch.untilAt()==Long.MAX_VALUE))
+                throw new IllegalStateException("玩家已有未闭合联盟成员时间段 playerId="+playerId);
+            epochs.add(new AllianceMembershipEpoch(after.id(),at,Long.MAX_VALUE));
+        }
+    }
+
+    private void closeMembershipEpoch(String allianceId,String playerId,long at) {
+        List<AllianceMembershipEpoch> epochs=allianceMembershipByPlayer.get(playerId);
+        if(epochs==null)return; // legacy memberships have no defensible historical start time
+        for(int i=epochs.size()-1;i>=0;i--) {
+            AllianceMembershipEpoch epoch=epochs.get(i);
+            if(allianceId.equals(epoch.allianceId()) && epoch.untilAt()==Long.MAX_VALUE) {
+                if(at<epoch.fromAt())throw new IllegalStateException("联盟退会时刻早于加入时刻 playerId="+playerId);
+                epochs.set(i,new AllianceMembershipEpoch(allianceId,epoch.fromAt(),at));
+                return;
+            }
+        }
     }
 
     @Override
@@ -257,6 +294,28 @@ public final class InMemorySocialStore implements SocialStore {
     }
 
     @Override
+    public synchronized List<AllianceMembershipEpoch> allianceMembershipEpochs(String playerId) {
+        return allianceMembershipByPlayer.getOrDefault(playerId,List.of()).stream()
+                .sorted(Comparator.comparingLong(AllianceMembershipEpoch::fromAt)
+                        .thenComparing(AllianceMembershipEpoch::allianceId)).toList();
+    }
+
+    @Override
+    public synchronized List<AllianceMembershipEpoch> allianceMembershipEpochs(
+            String playerId,String currentAllianceId,long observedAt) {
+        List<AllianceMembershipEpoch> epochs=new ArrayList<>(allianceMembershipEpochs(playerId));
+        if(currentAllianceId!=null && currentAllianceId.equals(allianceIdByPlayer.get(playerId))
+                && epochs.stream().noneMatch(epoch->currentAllianceId.equals(epoch.allianceId())
+                        && epoch.untilAt()==Long.MAX_VALUE)) {
+            if(epochs.stream().anyMatch(epoch->epoch.untilAt()==Long.MAX_VALUE))
+                throw new IllegalStateException("玩家已有未闭合联盟成员时间段 playerId="+playerId);
+            epochs.add(new AllianceMembershipEpoch(currentAllianceId,observedAt,Long.MAX_VALUE));
+            allianceMembershipByPlayer.put(playerId,new ArrayList<>(epochs));
+        }
+        return allianceMembershipEpochs(playerId);
+    }
+
+    @Override
     public synchronized boolean allianceNameTaken(String name) {
         return allianceIdByName.containsKey(name);
     }
@@ -273,10 +332,15 @@ public final class InMemorySocialStore implements SocialStore {
 
     @Override
     public synchronized void removeAlliance(Alliance alliance) {
+        if(alliance.disbandedAt()<=0)throw new IllegalArgumentException("解散联盟必须带有效disbandedAt");
+        Alliance stored=alliancesById.get(alliance.id());
+        if(stored==null)return;
+        requireExpectedVersion("联盟",alliance.id(),stored.version(),alliance.version()-1L);
         alliancesById.remove(alliance.id());
         allianceIdByName.remove(alliance.name(), alliance.id());
         allianceIdByTag.remove(alliance.tag(), alliance.id());
-        for (String playerId : alliance.memberIds()) {
+        for (String playerId : stored.memberIds()) {
+            closeMembershipEpoch(alliance.id(),playerId,alliance.disbandedAt());
             allianceIdByPlayer.remove(playerId, alliance.id());
         }
     }
@@ -807,6 +871,7 @@ public final class InMemorySocialStore implements SocialStore {
         squadIdByName.clear();
         alliancesById.clear();
         allianceIdByPlayer.clear();
+        allianceMembershipByPlayer.clear();
         rallies.clear();
         rallySettlements.clear();
         rallyDepartures.clear();

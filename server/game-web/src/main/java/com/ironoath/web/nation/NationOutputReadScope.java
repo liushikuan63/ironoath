@@ -7,20 +7,53 @@ import com.ironoath.core.nation.Nation;
 
 /** One player's successful nation lookup within one output calculation, never a tick/global cache. */
 public final class NationOutputReadScope {
-    public record MembershipTimeline(String allianceId,List<NationStore.AllianceNationEpoch> epochs) {
-        public MembershipTimeline { epochs=epochs==null?List.of():List.copyOf(epochs); }
+    public record AllianceEligibilityEpoch(String allianceId,long fromAt,long untilAt,
+                                           List<NationStore.AllianceNationEpoch> nationEpochs) {
+        public AllianceEligibilityEpoch {
+            if(allianceId==null || allianceId.isBlank() || fromAt<0 || untilAt<fromAt)
+                throw new IllegalArgumentException("玩家国家资格时间段无效");
+            nationEpochs=nationEpochs==null?List.of():List.copyOf(nationEpochs);
+        }
+        public boolean contains(long at,boolean beforeBoundary) {
+            return beforeBoundary?fromAt<at && at<=untilAt:fromAt<=at && at<untilAt;
+        }
+    }
+
+    public record MembershipTimeline(String allianceId,List<AllianceEligibilityEpoch> epochs) {
+        public MembershipTimeline {
+            epochs=epochs==null?List.of():epochs.stream()
+                    .sorted(java.util.Comparator.comparingLong(AllianceEligibilityEpoch::fromAt)
+                            .thenComparing(AllianceEligibilityEpoch::allianceId)).toList();
+            long previousUntil=-1;
+            for(var epoch:epochs) {
+                if(epoch.fromAt()<previousUntil)
+                    throw new IllegalStateException("玩家国家资格时间段重叠 player allianceId="+epoch.allianceId());
+                previousUntil=Math.max(previousUntil,epoch.untilAt());
+            }
+        }
         public String nationIdAt(long at,boolean beforeBoundary) {
-            if(allianceId==null || allianceId.isBlank())return null;
-            var matches=epochs.stream().filter(epoch->epoch.contains(at,beforeBoundary)).toList();
-            if(matches.size()>1)throw new IllegalStateException("联盟收益时间轴重叠 allianceId="+allianceId+" at="+at);
-            return matches.isEmpty()?null:matches.get(0).nationId();
+            var memberships=epochs.stream().filter(epoch->epoch.contains(at,beforeBoundary)).toList();
+            if(memberships.size()>1)throw new IllegalStateException("玩家联盟成员时间轴重叠 at="+at);
+            if(memberships.isEmpty())return null;
+            var membership=memberships.get(0);
+            var nations=membership.nationEpochs().stream().filter(epoch->epoch.contains(at,beforeBoundary)).toList();
+            if(nations.size()>1)throw new IllegalStateException("联盟收益时间轴重叠 allianceId="+membership.allianceId()+" at="+at);
+            return nations.isEmpty()?null:nations.get(0).nationId();
         }
         public List<Long> changeTimes(long afterExclusive,long throughInclusive) {
             var times=new java.util.TreeSet<Long>();
-            for(var epoch:epochs) {
-                if(epoch.fromAt()>afterExclusive && epoch.fromAt()<=throughInclusive)times.add(epoch.fromAt());
-                if(epoch.untilAt()>afterExclusive && epoch.untilAt()<=throughInclusive && epoch.untilAt()!=Long.MAX_VALUE)
-                    times.add(epoch.untilAt());
+            for(var membership:epochs) {
+                if(membership.fromAt()>afterExclusive && membership.fromAt()<=throughInclusive)times.add(membership.fromAt());
+                if(membership.untilAt()>afterExclusive && membership.untilAt()<=throughInclusive
+                        && membership.untilAt()!=Long.MAX_VALUE)times.add(membership.untilAt());
+                for(var nation:membership.nationEpochs()) {
+                    if(nation.fromAt()>afterExclusive && nation.fromAt()<=throughInclusive
+                            && nation.fromAt()>=membership.fromAt() && nation.fromAt()<=membership.untilAt())
+                        times.add(nation.fromAt());
+                    if(nation.untilAt()>afterExclusive && nation.untilAt()<=throughInclusive
+                            && nation.untilAt()!=Long.MAX_VALUE && nation.untilAt()>=membership.fromAt()
+                            && nation.untilAt()<=membership.untilAt())times.add(nation.untilAt());
+                }
             }
             return List.copyOf(times);
         }

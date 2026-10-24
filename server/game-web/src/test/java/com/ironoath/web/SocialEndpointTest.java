@@ -1477,6 +1477,11 @@ class SocialEndpointTest {
         assertThat(get200("/social/summary", q.d).get("events").toString())
                 .as("事件随摘要一起下发（没有独立的事件端点）；组织身份变了要能自己看见，否则只会来问客服")
                 .contains("ALLIANCE_KICKED");
+        assertThat(socialStore.allianceMembershipEpochs(q.d)).as("真实审核加入与踢出HTTP都要留下成员资格区间")
+                .singleElement().satisfies(epoch->{
+                    assertThat(epoch.fromAt()).isPositive();
+                    assertThat(epoch.untilAt()).isGreaterThan(epoch.fromAt()).isLessThanOrEqualTo(System.currentTimeMillis());
+                });
 
         JsonNode denied = postRaw("/alliance/kick", q.c, new AllianceMemberReq(newRequestId(), q.b));
         assertThat(denied.get("code").asInt()).isEqualTo(ErrorCode.SOCIAL_PERMISSION_DENIED.code());

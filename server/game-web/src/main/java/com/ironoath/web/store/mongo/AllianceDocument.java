@@ -27,6 +27,7 @@ public record AllianceDocument(
         String tag,
         String leaderId,
         List<MemberEntry> members,
+        List<MemberEpochEntry> membershipEpochs,
         List<ContributionEntry> contributions,
         List<DonationEntry> donatedToday,
         List<TechEntry> techLevels,
@@ -43,6 +44,9 @@ public record AllianceDocument(
     record MemberEntry(String playerId, String role) {
     }
 
+    record MemberEpochEntry(String playerId,long fromAt,long untilAt) {
+    }
+
     record ContributionEntry(String playerId, long amount) {
     }
 
@@ -54,6 +58,10 @@ public record AllianceDocument(
     }
 
     static AllianceDocument fromDomain(Alliance alliance) {
+        return fromDomain(alliance,List.of());
+    }
+
+    static AllianceDocument fromDomain(Alliance alliance,List<MemberEpochEntry> membershipEpochs) {
         List<MemberEntry> members = new ArrayList<>();
         for (Map.Entry<String, AllianceRole> entry : alliance.members().entrySet()) {
             members.add(new MemberEntry(entry.getKey(), entry.getValue().name()));
@@ -71,13 +79,21 @@ public record AllianceDocument(
             techs.add(new TechEntry(entry.getKey(), entry.getValue()));
         }
         return new AllianceDocument(alliance.id(), alliance.name(), alliance.tag(), alliance.leaderId(),
-                members, contributions, donations, techs, alliance.level(), alliance.exp(),
+                members, membershipEpochs, contributions, donations, techs, alliance.level(), alliance.exp(),
                 alliance.fund(), alliance.territoryCount(), alliance.paidCapTier(),
                 alliance.version(), alliance.disbandedAt());
     }
 
     /** 乐观锁更新用的全字段 {@code $set}，与 {@link #fromDomain} 一一对应。 */
     org.springframework.data.mongodb.core.query.Update toUpdate() {
+        return updateFields();
+    }
+
+    org.springframework.data.mongodb.core.query.Update toUpdateWithMembershipEpochs() {
+        return updateFields().set("membershipEpochs",membershipEpochs==null?List.of():membershipEpochs);
+    }
+
+    private org.springframework.data.mongodb.core.query.Update updateFields() {
         return new org.springframework.data.mongodb.core.query.Update()
                 .set("name", name)
                 .set("tag", tag)
