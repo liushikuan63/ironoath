@@ -951,6 +951,11 @@ public class MarchAppService {
         long version=marches.versionOf(march.id());
         march=marches.findById(march.id()).orElse(null);
         if(march==null) return false;
+        if(march.status()==March.Status.FIGHTING && march.action()==March.Action.ATTACK
+                && march.targetType()==March.TargetType.STRATEGIC_TARGET) {
+            // 存量战略行军必须等原COMBAT恢复者确认；不能按普通FIGHTING静默略过或改成返程。
+            throw new IllegalStateException("战略 COMBAT 发布与恢复尚未接通，保留原交战兵权等待恢复");
+        }
         if (march.status() == March.Status.MARCHING) {
             if (now < march.arriveAt()) {
                 return false;
@@ -972,7 +977,8 @@ public class MarchAppService {
                     // 驻扎没有后续事件，等玩家召回
                 }
                 case ATTACK -> {
-                    if(march.targetType()==March.TargetType.PLAYER_CITY || march.targetType()==March.TargetType.RESOURCE) {
+                    if(march.targetType()==March.TargetType.PLAYER_CITY || march.targetType()==March.TargetType.RESOURCE
+                            || march.targetType()==March.TargetType.STRATEGIC_TARGET) {
                         // 所有身份先持久占有这场战斗；CAS失败者不会进入内核。
                         // FIGHTING已有协议状态，崩溃/部分结算时不退回MARCHING重打。
                         version=marches.save(march,version);
@@ -1036,14 +1042,19 @@ public class MarchAppService {
      * <p>PVP 这条仍缺城墙耐久、复仇/哀兵加成与地形三项，全部记录在
      * {@code PlayerCityBattleService} 的类注释里，不是遗漏。
      *
-     * <p><b>战斗打不成时队伍原样返程，绝不抛出去</b>：每日次数或体力在出征时预检过，
+     * <p><b>普通野怪/玩家城战斗打不成时队伍原样返程</b>：每日次数或体力在出征时预检过，
      * 但真正消耗发生在到达时，中间可能被同一玩家的其它行军抢走名额；
      * PVP 还多一种情况 —— 出征时守方有兵，几十分钟后可能已经被别人打光。
      * 那时如果抛异常，{@code processDue} 会把这支行军留在到期队列里反复重试 ——
      * 玩家看到的是一支永远卡在目标面前的队伍，而日志里一切正常。
-     * 让它带着满编兵力回家是唯一不会留下烂状态的处理。
+     * 让它带着满编兵力回家是唯一不会留下烂状态的处理。战略目标另由方法开头的
+     * COMBAT 屏障保留原交战态，不能把缺少战斗生产者误当作普通业务拒绝。
      */
     private boolean resolveAttack(March march,long now,long version) {
+        // 战略目标不属于通用“业务拒绝后原样返程”：没有COMBAT证明就没有战后去向。
+        // 保持入口关闭并明确失败，交战快照由advance先持久保存；本屏障不是战斗生产者。
+        if(march.targetType()==March.TargetType.STRATEGIC_TARGET)
+            throw new IllegalStateException("战略 COMBAT 发布与恢复尚未接通，不能把未战斗队伍原样返程");
         try {
             Map<String,Long> beneficiaries;
             try { beneficiaries=beneficiaries(march); }
