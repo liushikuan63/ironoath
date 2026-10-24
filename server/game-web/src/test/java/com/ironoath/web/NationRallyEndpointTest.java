@@ -853,6 +853,8 @@ class NationRallyEndpointTest {
         assertThat(afterNpcCapture.phase()).isEqualTo(com.ironoath.core.nation.WarScoreBoard.Phase.PREPARATION);
         assertThat(afterNpcCapture.gateCount(attacker.nationId)).isEqualTo(warRules.rules().gateCount()-1);
         assertThat(afterNpcCapture.gateCount(defender.nationId)).isEqualTo(1);
+        assertThat(afterNpcCapture.hasPendingBattleReservations())
+                .as("first NPC capture must release its exact War reservation before the next attack").isFalse();
 
         giveTroops(attacker.king,"unit_infantry_t4",100_000L);
         giveTroops(attacker.mates.get(0),"unit_infantry_t4",100_000L);
@@ -869,6 +871,12 @@ class NationRallyEndpointTest {
         String attackerMarchId="march_rally_"+rallyId;
         var frozen=marchRepository.findById(attackerMarchId).orElseThrow().snapshot();
         marchAppService.processDue(attacker.king,frozen.arriveAt());
+        var attackerAfterArrival=marchRepository.findById(attackerMarchId).orElse(null);
+        assertThat(attackerAfterArrival==null
+                || attackerAfterArrival.status()!=com.ironoath.core.march.March.Status.MARCHING)
+                .as("the second rally March must consume its exact arrival due before the target slot is read; march=%s due=%s",
+                        attackerMarchId,marchDue.dueAtOf(attackerMarchId))
+                .isTrue();
 
         var pending=targetOperations.findByTargetId(targetId).orElseThrow();
         assertThat(pending.sequence()).as("同一目标第二场战斗必须发布独立的递增COMBAT计划").isEqualTo(2L);

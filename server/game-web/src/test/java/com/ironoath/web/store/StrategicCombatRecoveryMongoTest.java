@@ -285,6 +285,73 @@ class StrategicCombatRecoveryMongoTest {
                 .isPresent();
     }
 
+    @Test void fortressBattleRecoveryFeedsFreshMongoOccupationIntoResourceSettlement() {
+        var configs=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
+        var fortress=com.ironoath.web.service.WorldTargets.from(configs).targets().stream()
+                .filter(target->target.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.FORTRESS)
+                .sorted(java.util.Comparator.comparing(target->target.definition().id())).findFirst().orElseThrow();
+        var battle=StrategicCombatSlotTest.fortressBattle(2384L,fortress.definition().id());
+        assertThat(battle.target().kind()).isEqualTo(com.ironoath.core.world.WorldGenerator.EntityType.FORTRESS);
+        assertThat(battle.result().winner()).isEqualTo(com.ironoath.battle.Winner.ATTACKER);
+        var plan=TargetOperationStore.CombatPlan.create(battle,1);var operations=new MongoTargetOperationStore(db.template());
+        assertThat(operations.compareAndSet(TargetOperationStore.Snapshot.combat(1,false,plan),0)).isTrue();
+
+        var armies=new MongoArmyStore(db.template());
+        for(var member:battle.attacker().currentMembers().entrySet()) {
+            var army=new ArmyState();member.getValue().forEach(army::add);
+            assertThat(armies.insertIfAbsent(member.getKey(),army)).isTrue();
+        }
+        var marches=new MongoMarchStore(db.template(),32);var attacker=March.fromSnapshot(battle.attacker().march());
+        assertThat(marches.insertIfAbsent(attacker)).isTrue();
+        while(marches.versionOf(attacker.id())<battle.attacker().marchVersion())
+            marches.save(attacker,marches.versionOf(attacker.id()));
+        var nationRules=new NationRulesAssembler(configs);var nations=new MongoNationStore(db.template(),nationRules);
+        long membershipStartedAt=Math.max(0,battle.happenedAt()-10);
+        var nation=Nation.found(battle.attacker().rally().nationId(),"要塞Mongo收益国",
+                battle.attacker().rally().initiatorId(),"owned-fortress-alliance",0,0,membershipStartedAt,nationRules.rules());
+        assertThat(nations.insertIfAbsent(nation)).isTrue();
+        var recovery=new StrategicCombatRecovery(operations,armies,marches,
+                new MongoTargetOccupationStore(db.template()),new MongoNeutralTargetGarrisonStore(db.template()),nations);
+        var pending=new MongoTargetOperationStore(db.template()).findByTargetId(fortress.definition().id()).orElseThrow();
+        var hospital=recovery.recoverHospitalReceipts(pending);recovery.recoverTargetState(pending,hospital);
+
+        var freshOccupation=new MongoTargetOccupationStore(db.template()).findByTargetIds(List.of(fortress.definition().id()))
+                .get(fortress.definition().id());
+        assertThat(freshOccupation.nationId()).isEqualTo(nation.id());
+        assertThat(freshOccupation.garrison()).isEqualTo(
+                com.ironoath.web.world.TargetOccupationStore.Garrison.stationed(attacker.id()));
+        assertThat(freshOccupation.capturedAt()).isEqualTo(battle.happenedAt());
+
+        var social=mock(SocialStore.class);var alliance=mock(com.ironoath.core.social.Alliance.class);
+        String allianceId="owned-fortress-alliance";when(alliance.id()).thenReturn(allianceId);
+        when(social.allianceOf(battle.attacker().rally().initiatorId())).thenReturn(java.util.Optional.of(alliance));
+        when(social.allianceMembershipEpochs(battle.attacker().rally().initiatorId(),allianceId,
+                battle.happenedAt()+3_600_000L)).thenReturn(List.of(new SocialStore.AllianceMembershipEpoch(
+                        allianceId,membershipStartedAt,Long.MAX_VALUE)));
+        var leaders=mock(com.ironoath.web.nation.NationLeaders.class);
+        when(leaders.bind(org.mockito.ArgumentMatchers.any())).thenAnswer(call->call.getArgument(0));
+        var nationTech=new com.ironoath.web.nation.NationTechBonuses(configs,social,
+                new MongoNationStore(db.template(),nationRules),leaders);
+        var policy=new com.ironoath.web.nation.NationPolicyBonuses(configs,social,
+                new MongoNationStore(db.template(),nationRules),leaders,new com.ironoath.web.battle.BattleArmyFactory(configs));
+        var freshRates=new com.ironoath.web.service.ResourceRateService(configs,new com.ironoath.web.tech.TechEffects(configs),
+                nationTech,policy,new MongoTargetOccupationStore(db.template()));
+        long at=battle.happenedAt(),settledAt=at+3_600_000L;
+        var resources=Map.of(com.ironoath.core.resource.ResourceIds.GRAIN,
+                new com.ironoath.core.player.PlayerResourceState(0,1_000_000L,0,0,at));
+        var player=com.ironoath.core.player.PlayerSave.createNew(battle.attacker().rally().initiatorId(),
+                "fresh-fortress-"+java.util.UUID.randomUUID(),"Mongo要塞成员",16,at,1,resources,
+                com.ironoath.core.player.PlayerPower.zero(),null);
+        long base=configs.getResource(com.ironoath.core.resource.ResourceIds.GRAIN).basePerHour();
+        long beforeCapture=freshRates.compute(new com.ironoath.core.city.CityState(),player.tech(),player.playerId(),at-1)
+                .perHour(com.ironoath.core.resource.ResourceIds.GRAIN);
+        var settled=freshRates.settle(player,new com.ironoath.core.city.CityState(),settledAt);
+        assertThat(settled.rates().perHour(com.ironoath.core.resource.ResourceIds.GRAIN))
+                .isEqualTo(beforeCapture+base*2/100);
+        assertThat(settled.credited().get(com.ironoath.core.resource.ResourceIds.GRAIN))
+                .isEqualTo(beforeCapture+base*2/100);
+    }
+
     @Test void playerDefenseKeepsFrozenOwnerInOneMongoRecoveryBoundary() {
         var battle=StrategicCombatSlotTest.battle(2399,true,true);var plan=TargetOperationStore.CombatPlan.create(battle,1);
         var operations=new MongoTargetOperationStore(db.template());

@@ -93,6 +93,37 @@ class StrategicCombatSlotTest {
         return scope.freezeTargetBattle(simulation,hospitals,defenderHospitals);
     }
 
+    static CapturedStrategicBattle fortressBattle(long seed,String targetId) {
+        var cfg=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));var social=mock(SocialStore.class);
+        var heroes=new HeroBattleMapper(cfg,new HeroStatsService(cfg),new EquipLedgers(mock(InventoryRepository.class),cfg),mock(HeroRepository.class),social);
+        var tech=new BattleTechBonuses(new AllianceTechBonuses(social,cfg),new TechEffects(cfg),mock(PlayerRepository.class));
+        var prep=new CapturedBattlePreparation(cfg,heroes,tech,new NationPolicyBonuses(cfg,social,
+                mock(NationStore.class),mock(NationLeaders.class),new BattleArmyFactory(cfg)));
+        var scope=prep.capture(200);
+        var target=com.ironoath.web.service.WorldTargets.from(cfg).targets().stream()
+                .filter(row->row.definition().id().equals(targetId))
+                .findFirst().orElseThrow();
+        if(target.definition().kind()!=com.ironoath.config.cfg.WorldTargetCfg.Kind.FORTRESS)
+            throw new IllegalArgumentException("fortress fixture requires configured fortress target");
+        var coord=target.coord();var troops=Map.of("unit_cavalry_t4",1_000_000L);
+        var participant=new Rally.Participant("owned-leader",troops,List.of());
+        var rally=Rally.restore("owned-fortress-rally",Rally.Scope.NATION,"owned-fortress-nation","owned-leader",
+                2,1,100,110,Map.of("owned-leader",participant),Rally.Status.PREPARING,null,
+                coord.x(),coord.y(),"STRATEGIC_TARGET",1);
+        rally.depart(110);
+        var march=new March("owned-fortress-march","owned-leader",Coord.of(10,10),Coord.of(coord.x(),coord.y()),
+                110,120,troops,List.of(),1000,1,March.TargetType.STRATEGIC_TARGET,targetId,March.Action.ATTACK);
+        march.attachToRally(rally.rallyId());march.arrive(120);
+        var attacker=scope.playerSide(march,7,PlayerTech.empty(),rally);
+        var owners=new InMemoryTargetOccupationStore();var marches=new InMemoryMarchStore(32);
+        var reader=new StrategicTargetDefender(cfg,owners,marches,social,new InMemoryNeutralTargetGarrisonStore());
+        var targetInput=scope.readTarget(reader,targetId);
+        var simulation=scope.simulateTarget(attacker,targetInput,null,null,seed,BattleModifier.none(),BattleModifier.none());
+        var save=mock(PlayerSave.class);when(save.tech()).thenReturn(PlayerTech.empty());
+        var member=new CapturedBattlePreparation.MemberHospital(mock(CityState.class),save);
+        return scope.freezeTargetBattle(simulation,scope.prepareHospitals(Map.of("owned-leader",member)),null);
+    }
+
     @ParameterizedTest @EnumSource(Backend.class)
     void withdrawalCombatWithdrawalUsesOneMonotonicSlotAndExactReplay(Backend b) {
         var store=store(b);var first=TargetOperationStoreTest.plan("before-combat",1,120);
