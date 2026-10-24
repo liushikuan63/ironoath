@@ -301,6 +301,28 @@ class NationRallyFortressMongoEndpointTest {
         assertThat(taken.garrison()).isEqualTo(TargetOccupationStore.Garrison.stationed(attackerMarch));
         assertThat(new com.ironoath.web.store.mongo.MongoTargetOperationStore(mongoTemplate)
                 .findByTargetId(fortress.definition().id()).orElseThrow().completed()).isTrue();
+        long recallAt=Math.max(System.currentTimeMillis(),taken.capturedAt());
+        var returning=recovery.recall(attacker.king(),attackerMarch,recallAt);
+        assertThat(returning.status()).isEqualTo(March.Status.RETURNING);
+        long returnAt=returning.returnArriveAt();
+        var emptyOwner=new MongoTargetOccupationStore(mongoTemplate).findByTargetIds(List.of(fortress.definition().id()))
+                .get(fortress.definition().id());
+        assertThat(emptyOwner.nationId()).isEqualTo(attacker.nationId());
+        assertThat(emptyOwner.garrison()).isEqualTo(TargetOccupationStore.Garrison.empty());
+        var withdrawal=new com.ironoath.web.store.mongo.MongoTargetOperationStore(mongoTemplate)
+                .findByTargetId(fortress.definition().id()).orElseThrow();
+        assertThat(withdrawal.kind()).isEqualTo(TargetOperationStore.Kind.WITHDRAWAL);
+        assertThat(withdrawal.sequence()).isEqualTo(3L);
+        assertThat(withdrawal.completed()).isTrue();
+        var due=new com.ironoath.web.store.mongo.MongoMarchDueQueue(mongoTemplate);
+        assertThat(due.dueAtOf(attackerMarch).orElseThrow()).isEqualTo(returnAt);
+        marchApp.processDue(attacker.king(),returnAt+1L);
+        assertThat(marchRepository.findById(attackerMarch)).isEmpty();
+        assertThat(due.dueAtOf(attackerMarch)).isEmpty();
+        var afterReturn=new MongoTargetOccupationStore(mongoTemplate).findByTargetIds(List.of(fortress.definition().id()))
+                .get(fortress.definition().id());
+        assertThat(afterReturn.nationId()).isEqualTo(attacker.nationId());
+        assertThat(afterReturn.garrison()).isEqualTo(TargetOccupationStore.Garrison.empty());
     }
 
     @Test
