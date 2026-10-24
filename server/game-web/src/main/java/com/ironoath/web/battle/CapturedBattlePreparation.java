@@ -17,6 +17,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.LinkedHashMap;
 import java.util.Collections;
+import java.util.ArrayList;
+import java.util.TreeMap;
 
 /**
  * 一次捕获的配置图生成原输入并亲自调用内核；不接外来BattleResult冒充同配置战果。
@@ -123,10 +125,24 @@ public final class CapturedBattlePreparation {
             StrategicRallyCasualties.requireOriginalMarch(frozen,identity,side);
             var heroSnapshots=heroes.snapshotsForMarch(frozen,originalRally);
             if(!identity.equals(StrategicRallyCasualties.RallyIdentity.freeze(originalRally)))throw new IllegalStateException("原集结在准备期间已变化");
+            var members=memberSides(frozen,identity,side);
             var army=armies.toSide(frozen.playerId(),folded,heroSnapshots,0L,
                     tech.forPlayer(frozen.playerId(),commanderTech),Long.MAX_VALUE,
-                    policies.combatBonusForAt(frozen.playerId(),happenedAt).plus(armies.rallyBonus(frozen)));
+                    policies.combatBonusForAt(frozen.playerId(),happenedAt).plus(armies.rallyBonus(frozen)),members);
             return new PreparedSide(this,frozen.snapshot(),folded,army,freezeTroops(frozen.units()),originalMarchVersion,identity);
+        }
+        private List<BattleMember> memberSides(March march,StrategicRallyCasualties.RallyIdentity identity,
+                                               StrategicRallyCasualties.Side side) {
+            var current=new TreeMap<String,Map<String,Long>>();
+            if(side==StrategicRallyCasualties.Side.ATTACKER)
+                identity.participants().forEach((player,participant)->current.put(player,participant.troops()));
+            else current.putAll(march.garrisonTroopsByPlayer());
+            var result=new ArrayList<BattleMember>(current.size());
+            current.forEach((player,units)->{
+                var types=new LinkedHashMap<String,UnitType>();units.keySet().forEach(id->types.put(id,armies.unitTypeOf(id)));
+                result.add(new BattleMember(player,units,types));
+            });
+            return List.copyOf(result);
         }
         /** 初始NPC构成也从本视图读取；实际余兵/归属/行军仍来自原仓储并由读取口复查版本。 */
         public TargetInput readTarget(StrategicTargetDefender reader,String targetId) {
@@ -224,7 +240,8 @@ public final class CapturedBattlePreparation {
                 original.defender.troops().keySet().forEach(id->types.put(id,armies.unitTypeOf(id)));
                 survivors=npcSurvivors(battle,StrategicRallyCasualties.Side.DEFENDER);
             } else defense=freezePlayerCasualties(battle,StrategicRallyCasualties.Side.DEFENDER,defenderHospitals);
-            return new CapturedStrategicBattle(1,happenedAt,fingerprint(),facts,battle.input,battle.result,attack,defense,types,survivors);
+            return new CapturedStrategicBattle(2,happenedAt,fingerprint(),facts,battle.input,battle.result,
+                    attack,defense,types,survivors);
         }
         /** 只冻结实际NPC余兵，不决定是否占领/退役，也不把败方幸存者伪记为击杀。 */
         public Map<String,Long> npcSurvivors(Simulation battle,StrategicRallyCasualties.Side side) {

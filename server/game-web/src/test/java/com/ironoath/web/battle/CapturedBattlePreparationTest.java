@@ -64,6 +64,34 @@ class CapturedBattlePreparationTest {
         assertThat(BattleSimulator.simulate(battle.input())).isEqualTo(battle.result());
         assertThatThrownBy(()->battle.input().rules().counterMatrix().get(UnitType.INFANTRY).clear()).isInstanceOf(UnsupportedOperationException.class);
     }
+    @Test void legacyBattleReportWithoutMemberContributionFieldsStillDeserializes()throws Exception {
+        var scope=preparation().capture(100);
+        var battle=scope.simulate(scope.neutralSide("owned-old-report-atk",Map.of("unit_infantry_t4",200L)),
+                scope.neutralSide("owned-old-report-def",Map.of("unit_cavalry_t4",100L)),TerrainType.PLAIN,2379,
+                BattleType.PVE,BattleModifier.none(),BattleModifier.none());
+        var mapper=new ObjectMapper();
+        ObjectNode legacy=(ObjectNode)mapper.valueToTree(battle.result());
+        for(String field:List.of("atkKillsByMember","defKillsByMember","atkSurvivorsByMember","defSurvivorsByMember"))legacy.remove(field);
+        for(var round:legacy.withArray("rounds")) {
+            ((ObjectNode)round).remove("defAttack");
+            ((ObjectNode)round).remove("attackerEffectiveAttackByMember");
+            ((ObjectNode)round).remove("defenderEffectiveAttackByMember");
+        }
+
+        assertThatCode(()->mapper.treeToValue(legacy,BattleResult.class))
+                .as("legacy B09 report payloads have no member-contribution extension")
+                .doesNotThrowAnyException();
+        BattleResult loaded=mapper.treeToValue(legacy,BattleResult.class);
+        assertThat(loaded.winner()).isEqualTo(battle.result().winner());
+        assertThat(loaded.atkSurvivors()).isEqualTo(battle.result().atkSurvivors());
+        assertThat(loaded.defSurvivors()).isEqualTo(battle.result().defSurvivors());
+        assertThat(loaded.atkKillsByMember()).isEmpty();assertThat(loaded.defKillsByMember()).isEmpty();
+        assertThat(loaded.rounds()).allSatisfy(round->{
+            assertThat(round.atkAttack()).isPositive();assertThat(round.defAttack()).isZero();
+            assertThat(round.attackerEffectiveAttackByMember()).isEmpty();
+            assertThat(round.defenderEffectiveAttackByMember()).isEmpty();
+        });
+    }
     @Test void sameVersionFingerprintDoesNotPermitMixingDifferentCapturedScopes() {
         var preparation=preparation();var one=preparation.capture(100);var two=preparation.capture(100);
         assertThat(one.fingerprint()).isEqualTo(two.fingerprint());
@@ -329,5 +357,42 @@ class CapturedBattlePreparationTest {
                 BattleModifier.none(),BattleModifier.none());
         assertThat(battle.input().battleType()).isEqualTo(BattleType.SIEGE);
         assertThat(battle.input().terrain()).isEqualTo(TerrainType.MOUNTAIN);
+    }
+
+    @Test void capturedStrategicBattleMustFreezeEngineMemberKillAttributionForEveryOriginalRallyMember() {
+        var members=new LinkedHashMap<String,Rally.Participant>();
+        members.put("owned-leader",new Rally.Participant("owned-leader",Map.of("unit_infantry_t4",40L),List.of()));
+        members.put("owned-helper",new Rally.Participant("owned-helper",Map.of("unit_cavalry_t4",60L),List.of()));
+        var party=Rally.restore("owned-engine-contribution",Rally.Scope.NATION,"owned-N","owned-leader",2,1,
+                100,110,members,Rally.Status.PREPARING,null,256,216,"STRATEGIC_TARGET",1);
+        party.depart(110);
+        var merged=new LinkedHashMap<String,Long>();
+        party.departure().mergedTroops().forEach(merged::put);
+        var source=new March("owned-engine-contribution-march","owned-leader",Coord.of(10,10),Coord.of(256,216),
+                110,120,merged,List.of(),1000,1,March.TargetType.STRATEGIC_TARGET,"gate_north",March.Action.ATTACK);
+        source.attachToRally(party.rallyId());source.arrive(120);
+
+        var scope=preparation().capture(120);
+        var attack=scope.playerSide(source,7,PlayerTech.empty(),party);
+        var target=scope.readTarget(reader(),"gate_north");
+        var battle=scope.simulateTarget(attack,target,null,null,2397,BattleModifier.none(),BattleModifier.none());
+        var hospitals=new LinkedHashMap<String,CapturedBattlePreparation.MemberHospital>();
+        for(String player:members.keySet())hospitals.put(player,new CapturedBattlePreparation.MemberHospital(
+                mock(CityState.class),mock(PlayerSave.class)));
+        var frozen=scope.freezeTargetBattle(battle,scope.prepareHospitals(hospitals),null);
+
+        var json=new ObjectMapper().valueToTree(frozen);
+        assertThat(json.path("result").path("atkKillsByMember").isObject())
+                .as("the COMBAT payload must persist engine-derived member kills before any recovery write")
+                .isTrue();
+        assertThat(frozen.result().atkKillsByMember().keySet()).containsExactly("owned-helper","owned-leader");
+        assertThat(frozen.result().atkKillsByMember().values().stream().mapToLong(Long::longValue).sum())
+                .isEqualTo(frozen.result().defDead());
+        assertThat(frozen.result().atkSurvivorsByMember()).isEqualTo(frozen.attacker().survivorsByPlayer());
+        for(var round:frozen.result().rounds()) {
+            assertThat(round.attackerEffectiveAttackByMember().keySet()).containsExactly("owned-helper","owned-leader");
+            assertThat(round.attackerEffectiveAttackByMember().values().stream().mapToLong(Long::longValue).sum())
+                    .isEqualTo(round.atkAttack());
+        }
     }
 }

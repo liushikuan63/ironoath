@@ -11,6 +11,7 @@ import java.util.List;
  * 这是刻意的，站位本身就是策略；但同一份 input 必须永远得到同一份 output。
  *
  * @param heroId         武将 id，对应 contract/config/hero.json
+ * @param playerId       原持有该武将的成员；非集结旧输入可空
  * @param slot           站位序号，从 0 开始，决定技能触发顺序
  * @param heroBonusFixed 该武将提供的攻击加成（定点，乘区 A 的一份）。
  *                       由调用方用 Formula.heroGrowth 从三维与等级算出，内核不重复计算
@@ -19,6 +20,7 @@ import java.util.List;
  */
 public record HeroSnapshot(
         String heroId,
+        String playerId,
         int slot,
         long heroBonusFixed,
         long defBonusFixed,
@@ -35,5 +37,10 @@ public record HeroSnapshot(
             throw new IllegalArgumentException("武将加成不得为负，heroId=" + heroId);
         }
         skills = List.copyOf(skills);
+    }
+
+    public HeroSnapshot(String heroId, int slot, long heroBonusFixed, long defBonusFixed,
+                        List<SkillSnapshot> skills) {
+        this(heroId, null, slot, heroBonusFixed, defBonusFixed, skills);
     }
 }

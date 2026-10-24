@@ -22,6 +22,7 @@ import java.util.Map;
  * @param formation        阵型，决定兵种落在哪一排（V1 只有 STANDARD）
  * @param hospitalCapacity 医院容量。伤兵超出容量的部分直接死亡（B00 伤兵规则）
  * @param orgBonus         组织侧加成（乘区 G 国策 / 乘区 H 城墙）。无国家、无城墙时传 {@link OrgBonus#none()}
+ * @param members          合并军队内的原成员兵权；为空表示旧式非成员战斗
  */
 public record ArmySide(
         String sideId,
@@ -31,7 +32,8 @@ public record ArmySide(
         long equipBonusFixed,
         FormationType formation,
         long hospitalCapacity,
-        OrgBonus orgBonus) {
+        OrgBonus orgBonus,
+        List<BattleMember> members) {
 
     /**
      * 七参构造器（组织侧加成恒为 0）。
@@ -45,7 +47,15 @@ public record ArmySide(
                     TechBonus techBonus, long equipBonusFixed, FormationType formation,
                     long hospitalCapacity) {
         this(sideId, heroes, units, techBonus, equipBonusFixed, formation, hospitalCapacity,
-                OrgBonus.none());
+                OrgBonus.none(), List.of());
+    }
+
+    /** Existing eight-argument callers have no member-attribution snapshot. */
+    public ArmySide(String sideId, List<HeroSnapshot> heroes, Map<UnitType, Long> units,
+                    TechBonus techBonus, long equipBonusFixed, FormationType formation,
+                    long hospitalCapacity, OrgBonus orgBonus) {
+        this(sideId, heroes, units, techBonus, equipBonusFixed, formation, hospitalCapacity,
+                orgBonus, List.of());
     }
 
     public ArmySide {
@@ -69,7 +79,27 @@ public record ArmySide(
         }
         heroes = List.copyOf(heroes);
         units = toEnumMap(units, sideId);
+        members = List.copyOf(members == null ? List.of() : members);
+        validateMembers(members, units, heroes, sideId);
         validateSlots(heroes, sideId);
+    }
+
+    private static void validateMembers(List<BattleMember> members, Map<UnitType, Long> units,
+                                        List<HeroSnapshot> heroes, String sideId) {
+        if (members.isEmpty()) return;
+        Map<String, Boolean> seen = new java.util.HashMap<>();
+        Map<UnitType, Long> merged = new EnumMap<>(UnitType.class);
+        for (UnitType type : UnitType.values()) merged.put(type, 0L);
+        for (BattleMember member : members) {
+            if (member == null || seen.put(member.playerId(), Boolean.TRUE) != null)
+                throw new IllegalArgumentException("战斗成员重复或缺失，sideId=" + sideId);
+            member.units().forEach((type, count) -> merged.merge(type, count, Math::addExact));
+        }
+        if (!merged.equals(units)) throw new IllegalArgumentException("战斗成员兵权与合并输入不守恒，sideId=" + sideId);
+        for (HeroSnapshot hero : heroes) {
+            if (hero.playerId() != null && !seen.containsKey(hero.playerId()))
+                throw new IllegalArgumentException("武将原成员不在本次战斗兵权内，heroId=" + hero.heroId());
+        }
     }
 
     /** 复制成 EnumMap，顺带把四个兵种补全（缺省的按 0 处理）并校验非负。 */

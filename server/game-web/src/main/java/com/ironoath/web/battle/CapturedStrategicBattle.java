@@ -40,7 +40,7 @@ public record CapturedStrategicBattle(int formatVersion,long happenedAt,String c
     }
 
     public CapturedStrategicBattle {
-        if(formatVersion!=1 || happenedAt<0 || configurationFingerprint==null || configurationFingerprint.isBlank()
+        if((formatVersion!=1 && formatVersion!=2) || happenedAt<0 || configurationFingerprint==null || configurationFingerprint.isBlank()
                 || target==null || input==null || result==null || attacker==null)
             throw invalid("原战略战斗载荷版本或输入缺失");
         if(input.battleType()!=BattleType.SIEGE || input.seed()!=result.seed()
@@ -48,6 +48,17 @@ public record CapturedStrategicBattle(int formatVersion,long happenedAt,String c
                 || result.atkOverflowDead()!=0 || result.defOverflowDead()!=0)
             throw invalid("原战略战斗类型/seed/组医院结果不一致");
         requirePlayer(attacker,StrategicRallyCasualties.Side.ATTACKER,input.attacker(),result,target,happenedAt);
+        if(formatVersion==2) {
+            if(!attacker.survivorsByPlayer().equals(result.atkSurvivorsByMember()))
+                throw invalid("攻方引擎成员幸存兵权与生产成员分摊不一致");
+            if(!result.atkKillsByMember().keySet().equals(attacker.currentMembers().keySet()))
+                throw invalid("攻方原成员引擎击杀来源缺失");
+            if(sum(result.atkKillsByMember())!=result.defDead())
+                throw invalid("攻方成员引擎击杀未覆盖全部守方阵亡");
+        } else if(!result.atkKillsByMember().isEmpty() || !result.defKillsByMember().isEmpty()
+                || !result.atkSurvivorsByMember().isEmpty() || !result.defSurvivorsByMember().isEmpty()) {
+            throw invalid("旧战略战斗载荷不能伪带成员击杀扩展");
+        }
         npcUnitTypes=freezeTypes(npcUnitTypes);npcSurvivors=freezeTroops(npcSurvivors);
         var original=target.defender();
         if(original.march()==null) {
@@ -57,10 +68,20 @@ public record CapturedStrategicBattle(int formatVersion,long happenedAt,String c
             for(var unit:npcSurvivors.entrySet())if(unit.getValue()>original.troops().getOrDefault(unit.getKey(),0L))throw invalid("NPC实际余兵超过原兵权");
             if(total(original.troops())!=Math.addExact(total(npcSurvivors),Math.addExact(result.defDead(),result.defWounded())))
                 throw invalid("原NPC战损不守恒");
+            if(!result.defKillsByMember().isEmpty() || !result.defSurvivorsByMember().isEmpty())
+                throw invalid("NPC不能伪造玩家成员引擎贡献");
         } else {
             if(defender==null || !npcUnitTypes.isEmpty() || !npcSurvivors.isEmpty()
                     || !original.march().equals(defender.march()) || original.marchVersion()!=defender.marchVersion()
                     || !original.occupation().nationId().equals(defender.rally().nationId()))throw invalid("原玩家守军/医院载荷错绑");
+            if(formatVersion==2) {
+                if(!defender.survivorsByPlayer().equals(result.defSurvivorsByMember()))
+                    throw invalid("守方引擎成员幸存兵权与生产成员分摊不一致");
+                if(!result.defKillsByMember().keySet().equals(defender.currentMembers().keySet()))
+                    throw invalid("守方原成员引擎击杀来源缺失");
+                if(sum(result.defKillsByMember())!=result.atkDead())
+                    throw invalid("守方成员引擎击杀未覆盖全部攻方阵亡");
+            }
             requirePlayer(defender,StrategicRallyCasualties.Side.DEFENDER,input.defender(),result,target,happenedAt);
         }
     }
@@ -88,5 +109,6 @@ public record CapturedStrategicBattle(int formatVersion,long happenedAt,String c
         troops.forEach((id,n)->{var type=types.get(id);if(type==null)throw invalid("原兵种映射遗漏");out.merge(type,n,Math::addExact);});return out;
     }
     private static long total(Map<String,Long> troops){long n=0;for(long count:troops.values())n=Math.addExact(n,count);return n;}
+    private static long sum(Map<String,Long> values){long total=0;for(long value:values.values())total=Math.addExact(total,value);return total;}
     private static IllegalArgumentException invalid(String message){return new IllegalArgumentException(message);}
 }

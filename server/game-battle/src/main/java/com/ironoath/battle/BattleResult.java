@@ -5,6 +5,7 @@ import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * 职责：战斗结果 —— 客户端播放战报所需的全部内容，自包含、不可变。
@@ -30,6 +31,10 @@ import java.util.Map;
  * @param lootCapacity    攻方剩余负载（掠夺上限）。B00：掠夺 = min(对方非保护资源, 我方剩余负载)
  * @param seed            本场战斗种子，服务端复算与反外挂用
  * @param attritionLog    每回合的减员系数（定点），排查数值异常时直接看这条曲线
+ * @param atkKillsByMember 攻方成员按实际引擎有效攻击贡献获得的守方阵亡数
+ * @param defKillsByMember 守方成员按实际引擎有效攻击贡献获得的攻方阵亡数
+ * @param atkSurvivorsByMember 引擎按原兵阶和生产成员损失分摊顺序得到的攻方逐成员幸存兵权
+ * @param defSurvivorsByMember 同上，守方逐成员幸存兵权
  */
 public record BattleResult(
         Winner winner,
@@ -46,7 +51,11 @@ public record BattleResult(
         Map<String, Long> loot,
         long lootCapacity,
         long seed,
-        List<Long> attritionLog) {
+        List<Long> attritionLog,
+        Map<String, Long> atkKillsByMember,
+        Map<String, Long> defKillsByMember,
+        Map<String,Map<String,Long>> atkSurvivorsByMember,
+        Map<String,Map<String,Long>> defSurvivorsByMember) {
 
     public BattleResult {
         if (winner == null) {
@@ -57,6 +66,10 @@ public record BattleResult(
         atkSurvivors = freezeUnits(atkSurvivors);
         defSurvivors = freezeUnits(defSurvivors);
         loot = freezeLoot(loot);
+        atkKillsByMember = freezeMembers(atkKillsByMember,"atkKillsByMember");
+        defKillsByMember = freezeMembers(defKillsByMember,"defKillsByMember");
+        atkSurvivorsByMember = freezeMemberUnits(atkSurvivorsByMember,"atkSurvivorsByMember");
+        defSurvivorsByMember = freezeMemberUnits(defSurvivorsByMember,"defSurvivorsByMember");
         if (totalRounds < 0 || totalRounds != rounds.size()) {
             throw new IllegalArgumentException("totalRounds 必须等于快照数量：totalRounds="
                     + totalRounds + ", rounds=" + rounds.size());
@@ -68,6 +81,22 @@ public record BattleResult(
         requireNonNegative(defWounded, "defWounded");
         requireNonNegative(defOverflowDead, "defOverflowDead");
         requireNonNegative(lootCapacity, "lootCapacity");
+        if(sum(atkKillsByMember)>defDead)
+            throw new IllegalArgumentException("攻方成员引擎击杀不得超过守方最终死亡数");
+        if(sum(defKillsByMember)>atkDead)
+            throw new IllegalArgumentException("守方成员引擎击杀不得超过攻方最终死亡数");
+        if(!atkSurvivorsByMember.isEmpty() && sumMemberUnits(atkSurvivorsByMember)!=ArmySide.totalOf(atkSurvivors))
+            throw new IllegalArgumentException("攻方成员幸存兵权与引擎聚合战果不守恒");
+        if(!defSurvivorsByMember.isEmpty() && sumMemberUnits(defSurvivorsByMember)!=ArmySide.totalOf(defSurvivors))
+            throw new IllegalArgumentException("守方成员幸存兵权与引擎聚合战果不守恒");
+    }
+
+    public BattleResult(Winner winner,List<RoundSnapshot> rounds,int totalRounds,
+                        Map<UnitType,Long> atkSurvivors,Map<UnitType,Long> defSurvivors,
+                        long atkDead,long atkWounded,long atkOverflowDead,long defDead,long defWounded,
+                        long defOverflowDead,Map<String,Long> loot,long lootCapacity,long seed,List<Long> attritionLog) {
+        this(winner,rounds,totalRounds,atkSurvivors,defSurvivors,atkDead,atkWounded,atkOverflowDead,
+                defDead,defWounded,defOverflowDead,loot,lootCapacity,seed,attritionLog,Map.of(),Map.of(),Map.of(),Map.of());
     }
 
     private static void requireNonNegative(long value, String field) {
@@ -96,6 +125,26 @@ public record BattleResult(
         }
         return Collections.unmodifiableMap(new java.util.TreeMap<>(copy));
     }
+
+    private static Map<String,Long> freezeMembers(Map<String,Long> source,String field) {
+        if(source==null)return Map.of();var out=new TreeMap<String,Long>();
+        source.forEach((id,value)->{if(id==null || id.isBlank() || value==null || value<0)throw new IllegalArgumentException(field+"包含无效成员");out.put(id,value);});
+        return Collections.unmodifiableMap(new LinkedHashMap<>(out));
+    }
+    private static Map<String,Map<String,Long>> freezeMemberUnits(Map<String,Map<String,Long>> source,String field) {
+        if(source==null)return Map.of();var out=new TreeMap<String,Map<String,Long>>();
+        source.forEach((player,units)->{
+            if(player==null || player.isBlank() || units==null)throw new IllegalArgumentException(field+"包含无效成员");
+            var frozen=new TreeMap<String,Long>();units.forEach((id,count)->{
+                if(id==null || id.isBlank() || count==null || count<0)throw new IllegalArgumentException(field+"包含无效兵权");
+                if(count>0)frozen.put(id,count);
+            });out.put(player,Collections.unmodifiableMap(new LinkedHashMap<>(frozen)));
+        });return Collections.unmodifiableMap(new LinkedHashMap<>(out));
+    }
+    private static long sumMemberUnits(Map<String,Map<String,Long>> members) {
+        long total=0;for(var units:members.values())for(long count:units.values())total=Math.addExact(total,count);return total;
+    }
+    private static long sum(Map<String,Long> values){long total=0;for(long value:values.values())total=Math.addExact(total,value);return total;}
 
     /** 攻方总损失（死亡 + 伤兵，含溢出死亡）。 */
     public long atkTotalLoss() {

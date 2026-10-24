@@ -348,7 +348,9 @@ public class PlayerCityBattleService {
             result = new BattleResult(result.winner(), result.rounds(), result.totalRounds(),
                     result.atkSurvivors(), result.defSurvivors(), result.atkDead(), result.atkWounded(),
                     result.atkOverflowDead(), result.defDead(), result.defWounded(), result.defOverflowDead(),
-                    plundered, result.lootCapacity(), result.seed(), result.attritionLog());
+                    plundered, result.lootCapacity(), result.seed(), result.attritionLog(),
+                    result.atkKillsByMember(),result.defKillsByMember(),
+                    result.atkSurvivorsByMember(),result.defSurvivorsByMember());
         }
 
         // ---------- 七、战后战力重算 ----------

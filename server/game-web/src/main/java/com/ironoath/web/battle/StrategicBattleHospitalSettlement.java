@@ -40,7 +40,9 @@ public record StrategicBattleHospitalSettlement(int formatVersion,TargetOperatio
         return new BattleResult(raw.winner(),raw.rounds(),raw.totalRounds(),raw.atkSurvivors(),raw.defSurvivors(),
                 Math.addExact(raw.atkDead(),attack.overflow()),attack.admitted(),attack.overflow(),
                 Math.addExact(raw.defDead(),defense.overflow()),defense.admitted(),defense.overflow(),
-                raw.loot(),raw.lootCapacity(),raw.seed(),raw.attritionLog());
+                raw.loot(),raw.lootCapacity(),raw.seed(),raw.attritionLog(),
+                raw.atkKillsByMember(),raw.defKillsByMember(),
+                raw.atkSurvivorsByMember(),raw.defSurvivorsByMember());
     }
 
     private static void requireSide(TargetOperationStore.CombatPlan plan,StrategicRallyCasualties original,

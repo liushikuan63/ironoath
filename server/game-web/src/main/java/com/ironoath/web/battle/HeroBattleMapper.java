@@ -104,7 +104,7 @@ public class HeroBattleMapper {
         for (var slot : selected) {
             var roster = heroes.findByPlayerId(slot.playerId()).orElseGet(HeroRoster::new);
             var own = snapshots(slot.playerId(), List.of(slot.heroId()), roster).get(0);
-            out.add(new HeroSnapshot(own.heroId(), out.size(), own.heroBonusFixed(),
+            out.add(new HeroSnapshot(own.heroId(), slot.playerId(), out.size(), own.heroBonusFixed(),
                     own.defBonusFixed(), own.skills()));
         }
         return List.copyOf(out);
@@ -138,7 +138,7 @@ public class HeroBattleMapper {
             List<SkillSnapshot> skills = new ArrayList<>(2);
             addSkill(skills, cfg.mainSkill(), instance.mainSkillLevel(), heroId);
             addSkill(skills, cfg.subSkill(), instance.subSkillLevel(), heroId);
-            out.add(new HeroSnapshot(heroId, slot,
+            out.add(new HeroSnapshot(heroId, playerId, slot,
                     HeroCalculator.attrToBonus(attrs.might(), heroStats.rules()),
                     HeroCalculator.attrToBonus(attrs.command(), heroStats.rules()),
                     skills));

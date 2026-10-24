@@ -38,6 +38,8 @@ class StrategicBattleHospitalSettlementTest {
         var original=StrategicCombatSlotTest.battle(2381,playerDefender,true);var plan=TargetOperationStore.CombatPlan.create(original,2);var repo=store(backend);
         var attacks=admit(repo,plan,original.attacker());var defenses=admit(repo,plan,original.defender());
         var settled=StrategicBattleHospitalSettlement.fromReceipts(plan,attacks,defenses);var raw=original.result();var actual=settled.result();
+        assertThat(actual.atkKillsByMember()).isEqualTo(raw.atkKillsByMember());
+        assertThat(actual.defKillsByMember()).isEqualTo(raw.defKillsByMember());
         long attackAdmitted=attacks.values().stream().mapToLong(x->sum(x.admitted())).sum();long attackOverflow=attacks.values().stream().mapToLong(ArmyState.StrategicWoundReceipt::overflowDead).sum();
         assertThat(raw.atkWounded()).isPositive();assertThat(actual.atkWounded()).isEqualTo(attackAdmitted);
         assertThat(actual.atkOverflowDead()).isEqualTo(attackOverflow);assertThat(actual.atkDead()).isEqualTo(raw.atkDead()+attackOverflow);

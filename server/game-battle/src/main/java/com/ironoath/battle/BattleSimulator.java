@@ -4,9 +4,13 @@ import com.ironoath.common.num.FixedPoint;
 import com.ironoath.common.rng.Rng;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.math.BigInteger;
 import java.util.TreeMap;
 
 /**
@@ -120,8 +124,10 @@ public final class BattleSimulator {
             long atkTotal = ArmySide.totalOf(atkCounts);
             long defTotal = ArmySide.totalOf(defCounts);
 
-            long atkAttack = effectiveAttack(input, atk, atkCounts, defCounts, defTotal, true);
-            long defAttack = effectiveAttack(input, def, defCounts, atkCounts, atkTotal, false);
+            AttackBreakdown atkBreakdown = effectiveAttack(input, atk, atkCounts, defCounts, defTotal, true);
+            AttackBreakdown defBreakdown = effectiveAttack(input, def, defCounts, atkCounts, atkTotal, false);
+            long atkAttack = atkBreakdown.total();
+            long defAttack = defBreakdown.total();
             long atkDefense = effectiveDefense(input, atk, atkCounts);
             long defDefense = effectiveDefense(input, def, defCounts);
 
@@ -153,8 +159,12 @@ public final class BattleSimulator {
                     jitter(roundRng, SALT_JITTER_DEFENDER, rules));
 
             // ---- 阶段 3：受击结算（ON_HIT）。被击方判定，效果作用于本回合 ----
+            var atkDamageBeforeOnHit=atk.pendingExtraDamageByMember();
+            var defDamageBeforeOnHit=def.pendingExtraDamageByMember();
             def.castSkills(input, round, roundRng, SkillPhase.ON_HIT, atk, triggers);
             atk.castSkills(input, round, roundRng, SkillPhase.ON_HIT, def, triggers);
+            atkBreakdown=includeOnHitDamageOwners(atkBreakdown,atkDamageBeforeOnHit,atk.pendingExtraDamageByMember());
+            defBreakdown=includeOnHitDamageOwners(defBreakdown,defDamageBeforeOnHit,def.pendingExtraDamageByMember());
             // DAMAGE 技能的额外损失沿用同一减员模型：对方总兵数 × 己方减员系数 × 技能倍率。
             // 注意归属：atk 的额外伤害落在 def 身上，反之亦然
             lossToDefender += lossOf(defTotal, atkAttrition, atk.pendingExtraDamageRatio());
@@ -195,7 +205,8 @@ public final class BattleSimulator {
             rounds.add(new RoundSnapshot(round, atk.snapshotCounts(), def.snapshotCounts(),
                     Math.max(0L, grossAtkLoss - atkHealed),
                     Math.max(0L, grossDefLoss - defHealed),
-                    atkAttack, defDefense, atkAttrition, triggers));
+                    atkAttack, defAttack, defDefense, atkAttrition, triggers,
+                    atkBreakdown.byMember(),defBreakdown.byMember()));
 
             if (def.totalUnits() <= 0L || atk.totalUnits() <= 0L) {
                 winner = (def.totalUnits() <= 0L && atk.totalUnits() <= 0L) ? Winner.DRAW
@@ -222,7 +233,9 @@ public final class BattleSimulator {
                 atk.counts(), def.counts(),
                 atkCas.dead(), atkCas.wounded(), atkCas.overflowDead(),
                 defCas.dead(), defCas.wounded(), defCas.overflowDead(),
-                loot, lootCapacity, input.seed(), attritionLog);
+                loot, lootCapacity, input.seed(), attritionLog,
+                memberKills(rounds,true,defCas.dead()),memberKills(rounds,false,atkCas.dead()),
+                atk.memberSurvivors(),def.memberSurvivors());
     }
 
     // ---------- 结算子过程 ----------
@@ -292,10 +305,10 @@ public final class BattleSimulator {
      * 它对每个对方兵种的倍率按对方数量占比加权平均。这样「带弓兵打骑步混编」与
      * 「带弓兵打纯骑兵」结果不同，编队构成才有意义。
      */
-    private static long effectiveAttack(BattleInput input, SideState side,
-                                        Map<UnitType, Long> ownCounts,
-                                        Map<UnitType, Long> enemyCounts, long enemyTotal,
-                                        boolean isAttacker) {
+    private static AttackBreakdown effectiveAttack(BattleInput input, SideState side,
+                                                    Map<UnitType, Long> ownCounts,
+                                                    Map<UnitType, Long> enemyCounts, long enemyTotal,
+                                                    boolean isAttacker) {
         BattleRules rules = input.rules();
         ArmySide army = isAttacker ? input.attacker() : input.defender();
         BattleModifier modifier = isAttacker ? input.modifierAttacker() : input.modifierDefender();
@@ -304,8 +317,9 @@ public final class BattleSimulator {
                 isAttacker ? input.attackerUnitStats() : input.defenderUnitStats();
         long heroBonus = side.heroAttackBonus();
         boolean vsBuilding = appliesToBuilding(input);
-
-        long total = 0L;
+        var members=side.memberCounts();var memberWeights=new TreeMap<String,Long>();
+        members.keySet().forEach(player->memberWeights.put(player,0L));
+        long total=0L,baseTotal=0L,heroTotal=0L;
         for (UnitType type : UnitType.values()) {
             long count = ownCounts.get(type);
             if (count <= 0L) {
@@ -315,18 +329,108 @@ public final class BattleSimulator {
             long counter = weightedCounter(type, enemyCounts, enemyTotal, rules);
             // 攻城器的对建筑倍率只在攻城战或城下地形生效：打野时不该让攻城器变强
             long siege = vsBuilding ? stats.vsBuildingBonusFixed() : 0L;
-            AttackMultipliers multipliers = new AttackMultipliers(
-                    heroBonus,
+            long otherModifier=modifier.totalFixed()-side.attackDebuff();
+            AttackMultipliers baseMultipliers = new AttackMultipliers(
+                    0L,
                     army.techBonus().attackFixed(),
                     army.equipBonusFixed(),
                     FixedPoint.mul(counter, FixedPoint.ONE + siege),
                     rules.terrainAttack(input.terrain()),
-                    modifier.totalFixed() + side.attackBuff() - side.attackDebuff(),
+                    otherModifier,
                     army.orgBonus().policyAttackFor(type));
-            long perUnit = FixedPoint.mul(stats.attackFixed(), multipliers.compose());
-            total += FixedPoint.mul(FixedPoint.of(count), perUnit);
+            AttackMultipliers heroMultipliers = new AttackMultipliers(
+                    heroBonus,army.techBonus().attackFixed(),army.equipBonusFixed(),
+                    FixedPoint.mul(counter,FixedPoint.ONE+siege),rules.terrainAttack(input.terrain()),
+                    otherModifier,army.orgBonus().policyAttackFor(type));
+            AttackMultipliers fullMultipliers = new AttackMultipliers(
+                    heroBonus,army.techBonus().attackFixed(),army.equipBonusFixed(),
+                    FixedPoint.mul(counter,FixedPoint.ONE+siege),rules.terrainAttack(input.terrain()),
+                    modifier.totalFixed()+side.attackBuff()-side.attackDebuff(),army.orgBonus().policyAttackFor(type));
+            long perUnitBase=FixedPoint.mul(stats.attackFixed(),baseMultipliers.compose());
+            long perUnitHero=FixedPoint.mul(stats.attackFixed(),heroMultipliers.compose());
+            long perUnit=FixedPoint.mul(stats.attackFixed(),fullMultipliers.compose());
+            baseTotal=Math.addExact(baseTotal,FixedPoint.mul(FixedPoint.of(count),perUnitBase));
+            heroTotal=Math.addExact(heroTotal,FixedPoint.mul(FixedPoint.of(count),perUnitHero));
+            total=Math.addExact(total,FixedPoint.mul(FixedPoint.of(count),perUnit));
+            if(!members.isEmpty()) {
+                for(var member:members.entrySet()) {
+                    long memberCount=member.getValue().getOrDefault(type,0L);
+                    if(memberCount<=0)continue;
+                    long contribution=FixedPoint.mul(FixedPoint.of(memberCount),perUnitBase);
+                    memberWeights.merge(member.getKey(),contribution,Math::addExact);
+                }
+            }
         }
-        return total;
+        if(memberWeights.isEmpty())return new AttackBreakdown(total,Map.of());
+        addMemberCredit(memberWeights,Math.max(0L,heroTotal-baseTotal),side.heroAttackBonusByMember(),memberWeights);
+        addMemberCredit(memberWeights,Math.max(0L,total-heroTotal),side.attackBuffByMember(),memberWeights);
+        side.pendingExtraDamageByMember().forEach((player,ratio)->{
+            long base=memberWeights.getOrDefault(player,0L);
+            long direct=FixedPoint.mul(FixedPoint.of(base),ratio);
+            if(direct>0)memberWeights.merge(player,direct,Math::addExact);
+        });
+        long memberTotal=0;for(long value:memberWeights.values())memberTotal=Math.addExact(memberTotal,value);
+        if(memberTotal<=0 && total>0)throw new IllegalStateException("战斗成员有效攻击贡献为空");
+        return new AttackBreakdown(total,allocateShares(total,memberWeights));
+    }
+
+    private static void addMemberCredit(Map<String,Long> destination,long amount,Map<String,Long> sourceWeights,
+                                        Map<String,Long> fallbackWeights) {
+        if(amount<=0)return;var weights=sourceWeights;
+        if(weights.isEmpty())weights=fallbackWeights;
+        if(weights.isEmpty())throw new IllegalStateException("成员技能增加了有效攻击但没有原成员来源");
+        allocateShares(amount,weights).forEach((player,value)->destination.merge(player,value,Math::addExact));
+    }
+
+    private record AttackBreakdown(long total,Map<String,Long> byMember) {}
+
+    private static AttackBreakdown includeOnHitDamageOwners(AttackBreakdown attack,
+            Map<String,Long> before,Map<String,Long> after) {
+        if(attack.byMember().isEmpty())return attack;
+        var weights=new TreeMap<String,Long>(attack.byMember());
+        after.forEach((player,ratio)->{
+            long added=ratio-before.getOrDefault(player,0L);
+            if(added>0) {
+                long sourceCredit=FixedPoint.mul(FixedPoint.of(attack.total()),added);
+                if(sourceCredit>0)weights.merge(player,sourceCredit,Math::addExact);
+            }
+        });
+        return new AttackBreakdown(attack.total(),allocateShares(attack.total(),weights));
+    }
+
+    /** Largest-remainder share allocation with stable player-id tie-breaking. */
+    private static Map<String,Long> allocateShares(long amount,Map<String,Long> weights) {
+        if(amount<0 || weights==null)throw new IllegalArgumentException("贡献份额输入无效");
+        var ids=new ArrayList<>(weights.keySet());ids.sort(String::compareTo);
+        if(ids.isEmpty()) {
+            if(amount!=0)throw new IllegalStateException("有阵亡但没有引擎成员贡献");
+            return Map.of();
+        }
+        BigInteger total=BigInteger.ZERO;
+        for(String id:ids) {Long weight=weights.get(id);if(id==null || id.isBlank() || weight==null || weight<0)throw new IllegalArgumentException("成员贡献无效");total=total.add(BigInteger.valueOf(weight));}
+        if(total.signum()==0) {
+            if(amount!=0)throw new IllegalStateException("有阵亡但成员有效贡献为零");
+            var zeros=new LinkedHashMap<String,Long>();ids.forEach(id->zeros.put(id,0L));return Collections.unmodifiableMap(zeros);
+        }
+        var shares=new LinkedHashMap<String,Long>();var remainders=new HashMap<String,BigInteger>();long assigned=0;
+        for(String id:ids) {
+            BigInteger product=BigInteger.valueOf(weights.get(id)).multiply(BigInteger.valueOf(amount));
+            BigInteger[] qr=product.divideAndRemainder(total);long share=qr[0].longValueExact();
+            shares.put(id,share);remainders.put(id,qr[1]);assigned=Math.addExact(assigned,share);
+        }
+        long remaining=amount-assigned;
+        ids.sort((a,b)->{int byRemainder=remainders.get(b).compareTo(remainders.get(a));return byRemainder!=0?byRemainder:a.compareTo(b);});
+        for(int i=0;i<remaining;i++){String id=ids.get(i);shares.put(id,Math.addExact(shares.get(id),1L));}
+        return Collections.unmodifiableMap(shares);
+    }
+
+    private static Map<String,Long> memberKills(List<RoundSnapshot> rounds,boolean attackers,long dead) {
+        var totals=new TreeMap<String,Long>();
+        for(RoundSnapshot round:rounds) {
+            var contributions=attackers?round.attackerEffectiveAttackByMember():round.defenderEffectiveAttackByMember();
+            contributions.forEach((player,value)->totals.merge(player,value,Math::addExact));
+        }
+        return totals.isEmpty()?Map.of():allocateShares(dead,totals);
     }
 
     /**
@@ -533,12 +637,17 @@ public final class BattleSimulator {
         private final ArmySide army;
         private final boolean attacker;
         private final Map<UnitType, Long> counts = new EnumMap<>(UnitType.class);
+        private final Map<String,Map<String,Long>> initialMemberUnits = new TreeMap<>();
+        private final Map<String,Map<String,Long>> memberUnits = new TreeMap<>();
+        private final Map<String,Map<String,UnitType>> memberUnitTypes = new TreeMap<>();
+        private boolean memberAttributionAvailable;
         /** 本场累计损失。HEAL 只能从这个池子里往回捞，不能凭空造兵。 */
         private final Map<UnitType, Long> cumulativeLoss = new EnumMap<>(UnitType.class);
         private final List<ActiveEffect> effects = new ArrayList<>();
         private final long initialUnits;
         private long pendingHealRatio;
         private long pendingExtraDamageRatio;
+        private final Map<String,Long> pendingExtraDamageByMember=new TreeMap<>();
 
         SideState(ArmySide army, boolean attacker) {
             this.army = army;
@@ -546,6 +655,12 @@ public final class BattleSimulator {
             for (UnitType type : UnitType.values()) {
                 counts.put(type, army.units().get(type));
                 cumulativeLoss.put(type, 0L);
+            }
+            memberAttributionAvailable=!army.members().isEmpty();
+            for(BattleMember member:army.members()) {
+                initialMemberUnits.put(member.playerId(),new TreeMap<>(member.unitsById()));
+                memberUnits.put(member.playerId(),new TreeMap<>(member.unitsById()));
+                memberUnitTypes.put(member.playerId(),member.unitTypes());
             }
             this.initialUnits = army.totalUnits();
         }
@@ -570,6 +685,31 @@ public final class BattleSimulator {
             return new EnumMap<>(counts);
         }
 
+        Map<String,Map<UnitType,Long>> memberCounts() {
+            if(!memberAttributionAvailable)return Map.of();
+            var byType=new TreeMap<String,Map<UnitType,Long>>();
+            memberUnits.forEach((player,units)->{
+                var countsByType=new EnumMap<UnitType,Long>(UnitType.class);for(UnitType type:UnitType.values())countsByType.put(type,0L);
+                units.forEach((unit,count)->countsByType.merge(memberUnitTypes.get(player).get(unit),count,Math::addExact));
+                byType.put(player,Collections.unmodifiableMap(countsByType));
+            });
+            for(UnitType type:UnitType.values()) {
+                long sum=byType.values().stream().mapToLong(row->row.get(type)).sum();
+                if(sum!=counts.get(type))return Map.of();
+            }
+            return Collections.unmodifiableMap(byType);
+        }
+
+        Map<String,Map<String,Long>> memberSurvivors() {
+            if(!memberAttributionAvailable)return Map.of();
+            var copy=new TreeMap<String,Map<String,Long>>();
+            memberUnits.forEach((player,units)->{
+                var nonzero=new TreeMap<String,Long>();units.forEach((id,count)->{if(count>0)nonzero.put(id,count);});
+                copy.put(player,Collections.unmodifiableMap(new LinkedHashMap<>(nonzero)));
+            });
+            return Collections.unmodifiableMap(new LinkedHashMap<>(copy));
+        }
+
         long totalUnits() {
             return ArmySide.totalOf(counts);
         }
@@ -591,6 +731,7 @@ public final class BattleSimulator {
             }
             added.forEach((type, count) -> {
                 if (count != null && count > 0L) {
+                    if(memberAttributionAvailable)memberAttributionAvailable=false;
                     counts.put(type, counts.getOrDefault(type, 0L) + count);
                 }
             });
@@ -604,6 +745,13 @@ public final class BattleSimulator {
             return total;
         }
 
+        Map<String,Long> heroAttackBonusByMember() {
+            var byMember=new TreeMap<String,Long>();
+            for(HeroSnapshot hero:army.heroesBySlot())if(hero.playerId()!=null && hero.heroBonusFixed()>0)
+                byMember.merge(hero.playerId(),hero.heroBonusFixed(),Math::addExact);
+            return byMember;
+        }
+
         long heroDefenseBonus() {
             long total = 0L;
             for (HeroSnapshot h : army.heroesBySlot()) {
@@ -614,6 +762,13 @@ public final class BattleSimulator {
 
         long attackBuff() {
             return sumEffect(SkillEffect.BUFF_ATK);
+        }
+
+        Map<String,Long> attackBuffByMember() {
+            var byMember=new TreeMap<String,Long>();
+            for(ActiveEffect effect:effects)if(effect.effect()==SkillEffect.BUFF_ATK && effect.sourcePlayerId()!=null)
+                byMember.merge(effect.sourcePlayerId(),effect.valueFixed(),Math::addExact);
+            return byMember;
         }
 
         long attackDebuff() {
@@ -646,11 +801,13 @@ public final class BattleSimulator {
             });
             pendingHealRatio = 0L;
             pendingExtraDamageRatio = 0L;
+            pendingExtraDamageByMember.clear();
         }
 
         long pendingExtraDamageRatio() {
             return pendingExtraDamageRatio;
         }
+        Map<String,Long> pendingExtraDamageByMember(){return Collections.unmodifiableMap(new TreeMap<>(pendingExtraDamageByMember));}
 
         /**
          * 按固定顺序施放某一阶段的技能：武将按 slot 升序，同武将按技能列表顺序。
@@ -695,10 +852,13 @@ public final class BattleSimulator {
                 // 增益作用于自己，减益作用于敌方 —— 两者都记成 ActiveEffect，
                 // 由 effectiveAttack / effectiveDefense 在合成乘区时分别读取
                 case BUFF_ATK, BUFF_DEF ->
-                        effects.add(new ActiveEffect(skill.effect(), applied, skill.durationRounds()));
+                        effects.add(new ActiveEffect(skill.effect(), applied, skill.durationRounds(),hero.playerId()));
                 case DEBUFF_ATK, DEBUFF_DEF ->
-                        enemy.effects.add(new ActiveEffect(skill.effect(), applied, skill.durationRounds()));
-                case DAMAGE -> pendingExtraDamageRatio += applied;
+                        enemy.effects.add(new ActiveEffect(skill.effect(), applied, skill.durationRounds(),hero.playerId()));
+                case DAMAGE -> {
+                    pendingExtraDamageRatio += applied;
+                    if(hero.playerId()!=null)pendingExtraDamageByMember.merge(hero.playerId(),applied,Math::addExact);
+                }
                 case HEAL -> pendingHealRatio += applied;
                 case SKIP_TURN ->
                         // 刻意不实现硬控：见 SkillEffect.SKIP_TURN 注释
@@ -768,7 +928,31 @@ public final class BattleSimulator {
                     cumulativeLoss.put(type, cumulativeLoss.get(type) + l);
                 }
             }
+            refreshMemberUnits();
             return lost;
+        }
+
+        /** Reapply the production unit-id split and member split to cumulative current loss. */
+        private void refreshMemberUnits() {
+            if(!memberAttributionAvailable)return;
+            var lossByUnit=new TreeMap<String,Long>();
+            for(UnitType type:UnitType.values()) {
+                var tierWeights=new TreeMap<String,Long>();
+                initialMemberUnits.forEach((player,units)->units.forEach((id,count)->{
+                    if(memberUnitTypes.get(player).get(id)==type)tierWeights.merge(id,count,Math::addExact);
+                }));
+                long loss=cumulativeLoss.get(type);long total=tierWeights.values().stream().mapToLong(Long::longValue).sum();
+                if(loss>total){memberAttributionAvailable=false;return;}
+                allocateShares(loss,tierWeights).forEach((id,count)->{if(count>0)lossByUnit.put(id,count);});
+            }
+            memberUnits.clear();initialMemberUnits.forEach((player,units)->memberUnits.put(player,new TreeMap<>(units)));
+            for(var entry:lossByUnit.entrySet()) {
+                var byPlayer=new TreeMap<String,Long>();initialMemberUnits.forEach((player,units)->{
+                    long count=units.getOrDefault(entry.getKey(),0L);if(count>0)byPlayer.put(player,count);
+                });
+                var shares=allocateShares(entry.getValue(),byPlayer);
+                shares.forEach((player,count)->{if(count>0){var units=memberUnits.get(player);units.put(entry.getKey(),units.get(entry.getKey())-count);}});
+            }
         }
 
         /** 某排在本轮已分摊到的损失，用于计算回流时的剩余容量。 */
@@ -821,6 +1005,7 @@ public final class BattleSimulator {
                     cumulativeLoss.put(type, cumulativeLoss.get(type) - h);
                 }
             }
+            refreshMemberUnits();
             return healed;
         }
 
@@ -865,11 +1050,13 @@ public final class BattleSimulator {
     private static final class ActiveEffect {
         private final SkillEffect effect;
         private final long valueFixed;
+        private final String sourcePlayerId;
         private int remainingRounds;
 
-        ActiveEffect(SkillEffect effect, long valueFixed, int durationRounds) {
+        ActiveEffect(SkillEffect effect, long valueFixed, int durationRounds,String sourcePlayerId) {
             this.effect = effect;
             this.valueFixed = valueFixed;
+            this.sourcePlayerId=sourcePlayerId;
             this.remainingRounds = durationRounds;
         }
 
@@ -880,6 +1067,8 @@ public final class BattleSimulator {
         long valueFixed() {
             return valueFixed;
         }
+
+        String sourcePlayerId(){return sourcePlayerId;}
 
         int remainingRounds() {
             return remainingRounds;

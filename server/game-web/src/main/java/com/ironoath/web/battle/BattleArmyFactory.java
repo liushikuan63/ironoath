@@ -1,6 +1,7 @@
 package com.ironoath.web.battle;
 
 import com.ironoath.battle.ArmySide;
+import com.ironoath.battle.BattleMember;
 import com.ironoath.battle.FormationType;
 import com.ironoath.battle.HeroSnapshot;
 import com.ironoath.battle.TechBonus;
@@ -201,6 +202,13 @@ public class BattleArmyFactory {
     public ArmySide toSide(String sideId, Folded folded, List<HeroSnapshot> heroes,
                            long equipBonusFixed, TechBonus techBonus, long hospitalCapacity,
                            OrgBonus orgBonus) {
+        return toSide(sideId,folded,heroes,equipBonusFixed,techBonus,hospitalCapacity,orgBonus,List.of());
+    }
+
+    /** Builds the same pooled battle side with original member unit partitions for engine attribution. */
+    public ArmySide toSide(String sideId, Folded folded, List<HeroSnapshot> heroes,
+                           long equipBonusFixed, TechBonus techBonus, long hospitalCapacity,
+                           OrgBonus orgBonus, List<BattleMember> members) {
         if (folded == null) {
             throw new IllegalArgumentException("folded 不得为 null");
         }
@@ -208,7 +216,7 @@ public class BattleArmyFactory {
         return new ArmySide(sideId, heroes == null ? List.of() : heroes, folded.counts(),
                 techBonus == null ? TechBonus.none() : techBonus,
                 equipBonusFixed, FormationType.STANDARD, hospitalCapacity,
-                orgBonus == null ? OrgBonus.none() : orgBonus);
+                orgBonus == null ? OrgBonus.none() : orgBonus,members);
     }
 
     /**

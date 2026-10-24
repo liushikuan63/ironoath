@@ -638,6 +638,64 @@ class BattleSimulatorTest {
                 .hasMessageContaining("三排损失分摊之和");
     }
 
+    @Test void memberWarKillsUseOwnedHeroAndSkillAdjustedEngineAttackWithoutChangingBattleOutcome() {
+        var memberTypes=Map.of("unit_infantry_t1",UnitType.INFANTRY);
+        var members=List.of(new BattleMember("player-a",Map.of("unit_infantry_t1",100L),memberTypes),
+                new BattleMember("player-b",Map.of("unit_infantry_t1",100L),memberTypes));
+        var heroes=List.of(new HeroSnapshot("hero-a","player-a",0,FixedPoint.parse("0.50"),0L,
+                        List.of(skill(SkillPhase.EVERY_ROUND,SkillEffect.DAMAGE,"0.35",1))),
+                new HeroSnapshot("hero-b","player-b",1,0L,0L,List.of()));
+        var merged=new ArmySide("merged-atk",heroes,Map.of(UnitType.INFANTRY,200L),TechBonus.none(),0L,
+                FormationType.STANDARD,Long.MAX_VALUE,OrgBonus.none(),members);
+        var pooled=new ArmySide("merged-atk",heroes,Map.of(UnitType.INFANTRY,200L),TechBonus.none(),0L,
+                FormationType.STANDARD,Long.MAX_VALUE);
+        assertThat(merged.heroesBySlot()).extracting(HeroSnapshot::playerId).containsExactly("player-a","player-b");
+        assertThat(merged.heroesBySlot()).extracting(HeroSnapshot::heroBonusFixed)
+                .containsExactly(FixedPoint.parse("0.50"),0L);
+        var defender=army("defender",100,0,0,0);
+        var withMembers=BattleSimulator.simulate(input(merged,defender,2397,BattleType.SIEGE));
+        var pooledResult=BattleSimulator.simulate(input(pooled,defender,2397,BattleType.SIEGE));
+
+        assertThat(withMembers.winner()).isEqualTo(pooledResult.winner());
+        assertThat(withMembers.rounds()).extracting(RoundSnapshot::atkUnits).containsExactlyElementsOf(
+                pooledResult.rounds().stream().map(RoundSnapshot::atkUnits).toList());
+        assertThat(withMembers.atkDead()).isEqualTo(pooledResult.atkDead());
+        assertThat(withMembers.defDead()).isEqualTo(pooledResult.defDead());
+        assertThat(withMembers.atkKillsByMember().keySet()).containsExactly("player-a","player-b");
+        assertThat(withMembers.atkKillsByMember().values().stream().mapToLong(Long::longValue).sum())
+                .isEqualTo(withMembers.defDead());
+        assertThat(withMembers.atkKillsByMember().get("player-a")).as("heroes=%s, kills=%s, round contributions=%s",
+                merged.heroesBySlot(),
+                withMembers.atkKillsByMember(),withMembers.rounds().stream().map(RoundSnapshot::attackerEffectiveAttackByMember).toList())
+                .isGreaterThan(withMembers.atkKillsByMember().get("player-b"));
+        for(var round:withMembers.rounds()) {
+            assertThat(round.attackerEffectiveAttackByMember().keySet()).containsExactly("player-a","player-b");
+            assertThat(round.attackerEffectiveAttackByMember().values().stream().mapToLong(Long::longValue).sum())
+                    .isEqualTo(round.atkAttack());
+            assertThat(round.attackerEffectiveAttackByMember().get("player-a"))
+                    .isGreaterThan(round.attackerEffectiveAttackByMember().get("player-b"));
+            assertThat(round.defenderEffectiveAttackByMember()).isEmpty();
+        }
+    }
+
+    @Test void onHitDamageCreditFollowsOriginalHeroOwnerAfterPooledAttackWasCalculated() {
+        var memberTypes=Map.of("unit_infantry_t1",UnitType.INFANTRY);
+        var members=List.of(new BattleMember("player-a",Map.of("unit_infantry_t1",100L),memberTypes),
+                new BattleMember("player-b",Map.of("unit_infantry_t1",100L),memberTypes));
+        var heroes=List.of(new HeroSnapshot("hero-onhit","player-a",0,0L,0L,
+                        List.of(skill(SkillPhase.ON_HIT,SkillEffect.DAMAGE,"0.35",1))),
+                new HeroSnapshot("hero-control","player-b",1,0L,0L,List.of()));
+        var side=new ArmySide("onhit-atk",heroes,Map.of(UnitType.INFANTRY,200L),TechBonus.none(),0L,
+                FormationType.STANDARD,Long.MAX_VALUE,OrgBonus.none(),members);
+        var result=BattleSimulator.simulate(input(side,army("onhit-def",100,0,0,0),2400,BattleType.SIEGE));
+
+        assertThat(result.rounds()).isNotEmpty();
+        for(var round:result.rounds())assertThat(round.attackerEffectiveAttackByMember().get("player-a"))
+                .as("ON_HIT DAMAGE source must receive its effective contribution after skill resolution")
+                .isGreaterThan(round.attackerEffectiveAttackByMember().get("player-b"));
+        assertThat(result.atkKillsByMember().get("player-a")).isGreaterThan(result.atkKillsByMember().get("player-b"));
+    }
+
     // ---------- 辅助构造 ----------
 
     private static HeroSnapshot hero(String id, int slot, String bonus) {
