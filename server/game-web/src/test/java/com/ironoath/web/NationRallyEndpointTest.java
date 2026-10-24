@@ -134,6 +134,7 @@ class NationRallyEndpointTest {
     @Autowired private com.ironoath.core.march.MarchDueQueue marchDue;
     @Autowired private com.ironoath.web.season.SeasonBoardStore seasonBoards;
     @Autowired private com.ironoath.web.nation.WarStore wars;
+    @Autowired private com.ironoath.web.service.ResourceRateService resourceRateService;
 
     /** 联盟名/标签与国名的序号：同一轮里要建好几个组织，重名会在 NAME_TAKEN 上报错而测不到逻辑。 */
     private int seq;
@@ -1081,6 +1082,72 @@ class NationRallyEndpointTest {
         assertThat(finalWar.gateCount(attacker.nationId)).isEqualTo(warRules.rules().gateCount());
         assertThat(finalWar.gateCount(defender.nationId)).isZero();
         assertThat(finalWar.phase()).isEqualTo(com.ironoath.core.nation.WarScoreBoard.Phase.SIEGE);
+    }
+
+    @Test
+    @DirtiesContext(methodMode=DirtiesContext.MethodMode.AFTER_METHOD)
+    @DisplayName("国家集结真实攻占一座配置要塞后粮木石铁四资源均获2%并按占有时点结算")
+    void nationalRallyCapturesFortressAndCreditsAllFourResources() throws Exception {
+        DeterministicBattleSeedTestConfig.seed=2384L;
+        Nation nation=nation(4);
+        var target=WorldTargets.from(configs).targets().stream()
+                .filter(row->row.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.FORTRESS)
+                .sorted(java.util.Comparator.comparing(row->row.definition().id())).findFirst().orElseThrow();
+        var coord=target.coord();
+        doNothing().when(strategicTargetCircleGuard).guardRallyStart(
+                org.mockito.ArgumentMatchers.eq(nation.king),org.mockito.ArgumentMatchers.eq(coord),
+                org.mockito.ArgumentMatchers.anyInt());
+        doNothing().when(strategicTargetCircleGuard).guardArrival(org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyInt());
+        giveTroops(nation.king,"unit_cavalry_t4",1_000_000L);
+        giveTroops(nation.mates.get(0),"unit_cavalry_t4",1_000_000L);
+        String rallyId=post200("/rally/nation",nation.king,new NationRallyReq(newRequestId(),
+                new SocialCoord(coord.x(),coord.y()),SocialTargetType.STRATEGIC_TARGET,4,10,
+                List.of(new RallyTroop("unit_cavalry_t4",500_000L)),List.of()))
+                .get("rally").get("rallyId").asText();
+        post200("/rally/join",nation.mates.get(0),new RallyJoinReq(newRequestId(),rallyId,
+                List.of(new RallyTroop("unit_cavalry_t4",500_000L)),List.of()));
+
+        var rally=socialStore.rallyOf(rallyId).orElseThrow();
+        marchAppService.processDue(nation.king,rally.prepareUntil()+1L);
+        String marchId="march_rally_"+rallyId;
+        var march=marchRepository.findById(marchId).orElseThrow().snapshot();
+        marchAppService.processDue(nation.king,march.arriveAt());
+        var slot=targetOperations.findByTargetId(target.definition().id()).orElseThrow();
+        assertThat(slot.combatPlan().battle().input().battleType()).isEqualTo(com.ironoath.battle.BattleType.SIEGE);
+        assertThat(slot.combatPlan().battle().target().kind()).isEqualTo(
+                com.ironoath.core.world.WorldGenerator.EntityType.FORTRESS);
+        assertThat(slot.combatPlan().battle().result().winner()).isEqualTo(com.ironoath.battle.Winner.ATTACKER);
+        strategicRecovery.recoverPending();
+        var occupation=targetOccupations.findByTargetIds(List.of(target.definition().id())).get(target.definition().id());
+        assertThat(occupation.nationId()).isEqualTo(nation.nationId);
+        assertThat(occupation.garrison()).isEqualTo(
+                com.ironoath.web.world.TargetOccupationStore.Garrison.stationed(marchId));
+
+        var resourceIds=List.of(com.ironoath.core.resource.ResourceIds.GRAIN,
+                com.ironoath.core.resource.ResourceIds.WOOD,com.ironoath.core.resource.ResourceIds.STONE,
+                com.ironoath.core.resource.ResourceIds.IRON);
+        var resources=resourceIds.stream().collect(java.util.stream.Collectors.toMap(id->id,
+                id->new PlayerResourceState(0,1_000_000L,0,0,occupation.capturedAt()),
+                (left,right)->left,java.util.LinkedHashMap::new));
+        var player=PlayerSave.createNew(nation.king,"fortress-output-"+UUID.randomUUID(),"要塞收益验收",16,
+                occupation.capturedAt(),1,resources,com.ironoath.core.player.PlayerPower.zero(),null);
+        long settledAt=occupation.capturedAt()+3_600_000L;
+        var settled=resourceRateService.settle(player,new com.ironoath.core.city.CityState(),settledAt);
+        for(String id:resourceIds) {
+            long base=configs.getResource(id).basePerHour();
+            long expected=base+(base*2/100);
+            assertThat(settled.credited().get(id)).isEqualTo(expected);
+            assertThat(settled.rates().perHour(id)).isEqualTo(expected);
+        }
+        var viewPlayer=PlayerSave.createNew(nation.king,"fortress-view-"+UUID.randomUUID(),"要塞收益只读",16,
+                occupation.capturedAt(),1,resources,com.ironoath.core.player.PlayerPower.zero(),null);
+        var view=resourceRateService.settledView(viewPlayer,new com.ironoath.core.city.CityState(),settledAt);
+        for(String id:resourceIds) {
+            long base=configs.getResource(id).basePerHour();
+            assertThat(view.get(id).current()).isEqualTo(base+(base*2/100));
+            assertThat(viewPlayer.resource(id).current()).isZero();
+        }
     }
 
     // ---------- 加入 ----------
