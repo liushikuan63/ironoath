@@ -32,6 +32,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -133,6 +134,7 @@ class NationRallyEndpointTest {
 
     /** 撞锁注入器（见 {@link #injectConflicts}）；null 表示这一支用例没换过 store 字段。 */
     private SaveRallyConflicts conflicts;
+    private Long activeTestWarStartedAt;
     private final List<Runnable> seamRestorers = new ArrayList<>();
     private SocialStore realStore;
     private Object installedProxy;
@@ -156,6 +158,15 @@ class NationRallyEndpointTest {
     void restoreSettlingSeam() throws Exception {
         for (Runnable restore : seamRestorers) { restore.run(); }
         seamRestorers.clear();
+        if(activeTestWarStartedAt!=null) {
+            var board=wars.findByStartedAt(activeTestWarStartedAt).orElse(null);
+            if(board!=null && board.phase()!=com.ironoath.core.nation.WarScoreBoard.Phase.SETTLED
+                    && !board.hasPendingBattleReservations()) {
+                board.settle(board.siegeStartedAt());
+                wars.save(board);
+            }
+            activeTestWarStartedAt=null;
+        }
         if (conflicts == null) {
             return;
         }
@@ -746,6 +757,7 @@ class NationRallyEndpointTest {
     }
 
     @Test
+    @DirtiesContext(methodMode=DirtiesContext.MethodMode.AFTER_METHOD)
     @DisplayName("国家集结HTTP攻方击败玩家驻军后按冻结胜果完成归属与双方战后恢复")
     void strategicNationalRallyPlayerAttackerVictoryFlowsThroughHttpAndRecovery() throws Exception {
         DeterministicBattleSeedTestConfig.seed=2384L;
@@ -788,6 +800,20 @@ class NationRallyEndpointTest {
                 defenderMarch.arriveAt(),"fixture-player-capture",1L,
                 com.ironoath.web.world.TargetOccupationStore.Garrison.stationed(defenderMarchId));
         assertThat(targetOccupations.compareAndSet(occupied,0L)).isTrue();
+
+        long warStartedAt=System.currentTimeMillis()-1L;
+        var warRules=new com.ironoath.web.nation.WarRulesAssembler(configs);
+        var war=new com.ironoath.core.nation.WarScoreBoard(warRules.rules(),warStartedAt,
+                attacker.nationId,warStartedAt+3_600_000L);
+        war.registerNation(attacker.nationId);war.registerNation(defender.nationId);
+        var gateIds=WorldTargets.from(configs).targets().stream()
+                .filter(row->row.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.GATE)
+                .map(row->row.definition().id()).sorted().toList();
+        assertThat(gateIds).hasSize(warRules.rules().gateCount());
+        gateIds.forEach(gateId->war.captureGate(attacker.nationId,gateId));
+        war.beginSiege(warStartedAt+1L);
+        assertThat(wars.insertIfNoneActive(war)).isTrue();
+        activeTestWarStartedAt=warStartedAt;
 
         giveTroops(attacker.king,40_000L);giveTroops(attacker.mates.get(0),40_000L);
         String rallyId=post200("/rally/nation",attacker.king,new NationRallyReq(newRequestId(),
@@ -859,13 +885,15 @@ class NationRallyEndpointTest {
         }
 
         var warRecovery=completed.combatPlan().warRecovery();
-        if(warRecovery!=null && warRecovery.reservation()!=null) {
-            var reservation=warRecovery.reservation();
-            assertThat(warRecovery.event()).isNotNull();
-            assertThat(wars.findByStartedAt(reservation.warStartedAt()).orElseThrow()
-                    .battleEvent(targetId)).isEqualTo(warRecovery.event());
-            assertThat(wars.pendingBattleReservation(reservation.warStartedAt(),reservation.operationId())).isEmpty();
-        }
+        assertThat(warRecovery).isNotNull();
+        var reservation=warRecovery.reservation();assertThat(reservation).isNotNull();
+        assertThat(warRecovery.event()).isNotNull();
+        var recordedWar=wars.findByStartedAt(reservation.warStartedAt()).orElseThrow();
+        assertThat(recordedWar.battleEvent(targetId)).isEqualTo(warRecovery.event());
+        assertThat(wars.pendingBattleReservation(reservation.warStartedAt(),reservation.operationId())).isEmpty();
+        var eventKills=warRecovery.event().effects().stream().collect(java.util.stream.Collectors.toMap(
+                effect->effect.impact().playerId(),effect->effect.impact().kills()));
+        assertThat(eventKills).isEqualTo(engineKillsFor(pending.combatPlan().battle()));
     }
 
     // ---------- 加入 ----------
@@ -1456,6 +1484,12 @@ class NationRallyEndpointTest {
 
     private long troopsOf(String playerId) {
         return armies.findByPlayerId(playerId).map(ArmyState::totalTroops).orElse(0L);
+    }
+
+    private static Map<String,Long> engineKillsFor(com.ironoath.web.battle.CapturedStrategicBattle battle) {
+        var kills=new java.util.HashMap<String,Long>(battle.result().atkKillsByMember());
+        kills.putAll(battle.result().defKillsByMember());
+        return Map.copyOf(kills);
     }
 
     private void giveTroops(String playerId, long count) {
