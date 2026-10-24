@@ -90,6 +90,57 @@ class StrategicFortressOutputSettlementTest {
         verify(nations,times(4)).findByAlliance("alliance-a");
     }
 
+    @Test void eightFortressesGrantSixteenPercentToGrainWoodStoneAndIron() {
+        var configs=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
+        var social=mock(com.ironoath.web.social.SocialStore.class);var nations=mock(NationStore.class);
+        var leaders=mock(NationLeaders.class);var alliance=mock(Alliance.class);when(alliance.id()).thenReturn("alliance-a");
+        when(social.allianceOf("member-all-resources")).thenReturn(Optional.of(alliance));
+        when(social.allianceMembershipEpochs("member-all-resources","alliance-a",START+3_600_000)).thenReturn(List.of(
+                new com.ironoath.web.social.SocialStore.AllianceMembershipEpoch("alliance-a",START,Long.MAX_VALUE)));
+        var rules=new NationRulesAssembler(configs);
+        var nation=Nation.found("nation-a","产出国","king-a","alliance-a",10,20,START,rules.rules());
+        when(nations.findByAlliance("alliance-a")).thenReturn(Optional.of(nation));
+        when(nations.allianceNationEpochs("alliance-a")).thenReturn(List.of(
+                new NationStore.AllianceNationEpoch("nation-a",START,Long.MAX_VALUE)));
+        when(leaders.bind(any())).thenAnswer(call->call.getArgument(0));
+        var occupations=new InMemoryTargetOccupationStore();
+        var forts=WorldTargets.from(configs).targets().stream()
+                .filter(target->target.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.FORTRESS)
+                .toList();
+        assertThat(forts).hasSize(8);
+        for(var target:forts)assertThat(occupations.compareAndSet(new TargetOccupationStore.Snapshot(
+                target.definition().id(),WorldGenerator.EntityType.FORTRESS,target.coord().x(),target.coord().y(),
+                "nation-a","产出国",START,"capture-"+target.definition().id(),1,TargetOccupationStore.Garrison.empty()),0)).isTrue();
+        var national=new NationTechBonuses(configs,social,nations,leaders);
+        var policy=new NationPolicyBonuses(configs,social,nations,leaders,mock(com.ironoath.web.battle.BattleArmyFactory.class));
+        var rates=new ResourceRateService(configs,new TechEffects(configs),national,policy,occupations);
+        var ids=List.of(ResourceIds.GRAIN,ResourceIds.WOOD,ResourceIds.STONE,ResourceIds.IRON);
+        var resources=ids.stream().collect(java.util.stream.Collectors.toMap(id->id,
+                id->new PlayerResourceState(0,1_000_000,0,0,START),(a,b)->a,java.util.LinkedHashMap::new));
+        var player=PlayerSave.createNew("member-all-resources","device-all-resources","四资源成员",1,START,1,
+                resources,PlayerPower.zero(),null);
+
+        var result=rates.settle(player,new com.ironoath.core.city.CityState(),START+3_600_000);
+
+        for(String id:ids) {
+            long base=configs.getResource(id).basePerHour();
+            long expected=base+(base*16/100);
+            assertThat(result.rates().breakdowns().get(id).lines())
+                    .as("all eight fortresses must contribute the same capped 16 percent to %s",id)
+                    .anySatisfy(line->{assertThat(line.source()).isEqualTo("科技、国家、国策与要塞加成");
+                        assertThat(line.percentFixed()).isEqualTo(1_600);});
+            assertThat(result.rates().perHour(id)).isEqualTo(expected);
+            assertThat(result.credited().get(id)).isEqualTo(expected);
+        }
+
+        var viewPlayer=PlayerSave.createNew("member-all-resources","device-all-resources-view","四资源成员",1,START,1,
+                resources,PlayerPower.zero(),null);
+        var view=rates.settledView(viewPlayer,new com.ironoath.core.city.CityState(),START+3_600_000);
+        for(String id:ids)assertThat(view.get(id).current()).isEqualTo(
+                configs.getResource(id).basePerHour()+(configs.getResource(id).basePerHour()*16/100));
+        for(String id:ids)assertThat(viewPlayer.resource(id).current()).isZero();
+    }
+
     @Test void playerAllianceMembershipChangesSplitFortressEligibilityAtExactTimes() {
         var configs=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
         var social=mock(com.ironoath.web.social.SocialStore.class);var nations=mock(NationStore.class);
