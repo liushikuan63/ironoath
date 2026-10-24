@@ -116,7 +116,7 @@ echo "[check] 探针脚本语法：$(ls tools/verify-*.mjs | wc -l) 份全部通
 # 探针里手算，三次返工（#610/#616/#624）都是因为把 CSS 像素当成了那个点。
 # 这里把它连同「往返自检 + 引擎自命中 + 出画布」三道门一起钉住：改动 dpr、y 翻转或
 # `worldToScreen` 参数顺序，**任一处都会变红**（已用三个变异实测过）。
-node --test tools/lib/cocos-click.test.mjs tools/lib/purchase-evidence.test.mjs tools/lib/march-evidence.test.mjs tools/lib/resource-debit-evidence.test.mjs tools/lib/runtime-response-wait.test.mjs tools/lib/auto-refill-confirmation-evidence.test.mjs tools/lib/runtime-probe-status.test.mjs tools/lib/war-probe-preconditions.test.mjs tools/lib/runtime-probe-parent.test.mjs tools/lib/rank-board-evidence.test.mjs tools/lib/rank-row-layout.test.mjs
+node --test tools/lib/cocos-click.test.mjs tools/lib/purchase-evidence.test.mjs tools/lib/march-evidence.test.mjs tools/lib/resource-debit-evidence.test.mjs tools/lib/runtime-response-wait.test.mjs tools/lib/auto-refill-confirmation-evidence.test.mjs tools/lib/runtime-probe-status.test.mjs tools/lib/war-probe-preconditions.test.mjs tools/lib/runtime-probe-parent.test.mjs tools/lib/rank-board-evidence.test.mjs tools/lib/rank-row-layout.test.mjs tools/lib/wechat-adapter-patch.test.mjs
 # B11 量具资源归属：创建/删除回执丢失、容器改名与外部owner不能被当成已清理。
 python -X utf8 -m unittest discover -s scripts/tools -p 'test_bench*.py'
 # 写死在量具里的 Java 包路径谓词必须命中真实文件/目录，且**每族谓词命中数必须 > 0**（2026-10-06 开）：

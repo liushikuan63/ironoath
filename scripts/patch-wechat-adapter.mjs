@@ -18,6 +18,32 @@ let source = readFileSync(target, 'utf8')
  *   ③ `parent/top` 改成挂在实例上（`i.window.parent = ...`），不依赖全局绑定。
  */
 const MARKER = 'try{i.parent=i.top=i.window}catch(e){}'
+// Cocos 3.8.7 may emit the same DevTools adapter as a readable CommonJS module
+// rather than the older minified shape below. Keep a distinct idempotence marker.
+const READABLE_MARKER = 'global.window = global.window || _window;'
+const READABLE_BODY = `
+    global.window = global.window || _window;
+    global.document = global.document || {};
+    var __ironoathAdapterKey, __ironoathAdapterDocument = _window.document || {};
+    for (__ironoathAdapterKey in _window) {
+      try {
+        Object.defineProperty(global.window, __ironoathAdapterKey, {
+          value: _window[__ironoathAdapterKey],
+          configurable: true
+        });
+      } catch (e) {}
+    }
+    for (__ironoathAdapterKey in __ironoathAdapterDocument) {
+      try {
+        Object.defineProperty(global.document, __ironoathAdapterKey, {
+          value: __ironoathAdapterDocument[__ironoathAdapterKey],
+          configurable: true
+        });
+      } catch (e) {}
+    }
+    try { global.parent = global.top = global.window; } catch (e) {}
+    try { global.window.parent = global.window.top = global.window; } catch (e) {}
+  `
 const REPLACEMENT = 'i.window||(i.window=r),i.document||(i.document={});var c;'
   + 'for(c in r)try{Object.defineProperty(i.window,c,{value:r[c],configurable:!0})}catch(e){}'
   + 'for(c in r.document)try{Object.defineProperty(i.document,c,'
@@ -43,18 +69,15 @@ const UPGRADED = 'try{i.parent=i.top=i.window}catch(e){}'
   + 'try{i.window=r,i.top=i.parent=i.window}catch(e){i.window=r}}'
 
 let changed = false
-if (source.includes(MARKER)) {
+if (source.includes(MARKER) || source.includes(READABLE_MARKER)) {
   // 已打过补丁
 } else if (source.includes(LEGACY)) {
   // 旧版补丁产出的中间态：就地升级（否则它会带 top 只读崩溃）
   source = source.replace(LEGACY, UPGRADED)
   changed = true
-} else {
-  // 按索引定位整块 if/else：不依赖精确引号或空白，避免"构建产物换一种压缩就匹配不上"
+} else if (source.includes('"devtools"===o')) {
+  // 旧版 minified bundle：按索引定位 if/else 整块。
   const anchor = source.indexOf('"devtools"===o')
-  if (anchor < 0) {
-    throw new Error('未找到 Cocos 3.8.7 web-adapter 的 devtools 分支锚点："devtools"===o')
-  }
   // 回退到该分支的 if 起点
   const start = source.lastIndexOf('if(', anchor)
   if (start < 0) {
@@ -94,6 +117,19 @@ if (source.includes(MARKER)) {
   const HEAD = 'if("undefined"==typeof __devtoolssubcontext&&"devtools"===o){'
   source = source.slice(0, start) + HEAD + REPLACEMENT + source.slice(end)
   changed = true
+} else {
+  // Cocos 3.8.7 builds may retain the readable module wrapper, where the same
+  // branch uses `platform` and `_window` instead of minifier locals `o` and `r`.
+  const readable=source.match(/if\s*\(\s*typeof\s+__devtoolssubcontext\s*===\s*(['"])undefined\1\s*&&\s*platform\s*===\s*(['"])devtools\2\s*\)\s*\{/)
+  if(!readable)throw new Error('未找到 Cocos 3.8.7 web-adapter 的 devtools 分支锚点（readable/minified）')
+  const open=source.indexOf('{',readable.index);let depth=0,close=-1
+  for(let i=open;i<source.length;i++) {
+    if(source[i]==='{')depth++
+    else if(source[i]==='}' && --depth===0){close=i;break}
+  }
+  if(open<0 || close<0)throw new Error('Cocos 3.8.7 readable devtools分支花括号不配平')
+  source=source.slice(0,open+1)+READABLE_BODY+source.slice(close)
+  changed=true
 }
 
 if (changed) {

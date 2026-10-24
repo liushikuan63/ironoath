@@ -61,9 +61,11 @@ else
   echo "[check-wechat-artifact] 方向：landscape ✓"
 fi
 
-# DevTools 的 devtools 分支原写法会拿全局 window / global.document 去查属性描述符，
+# DevTools 的原分支会拿全局 window / global.document 查属性描述符，
 # worker 环境里它们可能不存在，首屏抛 "Cannot convert undefined or null to object"。
-if grep -q "i.window||(i.window=r),i.document||(i.document={})" "$BUILD_DIR/web-adapter.js"; then
+# Cocos 3.8.7 可输出 minified 或 readable CommonJS 两种形态；两者补丁都必须存在。
+if grep -Fq "i.window||(i.window=r),i.document||(i.document={})" "$BUILD_DIR/web-adapter.js" \
+  || grep -Fq "global.window = global.window || _window;" "$BUILD_DIR/web-adapter.js"; then
   echo "[check-wechat-artifact] DevTools 全局适配补丁：存在 ✓"
 else
   echo "[check-wechat-artifact][FAIL] web-adapter.js 缺少 DevTools 全局适配补丁；"
