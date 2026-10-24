@@ -58,6 +58,7 @@ class StrategicCombatPublisherTest {
             assertThat(wars.insertIfNoneActive(board)).isTrue();
             ReflectionTestUtils.setField(social,"store",store);
             ReflectionTestUtils.setField(social,"armies",mock(ArmyRepository.class));
+            doAnswer(call->"nick:"+call.getArgument(0)).when(social).nicknameOf(anyString());
             ReflectionTestUtils.setField(social,"playerLock",lock);
             ReflectionTestUtils.setField(social,"nationLock",new NationOperationLock(lock));
             ReflectionTestUtils.setField(social,"heldRallyContexts",new ThreadLocal<>());
@@ -94,12 +95,49 @@ class StrategicCombatPublisherTest {
         assertThat(slot.kind()).isEqualTo(TargetOperationStore.Kind.COMBAT);
         assertThat(slot.completed()).isFalse();assertThat(slot.sequence()).isEqualTo(1);
         assertThat(slot.combatPlan().battle()).isEqualTo(f.battle);
+        assertThat(slot.combatPlan().reportPlan()).isNotNull();
         assertThat(f.operations.findByTargetId(slot.targetId())).contains(slot);
         assertThat(f.wars.pendingBattleReservation(100,slot.operationId())).isPresent()
                 .get().extracting(com.ironoath.core.nation.WarScoreBoard.BattleReservation::sourceId).isEqualTo(slot.targetId());
         assertThat(f.locked(()->f.publisher.publish(f.battle))).isEqualTo(slot);
         assertThat(f.marches.versionOf(f.battle.attacker().march().id())).isEqualTo(f.battle.attacker().marchVersion());
         assertThat(f.owners.findByTargetIds(List.of(slot.targetId()))).isEmpty();
+    }
+
+    @Test void publicationMustFreezeStableBattleReportOwnersBeforeAnyRecoveryEffect() {
+        var f=new Fixture(false,true);
+        var slot=f.locked(()->f.publisher.publish(f.battle));
+        var reports=slot.combatPlan().reportPlan();
+        assertThat(reports)
+                .as("pending COMBAT must persist the two initiator report identities before restartable effects")
+                .isNotNull();
+        assertThat(reports.battleType()).isEqualTo(com.ironoath.battle.BattleType.SIEGE);
+        assertThat(reports.createdAt()).isEqualTo(f.battle.happenedAt());
+        assertThat(reports.expiresAt()).isEqualTo(Math.addExact(f.battle.happenedAt(),
+                Math.multiplyExact(f.cfg.longParam("BATTLE_REPORT_TTL_SECONDS"),1000L)));
+        assertThat(reports.recipients()).hasSize(2);
+        assertThat(reports.recipients()).extracting(com.ironoath.web.battle.StrategicBattleReportPlan.Recipient::ownerId)
+                .containsExactlyInAnyOrder(f.battle.attacker().rally().initiatorId(),f.battle.defender().rally().initiatorId());
+        assertThat(reports.recipients()).allSatisfy(recipient->assertThat(recipient.reportId())
+                .isEqualTo(com.ironoath.web.battle.BattleReport.idForOperation(slot.operationId(),recipient.ownerId())));
+        assertThat(reports.recipients()).allSatisfy(recipient->{
+            assertThat(recipient.attackerName()).isEqualTo("nick:"+f.battle.attacker().rally().initiatorId());
+            assertThat(recipient.defenderName()).isEqualTo("nick:"+f.battle.defender().rally().initiatorId());
+        });
+    }
+
+    @Test void npcPublicationFreezesConfiguredTargetNameInAttackerReport() {
+        var f=new Fixture(false,false);
+        var slot=f.locked(()->f.publisher.publish(f.battle));
+        var target=com.ironoath.web.service.WorldTargets.from(f.cfg).targets().stream()
+                .filter(candidate->candidate.definition().id().equals(f.battle.target().targetId())).findFirst().orElseThrow();
+        var reports=slot.combatPlan().reportPlan();
+        assertThat(reports.recipients()).hasSize(1);
+        var report=reports.recipients().get(0);
+        assertThat(report.ownerId()).isEqualTo(f.battle.attacker().rally().initiatorId());
+        assertThat(report.defenderId()).isEqualTo(f.battle.target().targetId());
+        assertThat(report.defenderName()).isEqualTo(target.definition().name());
+        assertThat(report.attackerName()).isEqualTo("nick:"+report.attackerId());
     }
 
     @Test void bothOriginalPlayerRalliesMustAlreadyBeLocked() {

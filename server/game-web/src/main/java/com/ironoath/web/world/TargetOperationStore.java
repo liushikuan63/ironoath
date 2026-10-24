@@ -39,9 +39,13 @@ public interface TargetOperationStore {
         }
     }
     record CombatPlan(String operationId,long sequence,com.ironoath.web.battle.CapturedStrategicBattle battle,
-                      MarchRecoveryPlan marchRecovery) {
+                      MarchRecoveryPlan marchRecovery,com.ironoath.web.battle.StrategicBattleReportPlan reportPlan) {
         public CombatPlan(String operationId,long sequence,com.ironoath.web.battle.CapturedStrategicBattle battle) {
-            this(operationId,sequence,battle,null);
+            this(operationId,sequence,battle,null,null);
+        }
+        public CombatPlan(String operationId,long sequence,com.ironoath.web.battle.CapturedStrategicBattle battle,
+                MarchRecoveryPlan marchRecovery) {
+            this(operationId,sequence,battle,marchRecovery,null);
         }
         public CombatPlan {
             if(sequence<1 || battle==null || !Objects.equals(operationId,"battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion()))
@@ -59,12 +63,36 @@ public interface TargetOperationStore {
                         || !intentDefender.before().equals(frozenDefender.march())))
                     throw new IllegalArgumentException("COMBAT守方行军恢复意图与冻结战果不一致");
             }
+            if(reportPlan!=null) {
+                String attackerOwner=battle.attacker().rally().initiatorId();
+                String defenderOwner=battle.defender()==null?null:battle.defender().rally().initiatorId();
+                String defenderId=defenderOwner==null?battle.target().targetId():defenderOwner;
+                var expectedOwners=new java.util.HashSet<String>();expectedOwners.add(attackerOwner);
+                if(defenderOwner!=null)expectedOwners.add(defenderOwner);
+                var owners=reportPlan.recipients().stream()
+                        .map(com.ironoath.web.battle.StrategicBattleReportPlan.Recipient::ownerId)
+                        .collect(java.util.stream.Collectors.toSet());
+                if(!reportPlan.operationId().equals(operationId) || reportPlan.createdAt()!=battle.happenedAt()
+                        || reportPlan.battleType()!=battle.input().battleType() || !owners.equals(expectedOwners))
+                    throw new IllegalArgumentException("COMBAT战报身份计划与原操作/攻守发起人/事件不一致");
+                var attackHeroes=reportHeroes(battle.attacker());
+                var defendHeroes=battle.defender()==null?List.<String>of():reportHeroes(battle.defender());
+                for(var recipient:reportPlan.recipients()) {
+                    if(!recipient.attackerId().equals(attackerOwner) || !recipient.defenderId().equals(defenderId)
+                            || !recipient.attackerHeroIds().equals(attackHeroes)
+                            || !recipient.defenderHeroIds().equals(defendHeroes))
+                        throw new IllegalArgumentException("COMBAT战报内容身份/英雄列表与原集结不一致");
+                }
+            }
         }
         public static CombatPlan create(com.ironoath.web.battle.CapturedStrategicBattle battle,long sequence) {
             return new CombatPlan("battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion(),sequence,battle);
         }
         public CombatPlan withMarchRecovery(MarchRecoveryPlan recovery) {
-            return new CombatPlan(operationId,sequence,battle,recovery);
+            return new CombatPlan(operationId,sequence,battle,recovery,reportPlan);
+        }
+        public CombatPlan withReportPlan(com.ironoath.web.battle.StrategicBattleReportPlan reports) {
+            return new CombatPlan(operationId,sequence,battle,marchRecovery,reports);
         }
     }
     record WithdrawalPlan(String operationId,long sequence,long happenedAt,
@@ -126,6 +154,10 @@ public interface TargetOperationStore {
         }
     }
     private static March.Snapshot freeze(March.Snapshot source){return March.fromSnapshot(source).snapshot();}
+    private static List<String> reportHeroes(com.ironoath.web.battle.StrategicRallyCasualties side) {
+        var ids=new java.util.ArrayList<String>();side.rally().participants().values().forEach(p->ids.addAll(p.heroes()));
+        return List.copyOf(ids);
+    }
 
     Optional<Snapshot> findByTargetId(String targetId);
     /** A bounded catalog batch, so viewport recovery projection does not fan out one read per strategic target. */
@@ -150,7 +182,8 @@ public interface TargetOperationStore {
                 return !current.completed() && next.completed() && Objects.equals(current.plan(),next.plan());
             var before=current.combatPlan();var after=next.combatPlan();
             if(before==null || after==null || !Objects.equals(before.operationId(),after.operationId())
-                    || before.sequence()!=after.sequence() || !Objects.equals(before.battle(),after.battle()))return false;
+                    || before.sequence()!=after.sequence() || !Objects.equals(before.battle(),after.battle())
+                    || !Objects.equals(before.reportPlan(),after.reportPlan()))return false;
             if(current.completed())return false;
             if(next.completed())return Objects.equals(before,after);
             return before.marchRecovery()==null && after.marchRecovery()!=null;

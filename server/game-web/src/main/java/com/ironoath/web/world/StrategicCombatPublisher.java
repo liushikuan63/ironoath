@@ -3,7 +3,9 @@ package com.ironoath.web.world;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.core.march.MarchRepository;
 import com.ironoath.web.battle.CapturedStrategicBattle;
+import com.ironoath.web.battle.BattleReport;
 import com.ironoath.web.battle.StrategicRallyCasualties;
+import com.ironoath.web.battle.StrategicBattleReportPlan;
 import com.ironoath.web.nation.WarStore;
 import com.ironoath.web.service.SocialAppService;
 import com.ironoath.web.service.WorldTargets;
@@ -81,8 +83,9 @@ public final class StrategicCombatPublisher {
 
         long version=current==null?0:current.version();
         long sequence=current==null?1:Math.addExact(current.sequence(),1);
-        var next=TargetOperationStore.Snapshot.combat(Math.addExact(version,1),false,
-                TargetOperationStore.CombatPlan.create(battle,sequence));
+        var reportPlan=freezeReportPlan(battle,operationId,target.definition().name());
+        var combat=TargetOperationStore.CombatPlan.create(battle,sequence).withReportPlan(reportPlan);
+        var next=TargetOperationStore.Snapshot.combat(Math.addExact(version,1),false,combat);
         reserveWarBattle(battle,sequence,operationId);
         try {
             boolean accepted=operations.compareAndSet(next,version);
@@ -102,6 +105,32 @@ public final class StrategicCombatPublisher {
         addMembers(members,battle.attacker(),battle.result().atkKillsByMember());
         if(battle.defender()!=null)addMembers(members,battle.defender(),battle.result().defKillsByMember());
         wars.reserveBattle(battle.target().targetId(),sequence,operationId,battle.happenedAt(),members);
+    }
+
+    private StrategicBattleReportPlan freezeReportPlan(CapturedStrategicBattle battle,String operationId,String targetName) {
+        long createdAt=battle.happenedAt();
+        long ttlMillis=Math.multiplyExact(configs.longParam("BATTLE_REPORT_TTL_SECONDS"),1000L);
+        long expiresAt=Math.addExact(createdAt,ttlMillis);
+        String attackerOwner=battle.attacker().rally().initiatorId();
+        String attackerName=social.nicknameOf(attackerOwner);
+        String defenderOwner=battle.defender()==null?null:battle.defender().rally().initiatorId();
+        String defenderId=defenderOwner==null?battle.target().targetId():defenderOwner;
+        String defenderName=defenderOwner==null?targetName:social.nicknameOf(defenderOwner);
+        var attackerHeroes=heroIds(battle.attacker());
+        var defenderHeroes=battle.defender()==null?List.<String>of():heroIds(battle.defender());
+        var recipients=new ArrayList<StrategicBattleReportPlan.Recipient>();
+        recipients.add(new StrategicBattleReportPlan.Recipient(BattleReport.idForOperation(operationId,attackerOwner),
+                attackerOwner,attackerOwner,defenderId,defenderName,attackerName,attackerHeroes,defenderHeroes));
+        if(defenderOwner!=null)recipients.add(new StrategicBattleReportPlan.Recipient(
+                BattleReport.idForOperation(operationId,defenderOwner),defenderOwner,attackerOwner,defenderOwner,
+                defenderName,attackerName,attackerHeroes,defenderHeroes));
+        return new StrategicBattleReportPlan(1,operationId,createdAt,expiresAt,battle.input().battleType(),recipients);
+    }
+
+    private static List<String> heroIds(StrategicRallyCasualties side) {
+        var ids=new ArrayList<String>();
+        side.rally().participants().values().forEach(participant->ids.addAll(participant.heroes()));
+        return List.copyOf(ids);
     }
 
     private static void addMembers(List<com.ironoath.core.nation.WarScoreBoard.BattleMember> out,
