@@ -747,7 +747,7 @@ class BagEndpointTest {
         assertThat(wood.perHour()).as("领地底产 200 + 伐木场 1 级（120 × 1^1.08）= 320")
                 .isEqualTo(base + lumberBase);
         assertThat(wood.breakdown()).extracting(OutputBreak::source)
-                .contains("领地基础产出", "伐木场 Lv1", "科技加成", "联盟加成", "道具 buff");
+                .contains("领地基础产出", "伐木场 Lv1", "科技、国家、国策与要塞加成", "联盟加成", "道具 buff");
     }
 
     @Test
@@ -757,7 +757,7 @@ class BagEndpointTest {
         for (ResourceDetail detail : resourceAppService.detail(playerId).resources()) {
             assertThat(detail.breakdown()).extracting(OutputBreak::source)
                     .as("%s 的面板必须包含三个加成行", detail.type())
-                    .contains("科技加成", "联盟加成", "道具 buff");
+                    .contains("科技、国家、国策与要塞加成", "联盟加成", "道具 buff");
             for (OutputBreak bonus : bonusLines(detail)) {
                 assertThat(bonus.isPercent()).isTrue();
                 assertThat(bonus.percentFixed()).isZero();

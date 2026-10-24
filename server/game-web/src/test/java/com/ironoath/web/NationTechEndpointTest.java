@@ -280,7 +280,7 @@ class NationTechEndpointTest {
         ResourceOutputCalculator.Breakdown grain = resourceRates
                 .compute(new CityState(), PlayerTech.empty(), playerId)
                 .breakdowns().get(ResourceIds.GRAIN);
-        return grain.lines().stream().filter(l -> "科技加成".equals(l.source()))
+        return grain.lines().stream().filter(l -> "科技、国家、国策与要塞加成".equals(l.source()))
                 .findFirst().orElseThrow().percentFixed();
     }
 

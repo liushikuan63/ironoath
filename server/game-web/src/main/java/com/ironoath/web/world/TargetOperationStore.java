@@ -180,7 +180,7 @@ public interface TargetOperationStore {
                 throw new IllegalArgumentException("撤防计划原驻军/目标/操作绑定不一致");
             var expectedOwner=new TargetOccupationStore.Snapshot(before.targetId(),before.kind(),before.x(),before.y(),
                     before.nationId(),before.nationName(),before.capturedAt(),operationId,
-                    Math.addExact(before.version(),1),TargetOccupationStore.Garrison.empty());
+                    Math.addExact(before.version(),1),TargetOccupationStore.Garrison.empty(),before.ownershipHistory());
             if(!expectedOwner.equals(after))throw new IllegalArgumentException("撤防不能改变国家/占领锚点或补回守军");
             original.recall(happenedAt);
             if(!original.snapshot().equals(returning) || returning.returnArriveAt()==null
@@ -194,7 +194,7 @@ public interface TargetOperationStore {
             String op="withdraw:"+march.id();
             var after=new TargetOccupationStore.Snapshot(owner.targetId(),owner.kind(),owner.x(),owner.y(),
                     owner.nationId(),owner.nationName(),owner.capturedAt(),op,Math.addExact(owner.version(),1),
-                    TargetOccupationStore.Garrison.empty());
+                    TargetOccupationStore.Garrison.empty(),owner.ownershipHistory());
             return new WithdrawalPlan(op,sequence,now,owner,after,marchVersion,before,returned.snapshot());
         }
     }

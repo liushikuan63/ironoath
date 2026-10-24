@@ -99,6 +99,19 @@ class TargetOperationStoreTest {
         assertThatThrownBy(()->new TargetOperationStore.WithdrawalPlan(p.operationId(),p.sequence(),p.happenedAt(),p.before(),p.before(),p.marchVersion(),p.stationed(),p.returning())).isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test void withdrawalKeepsTheFrozenFortressOwnershipTimeline() {
+        var march=stationed("history-withdraw");var base=owner(march,1);
+        var owned=new TargetOccupationStore.Snapshot(base.targetId(),base.kind(),base.x(),base.y(),base.nationId(),
+                base.nationName(),base.capturedAt(),base.operationId(),base.version(),base.garrison(),
+                List.of(new TargetOccupationStore.OwnershipPeriod("N-previous",10,100,"capture-previous")));
+
+        var plan=TargetOperationStore.WithdrawalPlan.create(owned,march,0,1,120);
+
+        assertThat(plan.after().ownershipHistory()).isEqualTo(owned.ownershipHistory());
+        assertThat(plan.after().nationAt(99,false)).isEqualTo("N-previous");
+        assertThat(plan.after().nationAt(100,false)).isEqualTo(owned.nationId());
+    }
+
     @Test void lostWriteReplyConfirmsExactPlanButUnreadableReplyRetainsOriginalFailure(){
         var real=store(Backend.MONGO);var mongo=spy(db.template());
         doAnswer(inv->{inv.callRealMethod();throw new IllegalStateException("owned journal insert reply lost");})

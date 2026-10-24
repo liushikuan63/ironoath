@@ -396,7 +396,8 @@ public final class StrategicCombatRecovery {
                 .orElseThrow(()->new IllegalStateException("攻方国家存档缺失或已解散，不能授予战略目标"));
         var after=new TargetOccupationStore.Snapshot(slot.targetId(),battle.target().kind(),battle.target().x(),battle.target().y(),
                 nationId,nation.name(),battle.happenedAt(),slot.operationId(),Math.addExact(expected,1),
-                TargetOccupationStore.Garrison.stationed(marchId));
+                TargetOccupationStore.Garrison.stationed(marchId),
+                ownerBefore==null?List.of():ownerBefore.ownershipHistoryClosedAt(battle.happenedAt()));
         try {
             if(!occupations.compareAndSet(after,expected) && !ownerMatchesCapture(currentOwner(slot.targetId()),slot,ownerBefore,nationId,marchId,expected))
                 throw new IllegalStateException("战略目标归属CAS未确认，保留COMBAT待恢复");
@@ -415,7 +416,9 @@ public final class StrategicCombatRecovery {
                 && current.x()==slot.combatPlan().battle().target().x() && current.y()==slot.combatPlan().battle().target().y()
                 && current.nationId().equals(nationId) && current.capturedAt()==slot.combatPlan().battle().happenedAt()
                 && current.operationId().equals(slot.operationId()) && current.version()==Math.addExact(previousVersion,1)
-                && TargetOccupationStore.Garrison.stationed(marchId).equals(current.garrison());
+                && TargetOccupationStore.Garrison.stationed(marchId).equals(current.garrison())
+                && current.ownershipHistory().equals(ownerBefore==null?List.of()
+                    :ownerBefore.ownershipHistoryClosedAt(slot.combatPlan().battle().happenedAt()));
     }
 
     private static boolean hasTroops(Map<String,Long> troops) {

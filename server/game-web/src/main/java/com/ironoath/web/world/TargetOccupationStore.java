@@ -2,6 +2,7 @@ package com.ironoath.web.world;
 
 import com.ironoath.core.world.WorldGenerator;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 
 /** 战略目标归属端口。只保存变化；缺档是中立，不为旧世界回填13份默认档。 */
@@ -19,14 +20,28 @@ public interface TargetOccupationStore {
         public static Garrison stationed(String marchId) { return new Garrison(Kind.STATIONED,marchId); }
     }
 
+    /** A nation's fortress-output ownership interval, frozen in the same CAS document as the current owner. */
+    record OwnershipPeriod(String nationId,long fromAt,long untilAt,String operationId) {
+        public OwnershipPeriod {
+            if(nationId==null || nationId.isBlank() || fromAt<0 || untilAt<fromAt
+                    || operationId==null || operationId.isBlank())
+                throw new IllegalArgumentException("战略目标历史归属时段无效");
+        }
+    }
+
     /** 坐标/类型锚定防止改表静默搬走已占目标；国家名在国家域目前不可改名，随占领冻结。 */
     record Snapshot(String targetId, WorldGenerator.EntityType kind, int x, int y,
                     String nationId, String nationName, long capturedAt, String operationId, long version,
-                    Garrison garrison) {
+                    Garrison garrison,List<OwnershipPeriod> ownershipHistory) {
         /** 旧元数据档保持未知驻军；缺字段不代表空兵，更不代表恢复配置守军。 */
         public Snapshot(String targetId, WorldGenerator.EntityType kind, int x, int y,
                         String nationId, String nationName, long capturedAt, String operationId, long version) {
-            this(targetId,kind,x,y,nationId,nationName,capturedAt,operationId,version,null);
+            this(targetId,kind,x,y,nationId,nationName,capturedAt,operationId,version,null,List.of());
+        }
+        public Snapshot(String targetId, WorldGenerator.EntityType kind, int x, int y,
+                        String nationId, String nationName, long capturedAt, String operationId, long version,
+                        Garrison garrison) {
+            this(targetId,kind,x,y,nationId,nationName,capturedAt,operationId,version,garrison,List.of());
         }
         public Snapshot {
             if (targetId==null || targetId.isBlank() || kind==null || !kind.isStrategic()
@@ -35,6 +50,50 @@ public interface TargetOccupationStore {
                     || operationId==null || operationId.isBlank() || version<1) {
                 throw new IllegalArgumentException("战略目标归属快照无效");
             }
+            ownershipHistory=ownershipHistory==null?List.of():List.copyOf(ownershipHistory);
+            long previousUntil=0;
+            for(OwnershipPeriod period:ownershipHistory) {
+                if(period.untilAt()>capturedAt || period.fromAt()<previousUntil)
+                    throw new IllegalArgumentException("战略目标历史归属时段重叠或晚于当前归属");
+                previousUntil=period.untilAt();
+            }
+        }
+
+        /** Ownership immediately before/after a fortress capture boundary. */
+        public String nationAt(long at,boolean beforeBoundary) {
+            if(at<0)throw new IllegalArgumentException("战略归属查询时刻不得为负");
+            for(OwnershipPeriod period:ownershipHistory) {
+                boolean inside=beforeBoundary?period.fromAt()<at && at<=period.untilAt()
+                        :period.fromAt()<=at && at<period.untilAt();
+                if(inside)return period.nationId();
+            }
+            boolean current=beforeBoundary?capturedAt<at:capturedAt<=at;
+            return current?nationId:null;
+        }
+
+        /** Copy prior epochs and close this owner's epoch at a later capture event. */
+        public List<OwnershipPeriod> ownershipHistoryClosedAt(long transitionAt) {
+            if(transitionAt<capturedAt)throw new IllegalArgumentException("目标归属变更早于原占领时刻");
+            if(transitionAt==capturedAt)return ownershipHistory;
+            var next=new java.util.ArrayList<>(ownershipHistory);
+            next.add(new OwnershipPeriod(nationId,capturedAt,transitionAt,operationId));
+            return List.copyOf(next);
+        }
+
+        public List<Long> ownershipChangeTimes(long afterExclusive,long throughInclusive) {
+            if(afterExclusive<0 || throughInclusive<afterExclusive)
+                throw new IllegalArgumentException("战略归属变化查询区间无效");
+            var times=new java.util.TreeSet<Long>();
+            for(OwnershipPeriod period:ownershipHistory) {
+                addInRange(times,period.fromAt(),afterExclusive,throughInclusive);
+                addInRange(times,period.untilAt(),afterExclusive,throughInclusive);
+            }
+            addInRange(times,capturedAt,afterExclusive,throughInclusive);
+            return List.copyOf(times);
+        }
+
+        private static void addInRange(java.util.Set<Long> times,long value,long afterExclusive,long throughInclusive) {
+            if(value>afterExclusive && value<=throughInclusive)times.add(value);
         }
     }
 

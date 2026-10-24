@@ -136,8 +136,10 @@ class TargetOccupationStoreTest {
     @Test void legacyMongoWithoutGarrisonColumnIsUnknownAndBrokenReferenceIsRejected() {
         var store=store(Backend.MONGO);store.compareAndSet(state("N1",1,"legacy"),0);
         db.template().updateFirst(new org.springframework.data.mongodb.core.query.Query(),
-                new org.springframework.data.mongodb.core.query.Update().unset("state.garrison"),"world_target_occupation");
-        assertThat(new MongoTargetOccupationStore(db.template()).findAll(1).get("gate_north").garrison()).isNull();
+                new org.springframework.data.mongodb.core.query.Update().unset("state.garrison").unset("state.ownershipHistory"),
+                "world_target_occupation");
+        var legacy=new MongoTargetOccupationStore(db.template()).findAll(1).get("gate_north");
+        assertThat(legacy.garrison()).isNull();assertThat(legacy.ownershipHistory()).isEmpty();
         assertThatThrownBy(()->TargetOccupationStore.Garrison.stationed(null)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(()->new TargetOccupationStore.Garrison(TargetOccupationStore.Garrison.Kind.EMPTY,"m"))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -145,5 +147,24 @@ class TargetOccupationStoreTest {
                 new org.springframework.data.mongodb.core.query.Update().set("state.garrison.kind","STATIONED"),"world_target_occupation");
         assertThatThrownBy(()->new MongoTargetOccupationStore(db.template()).findAll(1))
                 .isInstanceOf(RuntimeException.class);
+    }
+
+    @ParameterizedTest @EnumSource(Backend.class)
+    void ownerCaptureCasCarriesTheExactPriorNationInterval(Backend backend) {
+        var store=store(backend);var first=state("N1",1,"capture-1");
+        assertThat(store.compareAndSet(first,0)).isTrue();
+        var second=new TargetOccupationStore.Snapshot(first.targetId(),first.kind(),first.x(),first.y(),
+                "N2","国家N2",200,"capture-2",2,TargetOccupationStore.Garrison.empty(),
+                first.ownershipHistoryClosedAt(200));
+        assertThat(store.compareAndSet(second,1)).isTrue();
+        if(backend==Backend.MONGO)store=new MongoTargetOccupationStore(db.template());
+        var read=store.findByTargetIds(List.of(first.targetId())).get(first.targetId());
+        assertThat(read.nationAt(99,false)).isNull();
+        assertThat(read.nationAt(100,false)).isEqualTo("N1");
+        assertThat(read.nationAt(200,true)).isEqualTo("N1");
+        assertThat(read.nationAt(200,false)).isEqualTo("N2");
+        assertThat(read.ownershipChangeTimes(99,200)).containsExactly(100L,200L);
+        assertThat(read.ownershipHistory()).containsExactly(
+                new TargetOccupationStore.OwnershipPeriod("N1",100,200,"capture-1"));
     }
 }

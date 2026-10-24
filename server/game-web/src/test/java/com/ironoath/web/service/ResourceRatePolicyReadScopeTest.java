@@ -31,7 +31,7 @@ class ResourceRatePolicyReadScopeTest {
             var base = res.basePerHour() == 0 ? List.<ResourceOutputCalculator.Line>of()
                     : List.of(ResourceOutputCalculator.Line.flat("领地基础产出", res.basePerHour()));
             assertThat(rates.breakdowns().get(res.id()))
-                    .isEqualTo(ResourceOutputCalculator.compute(base, percent, 0, 0));
+                    .isEqualTo(ResourceOutputCalculator.compute(base,percent,0,0,"科技、国家、国策与要塞加成"));
         }
     }
 

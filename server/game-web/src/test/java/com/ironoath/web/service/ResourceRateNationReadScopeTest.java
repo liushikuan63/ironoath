@@ -105,7 +105,8 @@ class ResourceRateNationReadScopeTest {
         for(var resource:configs.allResources()){
             var base=resource.basePerHour()==0?List.<ResourceOutputCalculator.Line>of():List.of(ResourceOutputCalculator.Line.flat("领地基础产出",resource.basePerHour()));
             long own=ResourceIds.GRAIN.equals(resource.id())?techPercent:0;
-            assertThat(rates.breakdowns().get(resource.id())).isEqualTo(ResourceOutputCalculator.compute(base,own+policyPercent,0,0));
+            assertThat(rates.breakdowns().get(resource.id())).isEqualTo(ResourceOutputCalculator.compute(
+                    base,own+policyPercent,0,0,"科技、国家、国策与要塞加成"));
         }
     }
     @Test void realNationTechAndPolicyKeepTheirValuesWithOneLookup(){

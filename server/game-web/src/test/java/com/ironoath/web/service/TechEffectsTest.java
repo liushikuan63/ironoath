@@ -123,7 +123,7 @@ class TechEffectsTest {
     }
 
     @Test
-    @DisplayName("科技加成进的是「科技加成」那一行：联盟与道具两行保持 0，总量恰等于基础 + 该行")
+    @DisplayName("科技加成进入合并产出加成行：联盟与道具两行保持 0，总量恰等于基础 + 该行")
     void breakdownFillsOnlyTheTechSlot() {
         ResourceOutputCalculator.Breakdown plain = woodBreakdown(PlayerTech.empty());
         ResourceOutputCalculator.Breakdown boosted = woodBreakdown(techOf("tech_agri_wood", 5));
@@ -134,10 +134,10 @@ class TechEffectsTest {
         // HALF_UP(base × 20%)：这里用 BigDecimal 独立算一遍，不去调生产的 percentOf
         long expected = new BigDecimal(base).multiply(new BigDecimal("0.2"))
                 .setScale(0, RoundingMode.HALF_UP).longValue();
-        assertThat(lineOf(boosted, "科技加成").percentFixed())
+        assertThat(lineOf(boosted, "科技、国家、国策与要塞加成").percentFixed())
                 .as("这一行显示的就是 20%")
                 .isEqualTo(2000L);
-        assertThat(lineOf(boosted, "科技加成").amount())
+        assertThat(lineOf(boosted, "科技、国家、国策与要塞加成").amount())
                 .as("加成额恰等于基础产出的 20%（HALF_UP），不多乘一次也不少乘")
                 .isEqualTo(expected);
         assertThat(lineOf(boosted, "联盟加成").amount()).isZero();

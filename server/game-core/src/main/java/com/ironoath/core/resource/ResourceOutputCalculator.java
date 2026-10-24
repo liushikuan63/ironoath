@@ -119,10 +119,17 @@ public final class ResourceOutputCalculator {
                                     long techPercentFixed,
                                     long alliancePercentFixed,
                                     long buffPercentFixed) {
+        return compute(baseLines,techPercentFixed,alliancePercentFixed,buffPercentFixed,"科技加成");
+    }
+
+    /** Same-category output contributors are summed and rounded once while the server supplies an honest display label. */
+    public static Breakdown compute(List<Line> baseLines,long outputPercentFixed,
+                                    long alliancePercentFixed,long buffPercentFixed,String outputLabel) {
         if (baseLines == null) {
             throw new IllegalArgumentException("baseLines 不得为 null（无产出建筑请传空列表）");
         }
-        requireNonNegative(techPercentFixed, "techPercentFixed");
+        if(outputLabel==null || outputLabel.isBlank())throw new IllegalArgumentException("outputLabel不得为空");
+        requireNonNegative(outputPercentFixed, "outputPercentFixed");
         requireNonNegative(alliancePercentFixed, "alliancePercentFixed");
         requireNonNegative(buffPercentFixed, "buffPercentFixed");
 
@@ -138,12 +145,12 @@ public final class ResourceOutputCalculator {
         List<Line> lines = new ArrayList<>(baseLines);
         // 三个加成行始终出现（即使为 0）：面板结构稳定，玩家不会因为「今天少了一行」而困惑。
         // B04 的示例里「道具 buff ---」就是零值也展示的写法。
-        lines.add(Line.percent("科技加成", percentOf(base, techPercentFixed), techPercentFixed));
+        lines.add(Line.percent(outputLabel, percentOf(base, outputPercentFixed), outputPercentFixed));
         lines.add(Line.percent("联盟加成", percentOf(base, alliancePercentFixed), alliancePercentFixed));
         lines.add(Line.percent("道具 buff", percentOf(base, buffPercentFixed), buffPercentFixed));
 
         long total = base
-                + percentOf(base, techPercentFixed)
+                + percentOf(base, outputPercentFixed)
                 + percentOf(base, alliancePercentFixed)
                 + percentOf(base, buffPercentFixed);
         return new Breakdown(lines, total);

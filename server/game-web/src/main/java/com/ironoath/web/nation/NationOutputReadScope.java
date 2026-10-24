@@ -23,4 +23,7 @@ public final class NationOutputReadScope {
         }
         return snapshot;
     }
+
+    /** The same successful identity snapshot used by nation-tech and policy reads in this output calculation. */
+    public String resolvedNationId() { return resolved && snapshot!=null ? snapshot.id() : null; }
 }

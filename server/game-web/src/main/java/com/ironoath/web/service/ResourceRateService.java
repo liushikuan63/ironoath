@@ -21,6 +21,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * 职责：资源产率与容量的唯一计算入口 —— 从城建状态算出「每小时产多少」「能囤多少」，
@@ -54,14 +56,25 @@ public class ResourceRateService {
     private final com.ironoath.web.nation.NationTechBonuses nationTechBonuses;
     /** 国策加成（乘区 G 的非战斗那半：产出与行军速度）。与国家科技同类相加，见消费点那一行。 */
     private final com.ironoath.web.nation.NationPolicyBonuses policyBonuses;
+    private final com.ironoath.web.world.TargetOccupationStore targetOccupations;
 
     public ResourceRateService(ConfigRegistry configs, com.ironoath.web.tech.TechEffects techEffects,
                                com.ironoath.web.nation.NationTechBonuses nationTechBonuses,
                               com.ironoath.web.nation.NationPolicyBonuses policyBonuses) {
+        this(configs,techEffects,nationTechBonuses,policyBonuses,
+                new com.ironoath.web.store.memory.InMemoryTargetOccupationStore());
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ResourceRateService(ConfigRegistry configs,com.ironoath.web.tech.TechEffects techEffects,
+            com.ironoath.web.nation.NationTechBonuses nationTechBonuses,
+            com.ironoath.web.nation.NationPolicyBonuses policyBonuses,
+            com.ironoath.web.world.TargetOccupationStore targetOccupations) {
         this.configs = configs;
         this.techEffects = techEffects;
         this.nationTechBonuses = nationTechBonuses;
         this.policyBonuses = policyBonuses;
+        this.targetOccupations=targetOccupations;
     }
 
     /**
@@ -119,25 +132,41 @@ public class ResourceRateService {
      * <pre>
      * 领地基础产出        +200      ← resource 表 basePerHour
      * 农田 Lv8           +1,150    ← 每个产出建筑实例一行
-     * 科技加成  +0 (+0%)            ← 三行始终出现，面板结构稳定
+     * 科技、国家、国策与要塞加成  +0 (+0%) ← 合计为同类百分比，三行始终出现，面板结构稳定
      * 联盟加成  +0 (+0%)
      * 道具 buff +0 (+0%)
      * </pre>
+     * 要塞收益只计粮木石铁；占领变更写在目标归属CAS历史中，由惰性结算按事件时刻切段。
+     * 地图半径是展示属性，产率计算只读取国家在对应时刻持有的八座固定要塞。
      */
     public Rates compute(CityState city, PlayerTech tech, String playerId) {
+        return compute(city,tech,playerId,System.currentTimeMillis());
+    }
+
+    /** Deterministic event-time output used by lazy settlement and its historical fortress-rate segments. */
+    public Rates compute(CityState city,PlayerTech tech,String playerId,long at) {
+        return compute(city,tech,playerId,at,false,null);
+    }
+
+    private Rates compute(CityState city,PlayerTech tech,String playerId,long at,boolean beforeFortressBoundary,
+            com.ironoath.web.nation.StrategicFortressOutputReadScope fortressScope) {
         if (city == null) {
             throw new IllegalArgumentException("city 不得为 null");
         }
         long outputExponent = configs.curve("BUILDING_OUTPUT").exponentFixed();
         long protectRatio = configs.fixedParam("RESOURCE_PROTECT_RATIO");
         int mainCityLevel = mainCityLevel(city);
+        var resources=configs.allResources();
+        if(resources.isEmpty())return new Rates(Map.of(),Map.of());
+        if(fortressScope==null)
+            fortressScope=com.ironoath.web.nation.StrategicFortressOutputReadScope.capture(configs,targetOccupations);
 
         Map<String, ResourceOutputCalculator.Breakdown> breakdowns = new LinkedHashMap<>();
         Map<String, Long> caps = new LinkedHashMap<>();
         Long policyOutputPercent = null;
         var nationRead = new com.ironoath.web.nation.NationOutputReadScope(playerId);
 
-        for (ResourceCfg res : configs.allResources()) {
+        for (ResourceCfg res : resources) {
             List<ResourceOutputCalculator.Line> baseLines = new ArrayList<>();
             if (res.basePerHour() > 0L) {
                 baseLines.add(ResourceOutputCalculator.Line.flat("领地基础产出", res.basePerHour()));
@@ -162,13 +191,12 @@ public class ResourceRateService {
                             FixedPoint.of(cfg.capBase()), b.level(), outputExponent));
                 }
             }
-            // 科技这一行从 B20 块① 起是真实值（个人：该资源对应的 *_OUTPUT 行 每级幅度 × 等级），
-            // 块③ 起再加一份国家的（§五④：**同类加成相加成总率，再作用于基础值一次**）——
-            // 相加发生在这一句，不在两个读取口里各乘一遍。
+            // 科技/国家/国策/要塞百分比同类合并，只在产率明细这一行合计取整一次。
+            // 个人与国家科技读取沿B20，国策沿既有口径；要塞按读取时刻的归属历史分段。
             // 联盟加成与道具 buff 两位仍是 0 —— 那不是"忘了填"，而是那两个生产者还不存在：
             // 联盟科技表没有 *_OUTPUT 属性，道具 buff 没有承载。0 是"还没做"，
             // 编一个值才是"做了但不算数"（明细结构与 Σ==总量 的不变量都不受影响）。
-            // 国策是第三个相加项（收口清单 #146 ②：同类加成相加成总率、作用于基础一次）。
+            // 国策和要塞是后续相加项（同类加成相加成总率、作用于基础一次）。
             // 国策的 OUTPUT 一行管四种资源，所以这里传的是 playerId 而不是 res.id()。
             long resourceOutputPercent = techEffects.outputPercent(res.id(), tech)
                     + nationTechBonuses.outputPercent(res.id(), playerId, nationRead);
@@ -177,8 +205,10 @@ public class ResourceRateService {
             if (policyOutputPercent == null) {
                 policyOutputPercent = policyBonuses.outputPercent(playerId, nationRead);
             }
+            long fortressPercent=res.kind()==ResourceCfg.Kind.BASE
+                    ?fortressScope.outputPercent(nationRead.resolvedNationId(),at,beforeFortressBoundary):0L;
             breakdowns.put(res.id(), ResourceOutputCalculator.compute(baseLines,
-                    resourceOutputPercent + policyOutputPercent, 0L, 0L));
+                    resourceOutputPercent+policyOutputPercent+fortressPercent,0L,0L,"科技、国家、国策与要塞加成"));
             caps.put(res.id(), capacity);
         }
         return new Rates(breakdowns, caps);
@@ -264,11 +294,17 @@ public class ResourceRateService {
         Map<String, Long> credited = new LinkedHashMap<>();
         Map<String, PlayerResourceState> states = new LinkedHashMap<>();
         List<String> harvested = new ArrayList<>();
+        var fortressScope=player.resources().isEmpty()?com.ironoath.web.nation.StrategicFortressOutputReadScope.empty()
+                :com.ironoath.web.nation.StrategicFortressOutputReadScope.capture(configs,targetOccupations);
+        long firstSettle=player.resources().values().stream().mapToLong(PlayerResourceState::lastSettle).min().orElse(now);
+        Set<Long> fortressChanges=Set.copyOf(fortressScope.changeTimes(Math.min(firstSettle,now),now));
+        var boundaries=new TreeSet<Long>(city.pendingFinishTimes(now));
+        boundaries.addAll(fortressChanges);
 
         // 逐个完成时刻切段：先按「收割前」的产率结算到该时刻，再收割，再进入下一段。
         // 这样升级带来的产率阶跃只影响它真正生效之后的时间。
-        for (long milestone : city.pendingFinishTimes(now)) {
-            Segment seg = settleTo(player, city, milestone);
+        for (long milestone : boundaries) {
+            Segment seg = settleTo(player,city,milestone,fortressChanges.contains(milestone),fortressScope);
             accumulate(credited, seg.credited());
             List<String> done = city.collectFinished(milestone);
             harvested.addAll(done);
@@ -277,7 +313,7 @@ public class ResourceRateService {
                         player.playerId(), milestone, done);
             }
         }
-        Segment tail = settleTo(player, city, now);
+        Segment tail = settleTo(player,city,now,false,fortressScope);
         accumulate(credited, tail.credited());
 
         for (Map.Entry<String, PlayerResourceState> e : player.resources().entrySet()) {
@@ -308,15 +344,30 @@ public class ResourceRateService {
         if (player == null) {
             throw new IllegalArgumentException("settledView 需要玩家存档");
         }
-        Rates rates = city == null ? null : compute(city, player.tech(), player.playerId());
+        Rates rates=null;
+        var fortressScope=player.resources().isEmpty()?com.ironoath.web.nation.StrategicFortressOutputReadScope.empty()
+                :com.ironoath.web.nation.StrategicFortressOutputReadScope.capture(configs,targetOccupations);
         Map<String, PlayerResourceState> out = new LinkedHashMap<>();
+        long firstSettle=player.resources().values().stream().mapToLong(PlayerResourceState::lastSettle).min().orElse(now);
+        var boundaries=fortressScope.changeTimes(Math.min(firstSettle,now),now);
+        for(long boundary:boundaries) {
+            rates=city==null?null:compute(city,player.tech(),player.playerId(),boundary,true,fortressScope);
+            settleViewSegment(player,out,rates,boundary);
+        }
+        rates = city == null ? null : compute(city, player.tech(), player.playerId(),now,false,fortressScope);
+        settleViewSegment(player,out,rates,now);
+        return java.util.Collections.unmodifiableMap(out);
+    }
+
+    private void settleViewSegment(PlayerSave player,Map<String,PlayerResourceState> out,Rates rates,long at) {
         for (Map.Entry<String, PlayerResourceState> e : player.resources().entrySet()) {
             String id = e.getKey();
-            PlayerResourceState s = e.getValue();
+            PlayerResourceState s = out.getOrDefault(id,e.getValue());
+            if(at<s.lastSettle())continue;
             long cap = rates == null ? s.cap() : rates.cap(id);
             long perHour = rates == null ? s.perHour() : rates.perHour(id);
             ResourceSettlement.Result r = ResourceSettlement.settle(
-                    s.current(), cap, perHour, s.lastSettle(), now);
+                    s.current(), cap, perHour, s.lastSettle(), at);
             if (r.heldOverCap()) {
                 LOG.warn("资源持有量超过容量上限：本次停止产出且不清仓，请检查哪条路径漏了封顶"
                                 + " playerId={} 资源={} 持有={} 上限={}",
@@ -325,7 +376,6 @@ public class ResourceRateService {
             out.put(id, new PlayerResourceState(r.current(), cap,
                     rates == null ? s.protectedAmount() : protectedAmountOf(id, rates), perHour, r.lastSettle()));
         }
-        return java.util.Collections.unmodifiableMap(out);
     }
 
     /** 一段结算的产出：入账量与这一段使用的产率。 */
@@ -333,8 +383,9 @@ public class ResourceRateService {
     }
 
     /** 用「当前城建状态」的产率与容量，把所有资源结算到时刻 t 并写回存档。 */
-    private Segment settleTo(PlayerSave player, CityState city, long t) {
-        Rates rates = compute(city, player.tech(), player.playerId());
+    private Segment settleTo(PlayerSave player,CityState city,long t,boolean beforeFortressBoundary,
+            com.ironoath.web.nation.StrategicFortressOutputReadScope fortressScope) {
+        Rates rates=compute(city,player.tech(),player.playerId(),t,beforeFortressBoundary,fortressScope);
         Map<String, Long> credited = new LinkedHashMap<>();
         // player.resources() 返回快照副本，遍历期间写回不会触发并发修改
         for (Map.Entry<String, PlayerResourceState> e : player.resources().entrySet()) {
