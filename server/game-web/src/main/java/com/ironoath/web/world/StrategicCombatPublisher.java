@@ -62,7 +62,7 @@ public final class StrategicCombatPublisher {
         if(current!=null && current.operationId().equals(operationId)) {
             if(current.kind()!=TargetOperationStore.Kind.COMBAT || !current.combatPlan().battle().equals(battle))
                 throw new IllegalStateException("同一COMBAT操作不能替换原载荷或重新模拟战果");
-            if(!current.completed())reserveWarBattle(battle,current.sequence(),operationId);
+            if(!current.completed())verifyWarReplay(current);
             return current;
         }
         if(current!=null && !current.completed())throw new IllegalStateException("目标原操作未完成，不能发布下一COMBAT");
@@ -87,9 +87,11 @@ public final class StrategicCombatPublisher {
         long sequence=current==null?1:Math.addExact(current.sequence(),1);
         var reportPlan=freezeReportPlan(battle,operationId,target.definition().name());
         var killPlan=ranks.freezeStrategicKills(battle,operationId,sequence);
-        var combat=TargetOperationStore.CombatPlan.create(battle,sequence).withReportPlan(reportPlan).withKillPlan(killPlan);
+        var reservation=reserveWarBattle(battle,sequence,operationId);
+        var warPlan=new TargetOperationStore.WarRecoveryPlan(reservation.orElse(null),null);
+        var combat=TargetOperationStore.CombatPlan.create(battle,sequence).withReportPlan(reportPlan)
+                .withKillPlan(killPlan).withWarRecovery(warPlan);
         var next=TargetOperationStore.Snapshot.combat(Math.addExact(version,1),false,combat);
-        reserveWarBattle(battle,sequence,operationId);
         try {
             boolean accepted=operations.compareAndSet(next,version);
             if(!confirmed(next))throw new IllegalStateException(accepted
@@ -102,12 +104,34 @@ public final class StrategicCombatPublisher {
         return next;
     }
 
-    private void reserveWarBattle(CapturedStrategicBattle battle,long sequence,String operationId) {
+    private java.util.Optional<com.ironoath.core.nation.WarScoreBoard.BattleReservation> reserveWarBattle(
+            CapturedStrategicBattle battle,long sequence,String operationId) {
         if(battle.formatVersion()!=2)throw new IllegalStateException("旧COMBAT格式没有逐成员引擎来源，不能发布War事件预留");
         var members=new ArrayList<com.ironoath.core.nation.WarScoreBoard.BattleMember>();
         addMembers(members,battle.attacker(),battle.result().atkKillsByMember());
         if(battle.defender()!=null)addMembers(members,battle.defender(),battle.result().defKillsByMember());
-        wars.reserveBattle(battle.target().targetId(),sequence,operationId,battle.happenedAt(),members);
+        return wars.reserveBattle(battle.target().targetId(),sequence,operationId,battle.happenedAt(),members);
+    }
+
+    private void verifyWarReplay(TargetOperationStore.Snapshot slot) {
+        var plan=slot.combatPlan().warRecovery();
+        if(plan==null)throw new IllegalStateException("原COMBAT缺War预留计划，不能发布/恢复国战贡献");
+        var reservation=plan.reservation();if(reservation==null)return;
+        var board=wars.findByStartedAt(reservation.warStartedAt())
+                .orElseThrow(()->new IllegalStateException("原COMBAT绑定的War存档缺失"));
+        var persistedEvent=board.battleEvent(reservation.sourceId());
+        var pending=wars.pendingBattleReservation(reservation.warStartedAt(),reservation.operationId());
+        if(plan.event()==null) {
+            if(!pending.filter(reservation::equals).isPresent() || persistedEvent!=null)
+                throw new IllegalStateException("原COMBAT War预留缺失或已有未冻结的WarEvent");
+        } else {
+            if(persistedEvent!=null && !persistedEvent.equals(plan.event()))
+                throw new IllegalStateException("原COMBAT WarEvent与恢复槽冻结载荷冲突");
+            if(pending.isPresent() && !pending.get().equals(reservation))
+                throw new IllegalStateException("原COMBAT War预留与恢复槽冻结载荷冲突");
+            if(pending.isEmpty() && !plan.event().equals(persistedEvent))
+                throw new IllegalStateException("原COMBAT War屏障已释放但缺少精确事件回执");
+        }
     }
 
     private StrategicBattleReportPlan freezeReportPlan(CapturedStrategicBattle battle,String operationId,String targetName) {

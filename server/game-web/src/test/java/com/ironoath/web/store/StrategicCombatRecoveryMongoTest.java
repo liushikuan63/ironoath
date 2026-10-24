@@ -5,12 +5,16 @@ import com.ironoath.core.army.ArmyState;
 import com.ironoath.core.march.March;
 import com.ironoath.core.nation.WarScoreBoard;
 import com.ironoath.core.nation.Nation;
+import com.ironoath.core.player.PlayerBrief;
+import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.web.battle.CapturedStrategicBattle;
 import com.ironoath.web.battle.StrategicRallyCasualties;
 import com.ironoath.web.battle.StrategicBattleHospitalSettlement;
 import com.ironoath.web.battle.StrategicBattleReportPlan;
 import com.ironoath.web.battle.StrategicBattleKillPlan;
 import com.ironoath.web.rank.RankBoardService;
+import com.ironoath.web.bot.BotRegistry;
+import com.ironoath.web.social.SocialStore;
 import com.ironoath.web.nation.WarRulesAssembler;
 import com.ironoath.web.nation.NationRulesAssembler;
 import com.ironoath.web.store.mongo.*;
@@ -26,6 +30,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 
 /** The recovery owner replays actual Mongo Army/March/War/COMBAT receipts across fresh store instances. */
 class StrategicCombatRecoveryMongoTest {
@@ -89,6 +97,97 @@ class StrategicCombatRecoveryMongoTest {
                 com.ironoath.core.season.SeasonSettlement.Board.KILL,member.playerId(),battle.target().targetId()))
                 .contains(new com.ironoath.web.season.SeasonBoardStore.ScopedIncrement(battle.target().targetId(),1,
                         operationId,member.playerId(),member.displayName(),member.kills()));
+    }
+
+    @Test void warEventReleaseAndFinalCombatCompletionReplayFromFreshMongoStores() {
+        var configs=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
+        var battle=StrategicCombatSlotTest.battle(2382,false,true,false);
+        var operationId="battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion();
+        var warRules=new WarRulesAssembler(configs);var wars=new MongoWarStore(db.template(),warRules);
+        var board=new WarScoreBoard(warRules.rules(),battle.happenedAt()-10,battle.attacker().rally().nationId(),battle.happenedAt()+1000);
+        board.registerNation(battle.attacker().rally().nationId());board.registerNation("owned-opponent");
+        assertThat(wars.insertIfNoneActive(board)).isTrue();var warMembers=new ArrayList<WarScoreBoard.BattleMember>();
+        addWarMembers(warMembers,battle.attacker(),battle.result().atkKillsByMember());
+        var reservation=wars.reserveBattle(battle.target().targetId(),1,operationId,battle.happenedAt(),warMembers).orElseThrow();
+
+        var targetName=com.ironoath.web.service.WorldTargets.from(configs).targets().stream()
+                .filter(target->target.definition().id().equals(battle.target().targetId())).findFirst().orElseThrow().definition().name();
+        var reportPlan=StrategicBattleReportPlan.create(battle,operationId,
+                battle.happenedAt()+configs.longParam("BATTLE_REPORT_TTL_SECONDS")*1000L,"attacker",targetName);
+        var ranks=rankService(configs,new MongoSeasonBoardStore(db.template()));
+        var killPlan=ranks.freezeStrategicKills(battle,operationId,1);
+        var combat=TargetOperationStore.CombatPlan.create(battle,1).withReportPlan(reportPlan).withKillPlan(killPlan)
+                .withWarRecovery(new TargetOperationStore.WarRecoveryPlan(reservation,null));
+        var operations=new MongoTargetOperationStore(db.template());
+        assertThat(operations.compareAndSet(TargetOperationStore.Snapshot.combat(1,false,combat),0)).isTrue();
+
+        var armies=new MongoArmyStore(db.template());
+        for(String player:battle.attacker().currentMembers().keySet()) {
+            var army=new ArmyState();army.add("unit_infantry_t4",100);assertThat(armies.insertIfAbsent(player,army)).isTrue();
+        }
+        var marches=new MongoMarchStore(db.template(),32);var attacker=March.fromSnapshot(battle.attacker().march());
+        assertThat(marches.insertIfAbsent(attacker)).isTrue();
+        while(marches.versionOf(attacker.id())<battle.attacker().marchVersion())marches.save(attacker,marches.versionOf(attacker.id()));
+        var nationRules=new NationRulesAssembler(configs);var nations=new MongoNationStore(db.template(),nationRules);
+        var nation=Nation.found(battle.attacker().rally().nationId(),"进攻国",battle.attacker().rally().initiatorId(),
+                "owned-attacker-alliance",0,0,100,nationRules.rules());assertThat(nations.insertIfAbsent(nation)).isTrue();
+        var occupations=new MongoTargetOccupationStore(db.template());var neutral=new MongoNeutralTargetGarrisonStore(db.template());
+        var due=new MongoMarchDueQueue(db.template());due.schedule(attacker.id(),battle.attacker().march().arriveAt());
+        var reportStore=new MongoBattleReportStore(db.template());
+        var reportService=new com.ironoath.web.battle.BattleReportService(configs,reportStore,
+                mock(com.ironoath.common.time.TimeService.class),mock(com.ironoath.web.service.SocialAppService.class),
+                ranks,wars,mock(com.ironoath.web.nation.NationMembership.class));
+        var recovery=new StrategicCombatRecovery(operations,armies,marches,occupations,neutral,nations,due,reportService,ranks,wars);
+
+        var pending=operations.findByTargetId(battle.target().targetId()).orElseThrow();
+        var hospital=recovery.recoverHospitalReceipts(pending);recovery.recoverTargetState(pending,hospital);
+        var marchPlan=recovery.freezeMarchOutcomes(pending);recovery.recoverMarchOutcomes(marchPlan);
+        var afterMarch=operations.findByTargetId(battle.target().targetId()).orElseThrow();
+        recovery.recoverReports(afterMarch,hospital);recovery.recoverSeasonKills(afterMarch);
+        var withWarEvent=recovery.freezeWarEvent(afterMarch,hospital);recovery.recoverWarEvent(withWarEvent);
+        var afterWar=new MongoTargetOperationStore(db.template()).findByTargetId(battle.target().targetId()).orElseThrow();
+        assertThat(afterWar.completed()).isFalse();assertThat(afterWar.combatPlan().warRecovery().event()).isNotNull();
+        assertThat(new MongoWarStore(db.template(),warRules).pendingBattleReservation(reservation.warStartedAt(),operationId)).isEmpty();
+        assertThat(new MongoWarStore(db.template(),warRules).findByStartedAt(reservation.warStartedAt()).orElseThrow()
+                .battleEvent(battle.target().targetId())).isEqualTo(afterWar.combatPlan().warRecovery().event());
+
+        var freshOperations=new MongoTargetOperationStore(db.template());
+        var freshRanks=rankService(configs,new MongoSeasonBoardStore(db.template()));
+        var freshRecovery=new StrategicCombatRecovery(freshOperations,new MongoArmyStore(db.template()),
+                new MongoMarchStore(db.template(),32),new MongoTargetOccupationStore(db.template()),
+                new MongoNeutralTargetGarrisonStore(db.template()),new MongoNationStore(db.template(),nationRules),
+                new MongoMarchDueQueue(db.template()),new com.ironoath.web.battle.BattleReportService(configs,
+                new MongoBattleReportStore(db.template()),mock(com.ironoath.common.time.TimeService.class),
+                mock(com.ironoath.web.service.SocialAppService.class),freshRanks,new MongoWarStore(db.template(),warRules),
+                mock(com.ironoath.web.nation.NationMembership.class)),freshRanks,new MongoWarStore(db.template(),warRules));
+        var resumed=freshOperations.findByTargetId(battle.target().targetId()).orElseThrow();
+        var resumedHospital=freshRecovery.recoverHospitalReceipts(resumed);
+        var completed=freshRecovery.completeCombat(resumed,resumedHospital);
+        assertThat(completed.completed()).isTrue();assertThat(completed.combatPlan().warRecovery().event())
+                .isEqualTo(afterWar.combatPlan().warRecovery().event());
+        assertThat(new MongoBattleReportStore(db.template()).reportsOf(battle.attacker().rally().initiatorId())).hasSize(1);
+        assertThat(new MongoSeasonBoardStore(db.template()).board(killPlan.seasonId(),com.ironoath.core.season.SeasonSettlement.Board.KILL))
+                .extracting(com.ironoath.core.season.SeasonSettlement.Entry::id)
+                .containsExactlyElementsOf(killPlan.members().stream().filter(StrategicBattleKillPlan.Member::leaderboardEligible)
+                        .map(StrategicBattleKillPlan.Member::playerId).sorted().toList());
+        assertThat(new MongoWarStore(db.template(),warRules).pendingBattleReservation(reservation.warStartedAt(),operationId)).isEmpty();
+    }
+
+    private static RankBoardService rankService(ConfigRegistry configs,com.ironoath.web.season.SeasonBoardStore boards) {
+        var social=mock(SocialStore.class);var nations=mock(com.ironoath.web.nation.NationStore.class);
+        var players=mock(PlayerRepository.class);var bots=mock(BotRegistry.class);
+        when(bots.humanOnly(anyString(),anyString())).thenAnswer(call->call.getArgument(0));
+        when(players.findBriefs(anyCollection())).thenAnswer(call->{
+            var out=new java.util.LinkedHashMap<String,PlayerBrief>();
+            for(String id:(java.util.Collection<String>)call.getArgument(0))out.put(id,new PlayerBrief(id,"rank:"+id,1,0,0));
+            return out;
+        });
+        var rules=mock(com.ironoath.web.season.SeasonRulesAssembler.class);
+        when(rules.timelineRules(anyLong())).thenReturn(new com.ironoath.core.season.SeasonTimeline.Rules(
+                List.of(new com.ironoath.core.season.SeasonTimeline.Stage(1,
+                        com.ironoath.core.season.SeasonTimeline.Phase.EXPAND,0,30)),"season-test"));
+        return new RankBoardService(boards,social,nations,new com.ironoath.web.nation.NationMembership(social,nations),
+                players,bots,configs,rules,mock(com.ironoath.common.time.TimeService.class));
     }
 
     @Test void admittedHospitalReceiptsSurviveRecoveryRestartWithoutAdvancingThePendingCombat() {

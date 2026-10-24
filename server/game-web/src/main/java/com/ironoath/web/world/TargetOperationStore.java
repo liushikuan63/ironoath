@@ -38,19 +38,39 @@ public interface TargetOperationStore {
                 throw new IllegalArgumentException("COMBAT攻守不能复用同一March恢复意图");
         }
     }
+    record WarRecoveryPlan(com.ironoath.core.nation.WarScoreBoard.BattleReservation reservation,
+                           com.ironoath.core.nation.WarScoreBoard.BattleEvent event) {
+        public WarRecoveryPlan {
+            if(reservation==null && event!=null)throw new IllegalArgumentException("无原战事预留不能产生WarEvent");
+            if(reservation!=null && event!=null && (!event.sourceId().equals(reservation.sourceId())
+                    || event.sequence()!=reservation.sequence() || !event.operationId().equals(reservation.operationId())
+                    || event.warStartedAt()!=reservation.warStartedAt() || event.happenedAt()!=reservation.happenedAt()
+                    || !event.rates().equals(reservation.rates())))
+                throw new IllegalArgumentException("COMBAT WarEvent与原战事预留身份/系数不一致");
+        }
+        public WarRecoveryPlan withEvent(com.ironoath.core.nation.WarScoreBoard.BattleEvent next) {
+            if(event!=null && !event.equals(next))throw new IllegalStateException("同一COMBAT不能替换冻结WarEvent");
+            return new WarRecoveryPlan(reservation,next);
+        }
+    }
     record CombatPlan(String operationId,long sequence,com.ironoath.web.battle.CapturedStrategicBattle battle,
                       MarchRecoveryPlan marchRecovery,com.ironoath.web.battle.StrategicBattleReportPlan reportPlan,
-                      com.ironoath.web.battle.StrategicBattleKillPlan killPlan) {
+                      com.ironoath.web.battle.StrategicBattleKillPlan killPlan,WarRecoveryPlan warRecovery) {
         public CombatPlan(String operationId,long sequence,com.ironoath.web.battle.CapturedStrategicBattle battle) {
-            this(operationId,sequence,battle,null,null,null);
+            this(operationId,sequence,battle,null,null,null,null);
         }
         public CombatPlan(String operationId,long sequence,com.ironoath.web.battle.CapturedStrategicBattle battle,
                 MarchRecoveryPlan marchRecovery) {
-            this(operationId,sequence,battle,marchRecovery,null,null);
+            this(operationId,sequence,battle,marchRecovery,null,null,null);
         }
         public CombatPlan(String operationId,long sequence,com.ironoath.web.battle.CapturedStrategicBattle battle,
                 MarchRecoveryPlan marchRecovery,com.ironoath.web.battle.StrategicBattleReportPlan reportPlan) {
-            this(operationId,sequence,battle,marchRecovery,reportPlan,null);
+            this(operationId,sequence,battle,marchRecovery,reportPlan,null,null);
+        }
+        public CombatPlan(String operationId,long sequence,com.ironoath.web.battle.CapturedStrategicBattle battle,
+                MarchRecoveryPlan marchRecovery,com.ironoath.web.battle.StrategicBattleReportPlan reportPlan,
+                com.ironoath.web.battle.StrategicBattleKillPlan killPlan) {
+            this(operationId,sequence,battle,marchRecovery,reportPlan,killPlan,null);
         }
         public CombatPlan {
             if(sequence<1 || battle==null || !Objects.equals(operationId,"battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion()))
@@ -110,18 +130,37 @@ public interface TargetOperationStore {
                         throw new IllegalArgumentException("COMBAT季榜KILL贡献与引擎成员击杀来源不一致");
                 }
             }
+            if(warRecovery!=null && warRecovery.reservation()!=null) {
+                var reservation=warRecovery.reservation();
+                if(!reservation.sourceId().equals(battle.target().targetId()) || reservation.sequence()!=sequence
+                        || !reservation.operationId().equals(operationId) || reservation.happenedAt()!=battle.happenedAt())
+                    throw new IllegalArgumentException("COMBAT War reservation与原目标操作/代次/时点不一致");
+            }
+            if(warRecovery!=null && warRecovery.event()!=null) {
+                var event=warRecovery.event();
+                if(!event.sourceId().equals(battle.target().targetId()) || event.sequence()!=sequence
+                        || !event.operationId().equals(operationId) || event.happenedAt()!=battle.happenedAt())
+                    throw new IllegalArgumentException("COMBAT WarEvent与原目标操作/代次/时点不一致");
+            }
         }
         public static CombatPlan create(com.ironoath.web.battle.CapturedStrategicBattle battle,long sequence) {
             return new CombatPlan("battle:"+battle.attacker().march().id()+":"+battle.attacker().marchVersion(),sequence,battle);
         }
         public CombatPlan withMarchRecovery(MarchRecoveryPlan recovery) {
-            return new CombatPlan(operationId,sequence,battle,recovery,reportPlan,killPlan);
+            return new CombatPlan(operationId,sequence,battle,recovery,reportPlan,killPlan,warRecovery);
         }
         public CombatPlan withReportPlan(com.ironoath.web.battle.StrategicBattleReportPlan reports) {
-            return new CombatPlan(operationId,sequence,battle,marchRecovery,reports,killPlan);
+            return new CombatPlan(operationId,sequence,battle,marchRecovery,reports,killPlan,warRecovery);
         }
         public CombatPlan withKillPlan(com.ironoath.web.battle.StrategicBattleKillPlan kills) {
-            return new CombatPlan(operationId,sequence,battle,marchRecovery,reportPlan,kills);
+            return new CombatPlan(operationId,sequence,battle,marchRecovery,reportPlan,kills,warRecovery);
+        }
+        public CombatPlan withWarRecovery(WarRecoveryPlan plan) {
+            return new CombatPlan(operationId,sequence,battle,marchRecovery,reportPlan,killPlan,plan);
+        }
+        public CombatPlan withWarEvent(com.ironoath.core.nation.WarScoreBoard.BattleEvent event) {
+            if(warRecovery==null)throw new IllegalStateException("COMBAT原War reservation计划缺失");
+            return withWarRecovery(warRecovery.withEvent(event));
         }
     }
     record WithdrawalPlan(String operationId,long sequence,long happenedAt,
@@ -216,7 +255,15 @@ public interface TargetOperationStore {
                     || !Objects.equals(before.killPlan(),after.killPlan()))return false;
             if(current.completed())return false;
             if(next.completed())return Objects.equals(before,after);
-            return before.marchRecovery()==null && after.marchRecovery()!=null;
+            boolean warSourceSame=before.warRecovery()==null?after.warRecovery()==null
+                    :after.warRecovery()!=null && Objects.equals(before.warRecovery().reservation(),after.warRecovery().reservation());
+            if(!warSourceSame)return false;
+            boolean freezeMarch=before.marchRecovery()==null && after.marchRecovery()!=null
+                    && Objects.equals(before.warRecovery(),after.warRecovery());
+            boolean freezeWarEvent=Objects.equals(before.marchRecovery(),after.marchRecovery())
+                    && before.warRecovery()!=null && before.warRecovery().event()==null
+                    && after.warRecovery().event()!=null;
+            return freezeMarch || freezeWarEvent;
         }
         return current.completed() && !next.completed()
                 && next.sequence()==Math.addExact(current.sequence(),1);

@@ -14,6 +14,7 @@ import com.ironoath.web.battle.StrategicWoundSettlement;
 import com.ironoath.web.battle.BattleReport;
 import com.ironoath.web.battle.BattleReportService;
 import com.ironoath.web.rank.RankBoardService;
+import com.ironoath.web.nation.WarStore;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,6 +34,7 @@ public final class StrategicCombatRecovery {
     private final MarchDueQueue due;
     private final BattleReportService reports;
     private final RankBoardService ranks;
+    private final WarStore wars;
 
     public StrategicCombatRecovery(TargetOperationStore operations,ArmyRepository armies,MarchRepository marches) {
         this(operations,armies,marches,null,null,null,null);
@@ -43,28 +45,32 @@ public final class StrategicCombatRecovery {
         this(operations,armies,marches,occupations,neutralGarrisons,nations,null);
     }
 
-    @org.springframework.beans.factory.annotation.Autowired
     public StrategicCombatRecovery(TargetOperationStore operations,ArmyRepository armies,MarchRepository marches,
             TargetOccupationStore occupations,NeutralTargetGarrisonStore neutralGarrisons,NationStore nations,
             MarchDueQueue due) {
         this(operations,armies,marches,occupations,neutralGarrisons,nations,due,null);
     }
 
-    @org.springframework.beans.factory.annotation.Autowired
     public StrategicCombatRecovery(TargetOperationStore operations,ArmyRepository armies,MarchRepository marches,
             TargetOccupationStore occupations,NeutralTargetGarrisonStore neutralGarrisons,NationStore nations,
             MarchDueQueue due,BattleReportService reports) {
         this(operations,armies,marches,occupations,neutralGarrisons,nations,due,reports,null);
     }
 
-    @org.springframework.beans.factory.annotation.Autowired
     public StrategicCombatRecovery(TargetOperationStore operations,ArmyRepository armies,MarchRepository marches,
             TargetOccupationStore occupations,NeutralTargetGarrisonStore neutralGarrisons,NationStore nations,
             MarchDueQueue due,BattleReportService reports,RankBoardService ranks) {
+        this(operations,armies,marches,occupations,neutralGarrisons,nations,due,reports,ranks,null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public StrategicCombatRecovery(TargetOperationStore operations,ArmyRepository armies,MarchRepository marches,
+            TargetOccupationStore occupations,NeutralTargetGarrisonStore neutralGarrisons,NationStore nations,
+            MarchDueQueue due,BattleReportService reports,RankBoardService ranks,WarStore wars) {
         this.operations=Objects.requireNonNull(operations);this.armies=Objects.requireNonNull(armies);
         this.marches=Objects.requireNonNull(marches);
         this.occupations=occupations;this.neutralGarrisons=neutralGarrisons;this.nations=nations;
-        this.due=due;this.reports=reports;this.ranks=ranks;
+        this.due=due;this.reports=reports;this.ranks=ranks;this.wars=wars;
     }
 
     /**
@@ -176,6 +182,117 @@ public final class StrategicCombatRecovery {
         var saved=ranks.recordStrategicKills(plan);
         requireCurrentPending(slot);
         return saved;
+    }
+
+    /** Freeze the complete WarEvent from the durable reservation and actual hospital admitted-wounds before scoring it. */
+    public TargetOperationStore.Snapshot freezeWarEvent(TargetOperationStore.Snapshot slot,
+            StrategicBattleHospitalSettlement hospital) {
+        requireCurrentPending(slot);
+        if(wars==null)throw new IllegalStateException("WarStore未装配，保留COMBAT pending");
+        var plan=slot.combatPlan();var warPlan=plan.warRecovery();
+        if(warPlan==null)throw new IllegalStateException("原COMBAT缺冻结War预留上下文");
+        var reservation=warPlan.reservation();if(reservation==null || warPlan.event()!=null)return slot;
+        if(hospital==null || !hospital.plan().operationId().equals(plan.operationId())
+                || hospital.plan().sequence()!=plan.sequence() || !hospital.plan().battle().equals(plan.battle()))
+            throw new IllegalArgumentException("医院结果不属于当前WarEvent COMBAT");
+        var persistedReservation=wars.pendingBattleReservation(reservation.warStartedAt(),plan.operationId())
+                .orElseThrow(()->new IllegalStateException("原COMBAT War预留缺失，不能重建事件"));
+        if(!reservation.equals(persistedReservation))throw new IllegalStateException("原COMBAT War预留与目标槽冻结内容不一致");
+        var board=wars.findByStartedAt(reservation.warStartedAt())
+                .orElseThrow(()->new IllegalStateException("原COMBAT绑定的War存档缺失"));
+        var event=board.freezeReservedBattleEvent(plan.operationId(),admittedWounds(hospital));
+        var nextPlan=plan.withWarEvent(event);
+        var next=TargetOperationStore.Snapshot.combat(Math.addExact(slot.version(),1),false,nextPlan);
+        try {
+            if(!operations.compareAndSet(next,slot.version()) && !operations.findByTargetId(slot.targetId()).filter(next::equals).isPresent())
+                throw new IllegalStateException("WarEvent冻结CAS未确认，尚未写战事分数/疲劳");
+        } catch(RuntimeException unknown) {
+            if(!operations.findByTargetId(slot.targetId()).filter(next::equals).isPresent())throw unknown;
+        }
+        return operations.findByTargetId(slot.targetId()).filter(next::equals)
+                .orElseThrow(()->new IllegalStateException("WarEvent冻结后COMBAT槽未完整读回"));
+    }
+
+    /** Apply the frozen full-member event, read it back, then release the exact War closure barrier. */
+    public void recoverWarEvent(TargetOperationStore.Snapshot slot) {
+        requireCurrentPending(slot);
+        if(wars==null)throw new IllegalStateException("WarStore未装配，保留COMBAT pending");
+        var plan=slot.combatPlan();var warPlan=plan.warRecovery();
+        if(warPlan==null)throw new IllegalStateException("原COMBAT缺冻结War预留上下文");
+        var reservation=warPlan.reservation();if(reservation==null){requireCurrentPending(slot);return;}
+        var event=warPlan.event();if(event==null)throw new IllegalStateException("原COMBAT WarEvent尚未持久冻结");
+        var board=wars.findByStartedAt(reservation.warStartedAt())
+                .orElseThrow(()->new IllegalStateException("原COMBAT绑定的War存档缺失"));
+        var pending=wars.pendingBattleReservation(reservation.warStartedAt(),plan.operationId());
+        if(pending.isPresent() && !pending.get().equals(reservation))
+            throw new IllegalStateException("原COMBAT War reservation回执与冻结计划不同");
+        var existing=board.battleEvent(reservation.sourceId());
+        if(existing!=null && !existing.equals(event))throw new IllegalStateException("原COMBAT WarEvent存在同目标不同内容冲突");
+        if(pending.isEmpty() && !event.equals(existing))
+            throw new IllegalStateException("原COMBAT War屏障已释放但缺少精确事件回执");
+        try {
+            var confirmed=wars.recordBattleEvent(event);
+            if(!event.equals(confirmed))throw new IllegalStateException("WarEvent存储返回了不同原载荷");
+        } catch(RuntimeException unknown) {
+            try {
+                var read=wars.findByStartedAt(reservation.warStartedAt()).orElse(null);
+                if(read==null || !event.equals(read.battleEvent(reservation.sourceId())))throw unknown;
+            } catch(RuntimeException readFailure) {
+                if(readFailure!=unknown)unknown.addSuppressed(readFailure);throw unknown;
+            }
+        }
+        var recorded=wars.findByStartedAt(reservation.warStartedAt())
+                .orElseThrow(()->new IllegalStateException("WarEvent写后原战事读回缺失"));
+        if(!event.equals(recorded.battleEvent(reservation.sourceId())))
+            throw new IllegalStateException("WarEvent完整读回与COMBAT冻结事件不一致");
+        try {wars.completeBattleOperation(reservation.warStartedAt(),plan.operationId());}
+        catch(RuntimeException unknown) {
+            if(!warBarrierReleased(reservation,event))throw unknown;
+        }
+        if(!warBarrierReleased(reservation,event))throw new IllegalStateException("WarEvent未精确确认或闭战屏障尚未释放");
+        requireCurrentPending(slot);
+    }
+
+    /** Final target-slot receipt after reports, every seasonal KILL row, and the WarEvent are all confirmed. */
+    public TargetOperationStore.Snapshot completeCombat(TargetOperationStore.Snapshot slot,
+            StrategicBattleHospitalSettlement hospital) {
+        requireCurrentPending(slot);
+        if(slot.combatPlan().reportPlan()==null || slot.combatPlan().killPlan()==null || slot.combatPlan().warRecovery()==null)
+            throw new IllegalStateException("COMBAT缺少报告/KILL/War冻结计划，不能完成目标槽");
+        recoverReports(slot,hospital);recoverSeasonKills(slot);recoverWarEvent(slot);
+        var warPlan=slot.combatPlan().warRecovery();
+        if(warPlan.reservation()!=null && !warBarrierReleased(warPlan.reservation(),warPlan.event()))
+            throw new IllegalStateException("原COMBAT WarEvent仍未确认释放屏障，不能完成目标槽");
+        var next=TargetOperationStore.Snapshot.combat(Math.addExact(slot.version(),1),true,slot.combatPlan());
+        try {
+            if(!operations.compareAndSet(next,slot.version()) && !operations.findByTargetId(slot.targetId()).filter(next::equals).isPresent())
+                throw new IllegalStateException("COMBAT最终完成CAS未确认");
+        } catch(RuntimeException unknown) {
+            if(!operations.findByTargetId(slot.targetId()).filter(next::equals).isPresent())throw unknown;
+        }
+        return operations.findByTargetId(slot.targetId()).filter(next::equals)
+                .orElseThrow(()->new IllegalStateException("COMBAT最终完成后目标槽未完整读回"));
+    }
+
+    private boolean warBarrierReleased(com.ironoath.core.nation.WarScoreBoard.BattleReservation reservation,
+            com.ironoath.core.nation.WarScoreBoard.BattleEvent event) {
+        if(reservation==null || event==null)return false;
+        var board=wars.findByStartedAt(reservation.warStartedAt()).orElse(null);
+        return board!=null && event.equals(board.battleEvent(reservation.sourceId()))
+                && wars.pendingBattleReservation(reservation.warStartedAt(),reservation.operationId()).isEmpty()
+                && board.hasBattleOperationReceipt(reservation.operationId());
+    }
+
+    private static Map<String,Long> admittedWounds(StrategicBattleHospitalSettlement hospital) {
+        var admitted=new java.util.TreeMap<String,Long>();
+        hospital.attackerReceipts().forEach((id,receipt)->admitted.put(id,admitted(receipt)));
+        hospital.defenderReceipts().forEach((id,receipt)->{
+            if(admitted.putIfAbsent(id,admitted(receipt))!=null)throw new IllegalStateException("医院KILL成员攻守身份重叠");
+        });
+        return Map.copyOf(admitted);
+    }
+    private static long admitted(com.ironoath.core.army.ArmyState.StrategicWoundReceipt receipt) {
+        long total=0;for(long count:receipt.admitted().values())total=Math.addExact(total,count);return total;
     }
 
     private void requireOriginalMarch(TargetOperationStore.MarchIntent intent) {
