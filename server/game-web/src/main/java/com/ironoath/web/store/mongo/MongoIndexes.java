@@ -2,6 +2,8 @@ package com.ironoath.web.store.mongo;
 
 import java.util.concurrent.TimeUnit;
 
+import com.mongodb.client.model.IndexOptions;
+import org.bson.Document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Sort;
@@ -85,6 +87,12 @@ public final class MongoIndexes {
                 .on("playerId", Sort.Direction.ASC)
                 .on("state.paidAt", Sort.Direction.ASC)
                 .named("idx_player_id_state_paid_at"));
+        String byChannelOrder = mongo.getCollection(PayOrderDocument.COLLECTION).createIndex(
+                new Document("state.quote.outTradeNo",1),
+                new IndexOptions().name("uk_pay_order_channel_out_trade_no").unique(true)
+                        .partialFilterExpression(new Document("state.quote.outTradeNo",
+                                new Document("$type","string"))));
+        LOG.info("Mongo 支付订单索引就绪：{} / {} / {}",byStatusAndCreatedAt,byPlayerAndPaidAt,byChannelOrder);
         // 战报是全游戏长得最快的一张表（一场战斗给攻守双方各一份），而"我的战报"列表
         // 是每次进页面都会发的查询：没有 {ownerId, createdAt} 就是整集合扫。
         // 第二条给惰性清理用：purgeExpired 每次列表与详情入口都会触发，扫的是到期时刻这一段。

@@ -251,7 +251,7 @@ public class PayAppService {
                     throw new BizException(ErrorCode.PAY_ORDER_DUPLICATE,
                             "本次订单已结束，请重新下单");
                 }
-                return new CreateOrderResp(orderId, null, payParams(original));
+                return new CreateOrderResp(orderId, null, payParams(orderId,original));
             }
             acquire(req.requestId(), now);
             try {
@@ -262,7 +262,7 @@ public class PayAppService {
                 requireGiftSellable(playerId, product, now, buyable.save());
                 long cents = catalog.priceCents(product);
                 PayOrder.Line line = new PayOrder.Line(product.id(), Math.max(1, req.count()),
-                        cents, now, req.heroChoice(), catalog.cardTerms(product), paymentQuote());
+                        cents, now, req.heroChoice(), catalog.cardTerms(product), paymentQuote(orderId));
                 PayOrder order = PayOrder.create(orderId, playerId, line);
                 // 未成年额度是**提示不是闸门**（B15 §3 禁止项 + 裁决 #489）：先算好那句提示，
                 // 再照常落库 —— 提示随 CreateOrderResp 的 minorNotice 那一列下发。
@@ -272,7 +272,7 @@ public class PayAppService {
                 LOG.info("下单 orderId={} playerId={} 商品={} 份数={} 金额={}分 选将={}",
                         orderId, playerId, line.productId(), line.count(), line.totalCents(),
                         line.heroChoice());
-                return new CreateOrderResp(orderId, minorNotice, payParams(line));
+                return new CreateOrderResp(orderId, minorNotice, payParams(orderId,line));
             } catch (RuntimeException e) {
                 idempotency.release(req.requestId());
                 throw e;
@@ -698,14 +698,14 @@ public class PayAppService {
      * <p><b>offerId 缺失时不静默用空串</b>：空串会让客户端调起一个必然失败的支付，
      * 玩家看到的是「点了没反应」。当场报错虽然难看，但它指向的是配置缺失这个真问题。
      */
-    private PayParams payParams(PayOrder.Line line) {
-        PayOrder.Quote quote = line.quote() == null ? paymentQuote() : line.quote();
+    private PayParams payParams(String orderId,PayOrder.Line line) {
+        PayOrder.Quote quote = line.quote() == null ? paymentQuote(orderId) : line.quote();
         return new PayParams(quote.mode(), quote.offerId(), String.valueOf(line.totalCents()),
-                quote.env(), quote.currencyType(), quote.signature());
+                quote.env(), quote.currencyType(), quote.signature(),quote.outTradeNo());
     }
 
     /** 首次下单时冻结渠道参数；回放不得改用此刻的部署环境或热加载币种。 */
-    private PayOrder.Quote paymentQuote() {
+    private PayOrder.Quote paymentQuote(String orderId) {
         String offerId = environment.getProperty("ironoath.pay.offer-id", "");
         if (offerId.isBlank()) {
             throw new BizException(ErrorCode.PAY_PRODUCT_OFFLINE,
@@ -717,7 +717,19 @@ public class PayAppService {
                 offerId,
                 environment.getProperty("ironoath.pay.env", "1"),
                 currency(),
-                null);
+                null,
+                channelOrderIdFor(orderId));
+    }
+
+    /**
+     * Platform outTradeNo is a separate stable 32-hex mapping to the longer internal orderId.
+     * It is frozen in the order quote and uniquely indexed, so retries/callbacks cannot invent a new channel identity.
+     */
+    private static String channelOrderIdFor(String orderId) {
+        String prefix="order_";
+        if(orderId==null || !orderId.startsWith(prefix) || orderId.length()!=prefix.length()+64)
+            throw new IllegalArgumentException("内部支付订单号无法映射为Midas outTradeNo");
+        return orderId.substring(prefix.length(),prefix.length()+32);
     }
 
     /** 只给新单用；旧 ID 不改，已有回调和查单仍按原单号工作。 */

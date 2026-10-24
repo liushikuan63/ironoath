@@ -449,6 +449,7 @@ declare const wx: {
     buyQuantity: string
     env: string
     currencyType: string
+    outTradeNo: string
     platform?: 'android' | 'ios'
     success?(): void
     fail?(err: { errMsg: string; errCode?: number }): void

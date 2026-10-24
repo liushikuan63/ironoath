@@ -198,7 +198,7 @@ test('支付下单恢复显式沿用失联请求号，普通下单仍生成新�
   const { api, http } = createHarness()
   const order = { orderId: 'order-original', minorNotice: null, payParams: {
     mode: 'game', offerId: 'offer-test', buyQuantity: '600', env: '1',
-    currencyType: 'CNY', signature: null,
+    currencyType: 'CNY', signature: null, outTradeNo: '0123456789abcdef0123456789abcdef',
   } }
   http.script = [envelope(order), envelope(order)]
 

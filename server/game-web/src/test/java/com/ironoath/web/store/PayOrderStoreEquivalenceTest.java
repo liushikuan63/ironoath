@@ -62,7 +62,8 @@ class PayOrderStoreEquivalenceTest {
     @Test
     @DisplayName("创建时锁定的渠道参数在内存与 Mongo 重读后完全相同")
     void paymentQuoteSurvivesBothStores() {
-        PayOrder.Quote quote = new PayOrder.Quote("game", "offer-original", "1", "CNY", null);
+        String outTradeNo="0123456789abcdef0123456789abcdef";
+        PayOrder.Quote quote = new PayOrder.Quote("game", "offer-original", "1", "CNY", null,outTradeNo);
         for (PayOrderStore store : bothStores()) {
             PayOrder order = PayOrder.create("o-quote", "P-quote",
                     new PayOrder.Line("pack_monthly", 1, 600L, T0, null, null, quote));
@@ -70,6 +71,24 @@ class PayOrderStoreEquivalenceTest {
             PayOrder reread = store.get("o-quote");
             assertThat(reread.line().quote()).as(store.getClass().getSimpleName()).isEqualTo(quote);
             assertThat(reread.snapshot().quote()).isEqualTo(quote);
+            PayOrder mapped=store.findByOutTradeNo(outTradeNo);
+            assertThat(mapped).as("通道订单号必须映射回持久内部订单：%s",store.getClass().getSimpleName()).isNotNull();
+            assertThat(mapped.orderId()).isEqualTo("o-quote");
+        }
+    }
+
+    @Test
+    @DisplayName("不同内部订单不得复用同一个 Midas outTradeNo")
+    void duplicateOutTradeNoIsRejectedByBothStores() {
+        String outTradeNo="fedcba9876543210fedcba9876543210";
+        for(PayOrderStore store:bothStores()) {
+            var quote=new PayOrder.Quote("game","offer-original","1","CNY",null,outTradeNo);
+            store.insert(PayOrder.create("o-channel-1","P-channel-1",
+                    new PayOrder.Line("pack_monthly",1,600L,T0,null,null,quote)));
+            assertThatThrownBy(()->store.insert(PayOrder.create("o-channel-2","P-channel-2",
+                    new PayOrder.Line("pack_monthly",1,600L,T0,null,null,quote))))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining(outTradeNo);
         }
     }
 

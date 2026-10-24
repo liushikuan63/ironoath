@@ -14,7 +14,7 @@ import type { CreateOrderResp, OrderStatusResp } from '../assets/scripts/net/gen
 
 const PAY_PARAMS = {
   mode: 'game', offerId: 'offer-1', buyQuantity: '600', env: '1',
-  currencyType: 'CNY', signature: null,
+  currencyType: 'CNY', signature: null, outTradeNo: '0123456789abcdef0123456789abcdef',
 }
 
 function okOutcome<T>(data: T): NetOutcome<T> {

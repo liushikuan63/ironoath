@@ -201,6 +201,9 @@ class PayEndpointTest {
         assertThat(data.get("payParams").get("buyQuantity").asText())
                 .as("金额以分为单位透传").isEqualTo(
                         String.valueOf(configs.longParam("PRODUCT_FIRST_CHARGE_CENTS")));
+        assertThat(data.get("payParams").path("outTradeNo").asText())
+                .as("米大师通道订单号必须显式下发、可重复映射且不超过32字符")
+                .matches("[0-9a-f]{32}");
 
         PayOrder order = orders.get(orderId);
         assertThat(order).isNotNull();

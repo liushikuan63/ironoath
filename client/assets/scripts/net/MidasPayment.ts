@@ -17,6 +17,11 @@ export function requestMidasPayment(params: PayParams): Promise<PaymentOutcome> 
   if (typeof wx === 'undefined' || typeof wx.requestMidasPayment !== 'function') {
     return Promise.resolve('unsupported')
   }
+  const outTradeNo = params.outTradeNo
+  if (!outTradeNo || !/^[0-9a-f]{32}$/.test(outTradeNo)) {
+    // Legacy PENDING orders have no frozen platform mapping; never let a retry invent a new channel identity.
+    return Promise.resolve('unsupported')
+  }
   return new Promise<PaymentOutcome>((resolve) => {
     wx.requestMidasPayment({
       mode: params.mode,
@@ -24,6 +29,7 @@ export function requestMidasPayment(params: PayParams): Promise<PaymentOutcome> 
       buyQuantity: params.buyQuantity,
       env: params.env,
       currencyType: params.currencyType,
+      outTradeNo,
       success: () => resolve('ok'),
       fail: (err) => {
         // 当前桥把 -2 归为用户取消；微信小游戏专用文档和真机回执尚未核实，不能称此映射已通过正式渠道验收。

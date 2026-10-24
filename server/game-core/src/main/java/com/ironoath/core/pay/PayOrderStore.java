@@ -29,6 +29,9 @@ public interface PayOrderStore {
      */
     PayOrder get(String orderId);
 
+    /** 按支付平台业务订单号反查内部订单；旧快照没有 outTradeNo 时不命中。 */
+    PayOrder findByOutTradeNo(String outTradeNo);
+
     /**
      * 登记一笔新订单。
      *

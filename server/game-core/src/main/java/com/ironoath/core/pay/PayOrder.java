@@ -77,12 +77,19 @@ public final class PayOrder {
             List.copyOf(CONFIRMED_STATUSES).stream().map(Enum::name).toList();
 
     /** 创建订单时锁定的渠道参数；数量由本订单的 long 分金额重建，不复制第二份金额。 */
-    public record Quote(String mode, String offerId, String env, String currencyType, String signature) {
+    public record Quote(String mode, String offerId, String env, String currencyType, String signature,
+                        String outTradeNo) {
+        /** 老订单快照与不带渠道映射的历史测试仍可读取；新建订单必须显式带 outTradeNo。 */
+        public Quote(String mode,String offerId,String env,String currencyType,String signature) {
+            this(mode,offerId,env,currencyType,signature,null);
+        }
         public Quote {
             if (mode == null || mode.isBlank() || offerId == null || offerId.isBlank()
                     || env == null || env.isBlank() || currencyType == null || currencyType.isBlank()) {
                 throw new IllegalArgumentException("支付报价的渠道字段不得为空");
             }
+            if(outTradeNo!=null && !outTradeNo.matches("[0-9a-f]{32}"))
+                throw new IllegalArgumentException("米大师outTradeNo必须是32位小写十六进制订单映射");
         }
     }
 
@@ -549,6 +556,14 @@ public final class PayOrder {
                 // 调用方按哪一侧写断言，到另一侧就会吃到意料之外的异常类型
                 throw new IllegalArgumentException("订单不得为 null");
             }
+            if(orders.containsKey(order.orderId())) {
+                throw new IllegalStateException("订单号重复：" + order.orderId()
+                        + "。orderId 是回调幂等的唯一键，重复就等于两笔支付共用一个幂等键");
+            }
+            String outTradeNo=order.line().quote()==null?null:order.line().quote().outTradeNo();
+            if(outTradeNo!=null && orders.values().stream().anyMatch(existing->existing.line().quote()!=null
+                    && outTradeNo.equals(existing.line().quote().outTradeNo())))
+                throw new IllegalStateException("米大师outTradeNo重复："+outTradeNo);
             PayOrder previous = orders.putIfAbsent(order.orderId(), order);
             if (previous != null) {
                 throw new IllegalStateException("订单号重复：" + order.orderId()
@@ -583,6 +598,13 @@ public final class PayOrder {
         @Override
         public synchronized PayOrder get(String orderId) {
             return orders.get(orderId);
+        }
+
+        @Override
+        public synchronized PayOrder findByOutTradeNo(String outTradeNo) {
+            if(outTradeNo==null || outTradeNo.isBlank())return null;
+            return orders.values().stream().filter(order->order.line().quote()!=null
+                    && outTradeNo.equals(order.line().quote().outTradeNo())).findFirst().orElse(null);
         }
 
         public synchronized List<PayOrder> all() {

@@ -40,7 +40,7 @@ export interface PricesResp {
 }
 
 /**
- * 调起微信虚拟支付（米大师）的当前内部参数形状。服务端按订单金额与部署参数组装 mode、offerId、buyQuantity、env、currencyType；客户端桥目前只转发这五项。正式渠道字段语义与真机回执尚未验收，不能把本类型存在当成支付可用的证明。
+ * 调起微信小游戏虚拟支付的当前内部参数形状。服务端冻结一个符合平台长度/字符约束的 outTradeNo，与内部订单号分开；其余支付能力和正式渠道签名仍须按适用合同接通。
  */
 export interface PayParams {
   /** 米大师支付模式（game / short_series_goods 等），由服务端按渠道配置下发。 */
@@ -55,6 +55,8 @@ export interface PayParams {
   currencyType: string
   /** 预留签名字段。**当前生产代码恒为 null**（PayAppService.payParams 最后一参），MidasPayment 桥也不传此字段；原注释声称『正式环境必有、不会下发 null』与代码不符。是否需要签名、签名来源及传参位置须按微信小游戏正式渠道文档和真机回执核实，本字段不构成已接通正式支付的证据。 */
   signature: string | null
+  /** 米大师通道订单号，稳定映射当前内部订单。新订单为32位小写十六进制；老订单无冻结映射时为null且不得据此新拉起支付。 */
+  outTradeNo: string | null
 }
 
 /**

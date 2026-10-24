@@ -43,6 +43,14 @@ public final class MongoPayOrderStore implements PayOrderStore {
     }
 
     @Override
+    public PayOrder findByOutTradeNo(String outTradeNo) {
+        if(outTradeNo==null || outTradeNo.isBlank())return null;
+        PayOrderDocument doc=mongo.findOne(Query.query(Criteria.where("state.quote.outTradeNo").is(outTradeNo)),
+                PayOrderDocument.class,PayOrderDocument.COLLECTION);
+        return doc==null?null:doc.toDomain();
+    }
+
+    @Override
     public void insert(PayOrder order) {
         if (order == null) {
             throw new IllegalArgumentException("订单不得为 null");
@@ -50,8 +58,14 @@ public final class MongoPayOrderStore implements PayOrderStore {
         try {
             mongo.insert(PayOrderDocument.fromDomain(order), PayOrderDocument.COLLECTION);
         } catch (DuplicateKeyException e) {
-            throw new IllegalStateException("订单号重复：" + order.orderId()
-                    + "。orderId 是回调幂等的唯一键，重复就等于两笔支付共用一个幂等键", e);
+            if(get(order.orderId())!=null)
+                throw new IllegalStateException("订单号重复：" + order.orderId()
+                        + "。orderId 是回调幂等的唯一键，重复就等于两笔支付共用一个幂等键",e);
+            String outTradeNo=order.line().quote()==null?null:order.line().quote().outTradeNo();
+            if(outTradeNo!=null && findByOutTradeNo(outTradeNo)!=null)
+                throw new IllegalStateException("米大师outTradeNo重复："+outTradeNo,e);
+            throw new IllegalStateException("订单号或米大师outTradeNo重复：orderId=" + order.orderId()
+                    + "。两个键必须唯一，重复就无法可靠映射支付平台回调", e);
         }
     }
 

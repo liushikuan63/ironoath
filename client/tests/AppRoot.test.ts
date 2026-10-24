@@ -5311,7 +5311,7 @@ test('monthly payment result and server notice remain visible in the shop withou
   h.targets.monthlyCards = view => views.push(view)
   h.http.overrides.set('/pay/order', {
     orderId: 'monthly-unsupported', minorNotice: '服务端额度提醒',
-    payParams: { mode: 'game', offerId: 'fixture-only', buyQuantity: '3000', env: '1', currencyType: 'CNY', signature: null },
+    payParams: { mode: 'game', offerId: 'fixture-only', buyQuantity: '3000', env: '1', currencyType: 'CNY', signature: null, outTradeNo: '0123456789abcdef0123456789abcdef' },
   })
   await h.root.start('monthly-feedback', '月卡')
   await h.root.openMonthlyCardTab()
