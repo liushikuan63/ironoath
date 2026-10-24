@@ -103,6 +103,10 @@ class NationRallyEndpointTest {
     @Autowired private com.ironoath.web.service.PowerRefreshService powerRefreshService;
     @Autowired private ConfigRegistry configs;
     @SpyBean private StrategicTargetCircleGuard strategicTargetCircleGuard;
+    @Autowired private com.ironoath.web.service.MarchAppService marchAppService;
+    @Autowired private com.ironoath.core.march.MarchRepository marchRepository;
+    @Autowired private com.ironoath.web.world.TargetOperationStore targetOperations;
+    @Autowired private com.ironoath.web.world.StrategicGarrisonWithdrawal strategicRecovery;
 
     /** 联盟名/标签与国名的序号：同一轮里要建好几个组织，重名会在 NAME_TAKEN 上报错而测不到逻辑。 */
     private int seq;
@@ -666,6 +670,52 @@ class NationRallyEndpointTest {
         assertThat(rally.get("targetCoord").get("x").asInt()).isEqualTo(coord.x());
         assertThat(rally.get("targetCoord").get("y").asInt()).isEqualTo(coord.y());
         verify(strategicTargetCircleGuard).guardRallyStart(nation.king,coord,4);
+    }
+
+    @Test
+    @DisplayName("国家集结从HTTP发起、到期出发并真实到达后发布COMBAT，再由恢复器完成")
+    void strategicNationalRallyFlowsThroughArrivalPublisherAndRecovery() throws Exception {
+        Nation nation=nation(4);String mate=nation.mates.get(0);
+        giveTroops(nation.king,1_000L);giveTroops(mate,1_000L);
+        var gate=WorldTargets.from(configs).targets().stream()
+                .filter(target->target.definition().id().equals("gate_north")).findFirst().orElseThrow();
+        var coord=new com.ironoath.core.world.Coord(gate.coord().x(),gate.coord().y());
+        doNothing().when(strategicTargetCircleGuard).guardRallyStart(nation.king,coord,4);
+        doNothing().when(strategicTargetCircleGuard).guardArrival(org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyInt());
+
+        String rallyId=post200("/rally/nation",nation.king,new NationRallyReq(newRequestId(),
+                new SocialCoord(coord.x(),coord.y()),SocialTargetType.STRATEGIC_TARGET,4,10,
+                List.of(new RallyTroop(UNIT,300L)),List.of())).get("rally").get("rallyId").asText();
+        post200("/rally/join",mate,new RallyJoinReq(newRequestId(),rallyId,
+                List.of(new RallyTroop(UNIT,200L)),List.of()));
+
+        var rally=socialStore.rallyOf(rallyId).orElseThrow();
+        long departAt=rally.prepareUntil()+1;
+        marchAppService.processDue(nation.king,departAt);
+        assertThat(socialStore.rallyOf(rallyId).orElseThrow().status()).isEqualTo(Rally.Status.DEPARTED);
+        String marchId="march_rally_"+rallyId;
+        var frozenMarch=marchRepository.findById(marchId).orElseThrow().snapshot();
+        assertThat(frozenMarch.targetType()).isEqualTo(com.ironoath.core.march.March.TargetType.STRATEGIC_TARGET);
+        marchAppService.processDue(nation.king,frozenMarch.arriveAt());
+
+        var fighting=marchRepository.findById(marchId).orElseThrow();
+        assertThat(fighting.status()).isEqualTo(com.ironoath.core.march.March.Status.FIGHTING);
+        var pendingSlot=targetOperations.findByTargetId(frozenMarch.targetId());
+        assertThat(pendingSlot).as("COMBAT发布以行军冻结目标ID为槽键；marchTarget={} slots={}",
+                frozenMarch.targetId(),targetOperations.findAllTargetIds(20)).isPresent();
+        var pending=pendingSlot.orElseThrow();
+        assertThat(pending.completed()).isFalse();
+        assertThat(pending.combatPlan().battle().input().battleType()).isEqualTo(com.ironoath.battle.BattleType.SIEGE);
+
+        strategicRecovery.recoverPending();
+
+        var completedSlot=targetOperations.findByTargetId(frozenMarch.targetId());
+        assertThat(completedSlot).as("恢复后必须保留完成态COMBAT槽；target=%s stored=%s",
+                frozenMarch.targetId(),targetOperations.findAllTargetIds(20)).isPresent();
+        assertThat(completedSlot.orElseThrow().completed()).isTrue();
+        assertThat(marchRepository.findById(marchId)).matches(finalMarch->finalMarch.isEmpty()
+                || finalMarch.get().status()!=com.ironoath.core.march.March.Status.FIGHTING);
     }
 
     // ---------- 加入 ----------

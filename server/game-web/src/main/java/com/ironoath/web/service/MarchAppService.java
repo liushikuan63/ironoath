@@ -844,7 +844,7 @@ public class MarchAppService {
         String initiatorId = rally.initiatorId();
         Map<String, Long> troops = departure.mergedTroops();
         Coord target = requireCoord((int) rally.targetX(), (int) rally.targetY());
-        March.TargetType targetType = rallyTargetType(rally.targetType());
+        March.TargetType targetType = rallyTargetType(rally.targetType(),rally.scope());
         WorldGenerator.Cell cell = worldAppService.cellAt(target);
         String targetId = targetEntityId(cell, target);
         requireTargetOutsideRally(rally, targetType, target, targetId);
@@ -901,16 +901,17 @@ public class MarchAppService {
      * 抛出去由调用方撤销出发（退款 + 取消），这比让集结卡在「准备中且已到点」强 ——
      * 那种状态下成员的兵一直被锁着，而面板上看起来只是「还没出发」。
      */
-    private static March.TargetType rallyTargetType(String targetType) {
+    private static March.TargetType rallyTargetType(String targetType,com.ironoath.core.social.Rally.Scope scope) {
         final March.TargetType parsed;
         try {
             parsed = March.TargetType.valueOf(targetType);
         } catch (IllegalArgumentException | NullPointerException e) {
             throw new BizException(ErrorCode.RALLY_PREPARE_INVALID, "集结目标类型无法识别: " + targetType);
         }
-        if (parsed != March.TargetType.MONSTER && parsed != March.TargetType.PLAYER_CITY) {
+        if (parsed != March.TargetType.MONSTER && parsed != March.TargetType.PLAYER_CITY
+                && !(parsed==March.TargetType.STRATEGIC_TARGET && scope==com.ironoath.core.social.Rally.Scope.NATION)) {
             throw new BizException(ErrorCode.RALLY_PREPARE_INVALID,
-                    "集结只能攻击野怪或玩家城，当前目标=" + parsed);
+                    "该类集结不能攻击当前目标，目标=" + parsed);
         }
         return parsed;
     }

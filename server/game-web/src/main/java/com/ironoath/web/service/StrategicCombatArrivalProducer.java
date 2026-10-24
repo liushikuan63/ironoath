@@ -18,13 +18,15 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.TreeSet;
+import java.util.function.LongSupplier;
 import org.springframework.stereotype.Service;
 
 /** Captures the actual SIEGE Simulation at a locked strategic arrival and publishes its durable COMBAT. */
 @Service
 public class StrategicCombatArrivalProducer {
-    private record MemberSource(PlayerSave player,CityRepository.VersionedCity city,long heroVersion,long inventoryVersion) {}
+    private record MemberSource(PlayerSave player,CityRepository.VersionedCity city,Long heroVersion,Long inventoryVersion) {}
 
     private final ConfigRegistry configs;
     private final CapturedBattlePreparation preparation;
@@ -95,7 +97,9 @@ public class StrategicCombatArrivalProducer {
         for(String id:ids) {
             var player=players.findByPlayerId(id).orElseThrow(()->new IllegalStateException("战斗成员玩家存档缺失"));
             var city=cities.findVersionedByPlayerId(id).orElseThrow(()->new IllegalStateException("战斗成员城市快照缺失"));
-            out.put(id,new MemberSource(player,city,heroes.versionOf(id),inventory.versionOf(id)));
+            Long heroVersion=heroes.findByPlayerId(id).isPresent()?heroes.versionOf(id):null;
+            Long inventoryVersion=inventory.findByPlayerId(id).isPresent()?inventory.versionOf(id):null;
+            out.put(id,new MemberSource(player,city,heroVersion,inventoryVersion));
         }
         return Map.copyOf(out);
     }
@@ -121,7 +125,8 @@ public class StrategicCombatArrivalProducer {
         sources.forEach((id,source)->{
             if(players.findByPlayerId(id).map(PlayerSave::version).orElse(-1L)!=source.player().version()
                     || cities.findVersionedByPlayerId(id).map(CityRepository.VersionedCity::version).orElse(-1L)!=source.city().version()
-                    || heroes.versionOf(id)!=source.heroVersion() || inventory.versionOf(id)!=source.inventoryVersion())
+                    || !sameOptionalVersion(source.heroVersion(),heroes.findByPlayerId(id),()->heroes.versionOf(id))
+                    || !sameOptionalVersion(source.inventoryVersion(),inventory.findByPlayerId(id),()->inventory.versionOf(id)))
                 throw new IllegalStateException("战斗成员科技/城建/英雄/装备源版本在模拟期间变化，拒绝发布旧战果");
         });
         var target=WorldTargets.from(configs).targets().stream()
@@ -141,6 +146,10 @@ public class StrategicCombatArrivalProducer {
         var current=marches.findById(march.id()).orElseThrow(()->new IllegalStateException("原战略战斗行军缺失"));
         if(marches.versionOf(march.id())!=version || !current.snapshot().equals(march.snapshot()))
             throw new IllegalStateException("原战略战斗行军版本/兵权在模拟期间变化");
+    }
+
+    private static boolean sameOptionalVersion(Long expected,Optional<?> current,LongSupplier version) {
+        return expected==null?current.isEmpty():current.isPresent() && version.getAsLong()==expected;
     }
 
 }
