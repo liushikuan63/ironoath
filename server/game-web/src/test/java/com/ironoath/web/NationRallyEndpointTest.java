@@ -12,6 +12,8 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -40,6 +42,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import com.fasterxml.jackson.databind.JsonNode;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.json.JsonUtils;
+import com.ironoath.common.time.DayKey;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.core.army.ArmyRepository;
 import com.ironoath.core.army.ArmyState;
@@ -60,6 +63,7 @@ import com.ironoath.web.dto.generated.RallyJoinReq;
 import com.ironoath.web.dto.generated.RallyTroop;
 import com.ironoath.web.dto.generated.SocialCoord;
 import com.ironoath.web.dto.generated.SocialTargetType;
+import com.ironoath.web.dto.generated.WarDeclareReq;
 import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.service.SocialAppService;
 import com.ironoath.web.service.StrategicTargetCircleGuard;
@@ -802,19 +806,28 @@ class NationRallyEndpointTest {
                 com.ironoath.web.world.TargetOccupationStore.Garrison.stationed(defenderMarchId));
         assertThat(targetOccupations.compareAndSet(occupied,0L)).isTrue();
 
-        long warStartedAt=System.currentTimeMillis()-1L;
+        Path globalConfig=locateConfigDir().resolve("global.json");
+        String originalGlobal=Files.readString(globalConfig);
+        long warNow=System.currentTimeMillis();
+        long openSeason=DayKey.startOfDayPlusDays(warNow,-30L);
         var warRules=new com.ironoath.web.nation.WarRulesAssembler(configs);
-        var war=new com.ironoath.core.nation.WarScoreBoard(warRules.rules(),warStartedAt,
-                attacker.nationId,warStartedAt+3_600_000L);
-        war.registerNation(attacker.nationId);war.registerNation(defender.nationId);
-        var gateIds=WorldTargets.from(configs).targets().stream()
-                .filter(row->row.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.GATE)
-                .map(row->row.definition().id()).sorted().toList();
-        assertThat(gateIds).hasSize(warRules.rules().gateCount());
-        gateIds.forEach(gateId->war.captureGate(attacker.nationId,gateId));
-        war.beginSiege(warStartedAt+1L);
-        assertThat(wars.insertIfNoneActive(war)).isTrue();
-        activeTestWarStartedAt=warStartedAt;
+        configs.reload("global",com.ironoath.config.model.GlobalCfg.class,withSeasonStart(originalGlobal,openSeason));
+        long warStartedAt=-1L;
+        try {
+            post200("/nation/war/declare",attacker.king,new WarDeclareReq(newRequestId(),defender.nationId));
+            var war=wars.findLatest().orElseThrow();warStartedAt=war.startedAt();
+            assertThat(war.initiatorNationId()).isEqualTo(attacker.nationId);
+            assertThat(war.registeredNations()).contains(attacker.nationId,defender.nationId);
+            var gateIds=WorldTargets.from(configs).targets().stream()
+                    .filter(row->row.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.GATE)
+                    .map(row->row.definition().id()).sorted().toList();
+            assertThat(gateIds).hasSize(warRules.rules().gateCount());
+            gateIds.forEach(gateId->war.captureGate(attacker.nationId,gateId));
+            war.beginSiege(warStartedAt+1L);wars.save(war);
+            activeTestWarStartedAt=warStartedAt;
+        } finally {
+            configs.reload("global",com.ironoath.config.model.GlobalCfg.class,originalGlobal);
+        }
 
         giveTroops(attacker.king,"unit_infantry_t4",100L);giveTroops(attacker.mates.get(0),"unit_infantry_t4",100L);
         String rallyId=post200("/rally/nation",attacker.king,new NationRallyReq(newRequestId(),
@@ -1539,6 +1552,26 @@ class NationRallyEndpointTest {
 
     private static String newRequestId() {
         return "req-" + UUID.randomUUID();
+    }
+
+    private static String withSeasonStart(String globalJson,long startAt) throws Exception {
+        var mapper=new com.fasterxml.jackson.databind.ObjectMapper();
+        var table=(com.fasterxml.jackson.databind.node.ObjectNode)mapper.readTree(globalJson);
+        var row=mapper.createObjectNode();row.put("id","SEASON_START_AT");row.put("valueType","LONG");
+        row.put("value",startAt);row.put("unit","毫秒时间戳");row.put("source","B14 §一 测试注入");
+        row.put("why","仅在本条战略战斗E2E启用可测试的国战筹备窗口");
+        ((com.fasterxml.jackson.databind.node.ArrayNode)table.get("rows")).add(row);
+        return mapper.writeValueAsString(table);
+    }
+
+    private static Path locateConfigDir() {
+        Path dir=Path.of("").toAbsolutePath();
+        while(dir!=null) {
+            Path candidate=dir.resolve("contract/config");
+            if(Files.isRegularFile(candidate.resolve("global.json")))return candidate;
+            dir=dir.getParent();
+        }
+        throw new IllegalStateException("找不到 contract/config 目录");
     }
 
     private JsonNode post200(String url, String playerId, Object req) throws Exception {
