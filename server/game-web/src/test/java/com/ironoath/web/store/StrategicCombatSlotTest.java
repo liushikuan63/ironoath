@@ -94,6 +94,10 @@ class StrategicCombatSlotTest {
     }
 
     static CapturedStrategicBattle fortressBattle(long seed,String targetId) {
+        return fortressBattle(seed,targetId,targetId);
+    }
+
+    static CapturedStrategicBattle fortressBattle(long seed,String targetId,String identitySuffix) {
         var cfg=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));var social=mock(SocialStore.class);
         var heroes=new HeroBattleMapper(cfg,new HeroStatsService(cfg),new EquipLedgers(mock(InventoryRepository.class),cfg),mock(HeroRepository.class),social);
         var tech=new BattleTechBonuses(new AllianceTechBonuses(social,cfg),new TechEffects(cfg),mock(PlayerRepository.class));
@@ -107,11 +111,11 @@ class StrategicCombatSlotTest {
             throw new IllegalArgumentException("fortress fixture requires configured fortress target");
         var coord=target.coord();var troops=Map.of("unit_cavalry_t4",1_000_000L);
         var participant=new Rally.Participant("owned-leader",troops,List.of());
-        var rally=Rally.restore("owned-fortress-rally",Rally.Scope.NATION,"owned-fortress-nation","owned-leader",
+        var rally=Rally.restore("owned-fortress-rally-"+identitySuffix,Rally.Scope.NATION,"owned-fortress-nation","owned-leader",
                 2,1,100,110,Map.of("owned-leader",participant),Rally.Status.PREPARING,null,
                 coord.x(),coord.y(),"STRATEGIC_TARGET",1);
         rally.depart(110);
-        var march=new March("owned-fortress-march","owned-leader",Coord.of(10,10),Coord.of(coord.x(),coord.y()),
+        var march=new March("owned-fortress-march-"+identitySuffix,"owned-leader",Coord.of(10,10),Coord.of(coord.x(),coord.y()),
                 110,120,troops,List.of(),1000,1,March.TargetType.STRATEGIC_TARGET,targetId,March.Action.ATTACK);
         march.attachToRally(rally.rallyId());march.arrive(120);
         var attacker=scope.playerSide(march,7,PlayerTech.empty(),rally);
