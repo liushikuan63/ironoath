@@ -88,7 +88,7 @@ class ProductionReadinessTest {
     void prodRefusesMissingDeploymentParams() {
         ProductionReadiness gate = new ProductionReadiness(plain,
                 new GameProperties("contract/config", GameProperties.STORAGE_MONGO, false),
-                opsMissing(), identityLenient(), weChatReady(), contentSecurityReady(), supportReady(), "prod");
+                opsMissing(), identityLenient(), weChatReady(), contentSecurityReady(), paySignatureReady(), supportReady(), "prod");
 
         assertThatThrownBy(gate::afterPropertiesSet)
                 .isInstanceOf(IllegalStateException.class)
@@ -111,7 +111,7 @@ class ProductionReadinessTest {
                 new GameProperties(null, GameProperties.STORAGE_MONGO, false),
                 opsConfigured(), identityReady(),
                 new com.ironoath.web.security.LocalDevWeChatCodeExchanger(),
-                contentSecurityReady(), supportReady(), "prod");
+                contentSecurityReady(), paySignatureReady(), supportReady(), "prod");
 
         assertThat(gate.problems()).hasSize(1);
         assertThat(gate.problems().get(0))
@@ -126,6 +126,14 @@ class ProductionReadinessTest {
         return new com.ironoath.web.security.WeChatContentSecurityClient("appid-for-test", "secret-for-test");
     }
 
+    private static com.ironoath.web.service.PayAppService.SignatureVerifier paySignatureReady() {
+        return new com.ironoath.web.service.PayAppService.SignatureVerifier() {
+            @Override public boolean verify(com.ironoath.web.dto.generated.PayCallbackReq callback,
+                    com.ironoath.core.pay.PayOrder order) { return true; }
+            @Override public boolean productionReady() { return true; }
+        };
+    }
+
     @Test
     @DisplayName("只差内容安全还是本地放行实现：拒绝启动，并点名要配 AppID/AppSecret")
     void localContentSecurityAloneStillRefusesBoot() {
@@ -135,7 +143,7 @@ class ProductionReadinessTest {
                 new GameProperties(null, GameProperties.STORAGE_MONGO, false),
                 opsConfigured(), identityReady(), weChatReady(),
                 new com.ironoath.web.security.LocalDevContentSecurityClient(),
-                supportReady(), "prod");
+                paySignatureReady(), supportReady(), "prod");
 
         assertThat(gate.problems()).hasSize(1);
         assertThat(gate.problems().get(0))
@@ -156,7 +164,7 @@ class ProductionReadinessTest {
         configured.reload("global", com.ironoath.config.model.GlobalCfg.class, withDeploymentParams());
         ProductionReadiness gate = new ProductionReadiness(configured,
                 new GameProperties(null, GameProperties.STORAGE_MONGO, false),
-                opsConfigured(), identityReady(), weChatReady(), contentSecurityReady(),
+                opsConfigured(), identityReady(), weChatReady(), contentSecurityReady(), paySignatureReady(),
                 new com.ironoath.web.release.SupportConfig("", ""), "prod");
 
         assertThat(gate.problems()).hasSize(1);
@@ -170,13 +178,13 @@ class ProductionReadinessTest {
     void nonProdNeverBlocks() {
         ProductionReadiness dev = new ProductionReadiness(plain,
                 new GameProperties(null, GameProperties.STORAGE_MEMORY, true),
-                opsMissing(), identityLenient(), weChatReady(), contentSecurityReady(), supportReady(), "dev");
+                opsMissing(), identityLenient(), weChatReady(), contentSecurityReady(), paySignatureReady(), supportReady(), "dev");
         assertThatCode(dev::afterPropertiesSet).doesNotThrowAnyException();
         assertThat(new ProductionReadiness(plain, new GameProperties(null, "memory", false),
-                opsMissing(), identityLenient(), weChatReady(), contentSecurityReady(), supportReady(), "").isProd()).isFalse();
+                opsMissing(), identityLenient(), weChatReady(), contentSecurityReady(), paySignatureReady(), supportReady(), "").isProd()).isFalse();
         // 逗号分隔的多 profile 也要认出来（Spring 允许 prod,mongo 这种写法）
         assertThat(new ProductionReadiness(plain, new GameProperties(null, "memory", false),
-                opsMissing(), identityLenient(), weChatReady(), contentSecurityReady(), supportReady(), "prod, mongo").isProd()).isTrue();
+                opsMissing(), identityLenient(), weChatReady(), contentSecurityReady(), paySignatureReady(), supportReady(), "prod, mongo").isProd()).isTrue();
     }
 
     @Test
@@ -186,10 +194,27 @@ class ProductionReadinessTest {
         configured.reload("global", com.ironoath.config.model.GlobalCfg.class, withDeploymentParams());
         ProductionReadiness gate = new ProductionReadiness(configured,
                 new GameProperties(null, GameProperties.STORAGE_MONGO, false),
-                opsConfigured(), identityReady(), weChatReady(), contentSecurityReady(), supportReady(), "prod");
+                opsConfigured(), identityReady(), weChatReady(), contentSecurityReady(), paySignatureReady(), supportReady(), "prod");
 
         assertThat(gate.problems()).as("四项都配齐后不能再拦，否则会挡住正常发布").isEmpty();
         assertThatCode(gate::afterPropertiesSet).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("prod 不能只告警而继续使用本地支付回调验签桩")
+    void nonProductionPaySignatureVerifierIsReportedAsAProdBlocker() {
+        ConfigRegistry configured = ConfigRegistry.loadFromDirectory(locateConfigDir());
+        configured.reload("global", com.ironoath.config.model.GlobalCfg.class, withDeploymentParams());
+        var paymentVerifier = new PayBeansConfig().paySignatureVerifier();
+        assertThat(paymentVerifier.productionReady()).isFalse();
+        ProductionReadiness gate = new ProductionReadiness(configured,
+                new GameProperties(null, GameProperties.STORAGE_MONGO, false),
+                opsConfigured(), identityReady(), weChatReady(), contentSecurityReady(), paymentVerifier, supportReady(), "prod");
+
+        assertThat(gate.problems()).anySatisfy(problem->assertThat(problem)
+                .contains("支付回调验签")
+                .contains("productionReady=false"));
+        assertThatThrownBy(gate::afterPropertiesSet).isInstanceOf(IllegalStateException.class);
     }
 
     /**
@@ -203,7 +228,7 @@ class ProductionReadinessTest {
         configured.reload("global", com.ironoath.config.model.GlobalCfg.class, withDeploymentParams());
         ProductionReadiness gate = new ProductionReadiness(configured,
                 new GameProperties(null, GameProperties.STORAGE_MONGO, false),
-                opsMissing(), identityReady(), weChatReady(), contentSecurityReady(), supportReady(), "prod");
+                opsMissing(), identityReady(), weChatReady(), contentSecurityReady(), paySignatureReady(), supportReady(), "prod");
 
         assertThat(gate.problems()).as("只差令牌这一项时，报错列表里不能有别的项掩护").hasSize(1);
         assertThat(gate.problems().get(0)).contains("ironoath.ops.token").contains("赛季无人能结算");
@@ -217,7 +242,7 @@ class ProductionReadinessTest {
         configured.reload("global", com.ironoath.config.model.GlobalCfg.class, withDeploymentParams());
         ProductionReadiness gate = new ProductionReadiness(configured,
                 new GameProperties(null, GameProperties.STORAGE_MONGO, false),
-                opsConfigured(), identityLenient(), weChatReady(), contentSecurityReady(), supportReady(), "prod");
+                opsConfigured(), identityLenient(), weChatReady(), contentSecurityReady(), paySignatureReady(), supportReady(), "prod");
 
         assertThat(gate.problems()).hasSize(1);
         assertThat(gate.problems().get(0))
@@ -233,13 +258,13 @@ class ProductionReadinessTest {
     void dangerousSwitchesAreNamed() {
         ProductionReadiness memory = new ProductionReadiness(plain,
                 new GameProperties(null, GameProperties.STORAGE_MEMORY, false),
-                opsConfigured(), identityReady(), weChatReady(), contentSecurityReady(), supportReady(), "prod");
+                opsConfigured(), identityReady(), weChatReady(), contentSecurityReady(), paySignatureReady(), supportReady(), "prod");
         assertThat(memory.problems()).anySatisfy(problem -> assertThat(problem)
                 .contains("ironoath.storage=memory").contains("丢档"));
 
         ProductionReadiness leaky = new ProductionReadiness(plain,
                 new GameProperties(null, GameProperties.STORAGE_MONGO, true),
-                opsConfigured(), identityReady(), weChatReady(), contentSecurityReady(), supportReady(), "prod");
+                opsConfigured(), identityReady(), weChatReady(), contentSecurityReady(), paySignatureReady(), supportReady(), "prod");
         assertThat(leaky.problems()).anySatisfy(problem -> assertThat(problem)
                 .contains("expose-detail").contains("外挂"));
     }
