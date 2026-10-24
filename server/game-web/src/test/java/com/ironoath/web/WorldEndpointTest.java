@@ -174,11 +174,14 @@ class WorldEndpointTest {
 
     @Test void strategicTargetsRejectPhysicalActionsBeforeTroopsAreDeducted() {
         String playerId = newPlayer();
+        giveTroops(playerId,"unit_infantry_t1",1L);
         for (var action : MarchAction.values()) {
-            assertThatThrownBy(() -> marchAppService.send(playerId,new MarchReq(newRequestId(),256,256,
-                    List.of(new MarchUnit("unit_infantry_t1",1L)),List.of(),action)))
-                    .isInstanceOf(BizException.class).hasMessageContaining("尚未开放争夺");
+            Throwable outcome=org.assertj.core.api.Assertions.catchThrowable(()->marchAppService.send(playerId,new MarchReq(newRequestId(),256,256,
+                    List.of(new MarchUnit("unit_infantry_t1",1L)),List.of(),action)));
+            assertThat(outcome).as("实体战略目标只能通过国家集结争夺，动作=%s",action)
+                    .isInstanceOf(BizException.class);
         }
+        assertThat(armies.findByPlayerId(playerId)).map(ArmyState::totalTroops).contains(1L);
         assertThat(marches.findByPlayerId(playerId)).isEmpty();
     }
 

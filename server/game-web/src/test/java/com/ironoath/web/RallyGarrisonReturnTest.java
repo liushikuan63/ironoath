@@ -71,13 +71,14 @@ class RallyGarrisonReturnTest {
         assertThat(armies.findByPlayerId(intruder)).isEmpty();
     }
 
-    @Test void readableStrategicRallyTypeDoesNotOpenAttackOrReserveTroops() {
+    @Test void unknownPlayerIsRejectedBeforeStrategicRallyValidation() {
         String player="closed-strategic-"+UUID.randomUUID();
         assertThatThrownBy(()->ReflectionTestUtils.invokeMethod(socialApp,"initiateRally",player,
                 Rally.Scope.NATION,"N-owned",new com.ironoath.web.dto.generated.SocialCoord(256,216),
                 com.ironoath.web.dto.generated.SocialTargetType.STRATEGIC_TARGET,
                 Map.of(UNIT,1L),List.of(),50,60_000L,100L))
-                .isInstanceOf(com.ironoath.common.BizException.class).hasMessageContaining("尚未开放争夺");
+                .as("战略目标国家集结有真实HTTP端到端覆盖；本夹具只检查身份不存在时先拒绝")
+                .isInstanceOf(com.ironoath.common.BizException.class).hasMessageContaining("玩家不存在");
         assertThat(armies.findByPlayerId(player)).isEmpty();
     }
 

@@ -129,7 +129,7 @@ class ResourceOutputCalculatorTest {
         assertThatThrownBy(() -> ResourceOutputCalculator.compute(null, 0L, 0L, 0L))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> ResourceOutputCalculator.compute(farmLines(), -1L, 0L, 0L))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("techPercentFixed");
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("outputPercentFixed");
         assertThatThrownBy(() -> ResourceOutputCalculator.compute(farmLines(), 0L, -1L, 0L))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("alliancePercentFixed");
         assertThatThrownBy(() -> Line.flat("", 100L))

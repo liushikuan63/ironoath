@@ -1490,6 +1490,11 @@ public class MarchAppService {
      */
     private void validateAction(Coord coord, March.Action action, March.TargetType type,
                                 String playerId, long now, String targetId) {
+        if(type==March.TargetType.STRATEGIC_TARGET) {
+            // 所有关卡/要塞/王城的兵权都必须由B08校验过的国家集结和目标操作绑定；
+            // 个人STATION会留下无所有权引用的野行军，个人GARRISON也不能绕开驻军CAS。
+            throw new BizException(ErrorCode.WORLD_TARGET_INVALID,"战略目标只能通过国家集结争夺");
+        }
         if (action == March.Action.ATTACK) {
             // B08 §2 的三个统一入口之一：护盾与圈层校验对一切攻击目标都生效
             attackGuardService.guard(playerId, coord, now);

@@ -433,32 +433,33 @@ class RankEndpointTest {
         TimeService clock = new TimeService(() -> now[0]);
         ConfigRegistry anchored = anchoredConfigs();
         SeasonRulesAssembler assembler = new SeasonRulesAssembler(anchored);
+        String anchoredSeasonId=assembler.timelineRules(now[0]).seasonId();
         InMemorySeasonBoardStore boards = new InMemorySeasonBoardStore();
         RankBoardService svc = new RankBoardService(boards, socialStore, nationStore, membership(), players, bots,
                 anchored, assembler, clock);
 
         String day1 = com.ironoath.common.time.DayKey.of(now[0]);
-        boards.report(seasonId, SeasonSettlement.Board.POWER,
+        boards.report(anchoredSeasonId, SeasonSettlement.Board.POWER,
                 new SeasonSettlement.Entry(human, "老王", 500L));
-        boards.report(seasonId, SeasonSettlement.Board.POWER,
+        boards.report(anchoredSeasonId, SeasonSettlement.Board.POWER,
                 new SeasonSettlement.Entry(other, "小李", 100L));
         svc.list(human, RankType.POWER, 1, 0);
 
-        SeasonSettlement.Snapshot first = boards.daily(seasonId, SeasonSettlement.Board.POWER, day1);
+        SeasonSettlement.Snapshot first = boards.daily(anchoredSeasonId, SeasonSettlement.Board.POWER, day1);
         assertThat(first).as("读一次榜就把今天的拍上了（惰性，无定时器）").isNotNull();
         assertThat(first.snapshotAt()).isEqualTo(now[0]);
         assertThat(first.rankOf(human)).as("那一刻的名次被冻住").isEqualTo(1);
 
         // 同一天晚些时候再读：榜变了，但今天那份**不许**跟着变（它记的是那一刻的名次）
         now[0] += 3600_000L;
-        boards.report(seasonId, SeasonSettlement.Board.POWER,
+        boards.report(anchoredSeasonId, SeasonSettlement.Board.POWER,
                 new SeasonSettlement.Entry(human, "老王", 50L));
         svc.list(human, RankType.POWER, 1, 0);
-        SeasonSettlement.Snapshot again = boards.daily(seasonId, SeasonSettlement.Board.POWER, day1);
+        SeasonSettlement.Snapshot again = boards.daily(anchoredSeasonId, SeasonSettlement.Board.POWER, day1);
         assertThat(again.snapshotAt()).as("同一天重复读不刷新拍摄时刻").isEqualTo(first.snapshotAt());
         assertThat(again.rankOf(human)).as("内容也是那一刻的：他掉分了，但快照里仍是第 1")
                 .isEqualTo(1);
-        assertThat(boards.dailyDays(seasonId, SeasonSettlement.Board.POWER)).as("仍然只有一天")
+        assertThat(boards.dailyDays(anchoredSeasonId, SeasonSettlement.Board.POWER)).as("仍然只有一天")
                 .containsExactly(day1);
 
         // 跨天：第一次读补一份新的，内容是新值
@@ -466,10 +467,10 @@ class RankEndpointTest {
         String day2 = com.ironoath.common.time.DayKey.of(now[0]);
         assertThat(day2).as("夹具前提：时钟确实跨了一天").isNotEqualTo(day1);
         svc.list(other, RankType.POWER, 1, 0);
-        assertThat(boards.dailyDays(seasonId, SeasonSettlement.Board.POWER))
+        assertThat(boards.dailyDays(anchoredSeasonId, SeasonSettlement.Board.POWER))
                 .as("第二天补一份新的，且第一天那份还在（这就是时间线）")
                 .containsExactly(day1, day2);
-        SeasonSettlement.Snapshot second = boards.daily(seasonId, SeasonSettlement.Board.POWER, day2);
+        SeasonSettlement.Snapshot second = boards.daily(anchoredSeasonId, SeasonSettlement.Board.POWER, day2);
         assertThat(second.snapshotAt()).isEqualTo(now[0]);
         assertThat(second.rankOf(other)).as("新那份记的是新一天的榜（小李 100 > 老王 50）")
                 .isEqualTo(1);
@@ -484,12 +485,13 @@ class RankEndpointTest {
         TimeService clock = new TimeService(() -> now[0]);
         ConfigRegistry anchored = anchoredConfigs();
         SeasonRulesAssembler assembler = new SeasonRulesAssembler(anchored);
+        String anchoredSeasonId=assembler.timelineRules(now[0]).seasonId();
         InMemorySeasonBoardStore boards = new InMemorySeasonBoardStore();
         RankBoardService svc = new RankBoardService(boards, socialStore, nationStore, membership(), players, bots,
                 anchored, assembler, clock);
 
         String day = com.ironoath.common.time.DayKey.of(now[0]);
-        boards.report(seasonId, SeasonSettlement.Board.KILL,
+        boards.report(anchoredSeasonId, SeasonSettlement.Board.KILL,
                 new SeasonSettlement.Entry(human, "老王", 30L));
         svc.list(human, RankType.KILL, 1, 0);
 
