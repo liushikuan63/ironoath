@@ -870,7 +870,11 @@ class NationRallyEndpointTest {
         marchAppService.processDue(attacker.king,rally.prepareUntil()+1L);
         String attackerMarchId="march_rally_"+rallyId;
         var frozen=marchRepository.findById(attackerMarchId).orElseThrow().snapshot();
-        marchAppService.processDue(attacker.king,frozen.arriveAt());
+        // This deterministic test advances due events directly. The second rally can have a shorter route than
+        // the first defender capture, so its scheduled arrival may otherwise precede the already-stationed
+        // garrison March's happenedAt and simulate a backwards-time battle that production cannot create.
+        long secondBattleAt=Math.max(frozen.arriveAt(),firstApproach.arriveAt());
+        marchAppService.processDue(attacker.king,secondBattleAt);
         var attackerAfterArrival=marchRepository.findById(attackerMarchId).orElse(null);
         assertThat(attackerAfterArrival==null
                 || attackerAfterArrival.status()!=com.ironoath.core.march.March.Status.MARCHING)

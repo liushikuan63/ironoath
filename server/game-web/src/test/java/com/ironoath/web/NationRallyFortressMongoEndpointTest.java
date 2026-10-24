@@ -225,6 +225,75 @@ class NationRallyFortressMongoEndpointTest {
         }
     }
 
+    @Test
+    @DirtiesContext(methodMode=DirtiesContext.MethodMode.AFTER_METHOD)
+    void mongoFortressPlayerGarrisonCanBeReplacedByAnotherNationThroughHttp() throws Exception {
+        var fortress=WorldTargets.from(configs).targets().stream()
+                .filter(target->target.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.FORTRESS)
+                .sorted(java.util.Comparator.comparing(target->target.definition().id())).findFirst().orElseThrow();
+        doNothing().when(circleGuard).guardRallyStart(ArgumentMatchers.anyString(),ArgumentMatchers.any(),ArgumentMatchers.anyInt());
+        doNothing().when(circleGuard).guardArrival(ArgumentMatchers.anyLong(),ArgumentMatchers.any(),ArgumentMatchers.anyInt());
+
+        var defender=createNation(4);
+        giveTroops(defender.king(),"unit_cavalry_t4",10_000_000L);
+        giveTroops(defender.members().get(0),"unit_cavalry_t4",10_000_000L);
+        String defenseRally=post200("/rally/nation",defender.king(),new NationRallyReq(newRequestId(),
+                new SocialCoord(fortress.coord().x(),fortress.coord().y()),SocialTargetType.STRATEGIC_TARGET,4,10,
+                List.of(new RallyTroop("unit_cavalry_t4",500_000L)),List.of())).get("rally").get("rallyId").asText();
+        post200("/rally/join",defender.members().get(0),new RallyJoinReq(newRequestId(),defenseRally,
+                List.of(new RallyTroop("unit_cavalry_t4",500_000L)),List.of()));
+        var defense=socialStore.rallyOf(defenseRally).orElseThrow();
+        marchApp.processDue(defender.king(),defense.prepareUntil()+1L);
+        String defenderMarch="march_rally_"+defenseRally;
+        var firstMarch=marchRepository.findById(defenderMarch).orElseThrow().snapshot();
+        marchApp.processDue(defender.king(),firstMarch.arriveAt());
+        var firstCombat=targetOperations.findByTargetId(fortress.definition().id()).orElseThrow();
+        assertThat(firstCombat.combatPlan().battle().target().kind())
+                .isEqualTo(com.ironoath.core.world.WorldGenerator.EntityType.FORTRESS);
+        assertThat(firstCombat.combatPlan().battle().result().winner()).isEqualTo(com.ironoath.battle.Winner.ATTACKER);
+        recovery.recoverPending();
+        assertThat(new com.ironoath.web.store.mongo.MongoTargetOperationStore(mongoTemplate)
+                .findByTargetId(fortress.definition().id()).orElseThrow().completed())
+                .as("first Mongo capture must complete COMBAT before player-garrison replay")
+                .isTrue();
+        var held=new MongoTargetOccupationStore(mongoTemplate).findByTargetIds(List.of(fortress.definition().id()))
+                .get(fortress.definition().id());
+        assertThat(held.nationId()).isEqualTo(defender.nationId());
+        assertThat(held.garrison()).isEqualTo(TargetOccupationStore.Garrison.stationed(defenderMarch));
+
+        var attacker=createNation(4);
+        giveTroops(attacker.king(),"unit_cavalry_t4",10_000_000L);
+        giveTroops(attacker.members().get(0),"unit_cavalry_t4",10_000_000L);
+        String attackRally=post200("/rally/nation",attacker.king(),new NationRallyReq(newRequestId(),
+                new SocialCoord(fortress.coord().x(),fortress.coord().y()),SocialTargetType.STRATEGIC_TARGET,4,10,
+                List.of(new RallyTroop("unit_cavalry_t4",5_000_000L)),List.of())).get("rally").get("rallyId").asText();
+        post200("/rally/join",attacker.members().get(0),new RallyJoinReq(newRequestId(),attackRally,
+                List.of(new RallyTroop("unit_cavalry_t4",5_000_000L)),List.of()));
+        var attack=socialStore.rallyOf(attackRally).orElseThrow();
+        marchApp.processDue(attacker.king(),attack.prepareUntil()+1L);
+        String attackerMarch="march_rally_"+attackRally;
+        var attackingMarch=marchRepository.findById(attackerMarch).orElseThrow().snapshot();
+        long secondBattleAt=Math.max(attackingMarch.arriveAt(),firstMarch.arriveAt());
+        marchApp.processDue(attacker.king(),secondBattleAt);
+        var attackerAfterArrival=marchRepository.findById(attackerMarch).orElse(null);
+        assertThat(attackerAfterArrival==null
+                || attackerAfterArrival.status()!=March.Status.MARCHING)
+                .as("second Mongo rally March must consume its arrival due before sequence read; march=%s",attackerMarch)
+                .isTrue();
+        var secondCombat=targetOperations.findByTargetId(fortress.definition().id()).orElseThrow();
+        assertThat(secondCombat.sequence()).isEqualTo(2L);
+        assertThat(secondCombat.combatPlan().battle().target().defender().occupation()).isEqualTo(held);
+        assertThat(secondCombat.combatPlan().battle().defender().currentMembers()).containsKey(defender.king());
+        assertThat(secondCombat.combatPlan().battle().result().winner()).isEqualTo(com.ironoath.battle.Winner.ATTACKER);
+        recovery.recoverPending();
+        var taken=new MongoTargetOccupationStore(mongoTemplate).findByTargetIds(List.of(fortress.definition().id()))
+                .get(fortress.definition().id());
+        assertThat(taken.nationId()).isEqualTo(attacker.nationId());
+        assertThat(taken.garrison()).isEqualTo(TargetOccupationStore.Garrison.stationed(attackerMarch));
+        assertThat(new com.ironoath.web.store.mongo.MongoTargetOperationStore(mongoTemplate)
+                .findByTargetId(fortress.definition().id()).orElseThrow().completed()).isTrue();
+    }
+
     private record NationFixture(String king,List<String> members,String nationId,String allianceId) {}
 
     private NationFixture createNation(int members) throws Exception {
