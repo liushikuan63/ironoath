@@ -147,6 +147,7 @@ class NationRallyFortressMongoEndpointTest {
     @Autowired private WorldRepository world;
     @Autowired private NationStore nationStore;
     @Autowired private WarStore wars;
+    @Autowired private com.ironoath.web.battle.BattleReportStore battleReports;
     @Autowired private NationLeaders nationLeaders;
     @Autowired private NationTechBonuses nationTech;
     @Autowired private NationPolicyBonuses policy;
@@ -357,7 +358,7 @@ class NationRallyFortressMongoEndpointTest {
 
     @Test
     @DirtiesContext(methodMode=DirtiesContext.MethodMode.AFTER_METHOD)
-    void activeMongoWarCapturesFourGatesThroughHttpAndStartsSiegeOnTheFourth() throws Exception {
+    void activeMongoWarCapturesFourGatesThenRecordsPlayerDefenderVictory() throws Exception {
         Path globalPath=locateConfigDir().resolve("global.json");String originalGlobal=Files.readString(globalPath);
         long warNow=System.currentTimeMillis();long openSeason=DayKey.startOfDayPlusDays(warNow,-30L);
         configs.reload("global",GlobalCfg.class,withSeasonStart(originalGlobal,openSeason));
@@ -425,6 +426,68 @@ class NationRallyFortressMongoEndpointTest {
                         ?WarScoreBoard.Phase.SIEGE:WarScoreBoard.Phase.PREPARATION);
                 assertThat(readback.hasPendingBattleReservations()).isFalse();
             }
+            var defendedGate=gates.stream().filter(target->target.definition().id().equals("gate_south"))
+                    .findFirst().orElseThrow();
+            var ownerBefore=new MongoTargetOccupationStore(mongoTemplate)
+                    .findByTargetIds(List.of(defendedGate.definition().id())).get(defendedGate.definition().id());
+            assertThat(ownerBefore.nationId()).isEqualTo(attacker.nationId());
+            String garrisonMarchId=ownerBefore.garrison().marchId();
+            var originalGarrisonMarch=marchRepository.findById(garrisonMarchId).orElseThrow().snapshot();
+            giveTroops(defender.king(),"unit_cavalry_t4",100_000L);
+            giveTroops(defender.members().get(0),"unit_cavalry_t4",100_000L);
+            String defenseRallyId=post200("/rally/nation",defender.king(),new NationRallyReq(newRequestId(),
+                    new SocialCoord(defendedGate.coord().x(),defendedGate.coord().y()),
+                    SocialTargetType.STRATEGIC_TARGET,4,10,List.of(new RallyTroop("unit_cavalry_t4",5_000L)),List.of()))
+                    .get("rally").get("rallyId").asText();
+            post200("/rally/join",defender.members().get(0),new RallyJoinReq(newRequestId(),defenseRallyId,
+                    List.of(new RallyTroop("unit_cavalry_t4",5_000L)),List.of()));
+            var defenseRally=socialStore.rallyOf(defenseRallyId).orElseThrow();
+            marchApp.processDue(defender.king(),defenseRally.prepareUntil()+1L);
+            String defenseMarchId="march_rally_"+defenseRallyId;
+            var defenseMarch=marchRepository.findById(defenseMarchId).orElseThrow().snapshot();
+            long defenderBattleAt=Math.max(defenseMarch.arriveAt(),originalGarrisonMarch.arriveAt());
+            marchApp.processDue(defender.king(),defenderBattleAt);
+            var defenderBattle=targetOperations.findByTargetId(defendedGate.definition().id()).orElseThrow();
+            assertThat(defenderBattle.sequence()).isEqualTo(2L);
+            assertThat(defenderBattle.combatPlan().battle().result().winner())
+                    .as("Mongo SIEGE must retain the active War gate when its player garrison wins")
+                    .isEqualTo(com.ironoath.battle.Winner.DEFENDER);
+            recovery.recoverPending();
+            var completedDefense=new com.ironoath.web.store.mongo.MongoTargetOperationStore(mongoTemplate)
+                    .findByTargetId(defendedGate.definition().id()).orElseThrow();
+            assertThat(completedDefense.completed()).isTrue();
+            assertThat(completedDefense.sequence()).isEqualTo(2L);
+            var preservedOwner=new MongoTargetOccupationStore(mongoTemplate)
+                    .findByTargetIds(List.of(defendedGate.definition().id())).get(defendedGate.definition().id());
+            assertThat(preservedOwner.nationId()).isEqualTo(ownerBefore.nationId());
+            assertThat(preservedOwner.garrison()).isEqualTo(ownerBefore.garrison());
+            assertThat(marchRepository.findById(garrisonMarchId).orElseThrow().status()).isEqualTo(March.Status.STATIONED);
+            var defenderMarchPlan=completedDefense.combatPlan().marchRecovery();
+            assertThat(defenderMarchPlan.defender().after().status()).isEqualTo(March.Status.STATIONED);
+            var losingMarch=defenderMarchPlan.attacker();
+            assertThat(losingMarch.disposition()).isIn(
+                    com.ironoath.web.battle.StrategicBattleMarchOutcome.Disposition.RETURN,
+                    com.ironoath.web.battle.StrategicBattleMarchOutcome.Disposition.ANNIHILATED);
+            var mongoDue=new com.ironoath.web.store.mongo.MongoMarchDueQueue(mongoTemplate);
+            if(losingMarch.disposition()==com.ironoath.web.battle.StrategicBattleMarchOutcome.Disposition.RETURN) {
+                assertThat(marchRepository.findById(defenseMarchId).map(March::snapshot)).contains(losingMarch.after());
+                assertThat(mongoDue.dueAtOf(defenseMarchId)).hasValue(losingMarch.after().returnArriveAt());
+            } else {
+                assertThat(marchRepository.findById(defenseMarchId)).isEmpty();
+                assertThat(mongoDue.dueAtOf(defenseMarchId)).isEmpty();
+            }
+            assertThat(battleReports.reportsOf(defender.king())).hasSize(1);
+            assertThat(battleReports.reportsOf(originalGarrisonMarch.playerId())).hasSize(2);
+            var defenderWar=new com.ironoath.web.store.mongo.MongoWarStore(mongoTemplate,warRules)
+                    .findByStartedAt(warStartedAt).orElseThrow();
+            assertThat(defenderWar.phase()).isEqualTo(WarScoreBoard.Phase.SIEGE);
+            assertThat(defenderWar.gateCount(attacker.nationId())).isEqualTo(gates.size());
+            assertThat(defenderWar.gateCount(defender.nationId())).isZero();
+            assertThat(defenderWar.battleEvent(defendedGate.definition().id()))
+                    .isEqualTo(completedDefense.combatPlan().warRecovery().event());
+            assertThat(defenderWar.battleEvent(defendedGate.definition().id()).sequence()).isEqualTo(2L);
+            assertThat(defenderWar.hasPendingBattleReservations()).isFalse();
+
             var freshWar=new com.ironoath.web.store.mongo.MongoWarStore(mongoTemplate,warRules)
                     .findByStartedAt(warStartedAt).orElseThrow();
             assertThat(freshWar.phase()).isEqualTo(WarScoreBoard.Phase.SIEGE);
