@@ -25,6 +25,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.SpyBean;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.Import;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -85,7 +89,15 @@ import com.ironoath.web.store.memory.InMemoryPlayerStore;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@Import(NationRallyEndpointTest.DeterministicBattleSeedTestConfig.class)
 class NationRallyEndpointTest {
+
+    @TestConfiguration(proxyBeanMethods=false)
+    static class DeterministicBattleSeedTestConfig {
+        @Bean @Primary com.ironoath.web.reward.ServerSeedSource strategicBattleSeedForTest() {
+            return ()->2380L;
+        }
+    }
 
     private static final String PLAYER_HEADER = "X-Player-Id";
     private static final String UNIT = "unit_infantry_t1";
@@ -107,6 +119,9 @@ class NationRallyEndpointTest {
     @Autowired private com.ironoath.core.march.MarchRepository marchRepository;
     @Autowired private com.ironoath.web.world.TargetOperationStore targetOperations;
     @Autowired private com.ironoath.web.world.StrategicGarrisonWithdrawal strategicRecovery;
+    @Autowired private com.ironoath.web.world.TargetOccupationStore targetOccupations;
+    @Autowired private com.ironoath.web.world.NeutralTargetGarrisonStore neutralGarrisons;
+    @Autowired private com.ironoath.web.battle.BattleReportStore battleReports;
 
     /** 联盟名/标签与国名的序号：同一轮里要建好几个组织，重名会在 NAME_TAKEN 上报错而测不到逻辑。 */
     private int seq;
@@ -707,6 +722,7 @@ class NationRallyEndpointTest {
         var pending=pendingSlot.orElseThrow();
         assertThat(pending.completed()).isFalse();
         assertThat(pending.combatPlan().battle().input().battleType()).isEqualTo(com.ironoath.battle.BattleType.SIEGE);
+        assertThat(pending.combatPlan().battle().result().winner()).isEqualTo(com.ironoath.battle.Winner.DEFENDER);
 
         strategicRecovery.recoverPending();
 
@@ -714,6 +730,11 @@ class NationRallyEndpointTest {
         assertThat(completedSlot).as("恢复后必须保留完成态COMBAT槽；target=%s stored=%s",
                 frozenMarch.targetId(),targetOperations.findAllTargetIds(20)).isPresent();
         assertThat(completedSlot.orElseThrow().completed()).isTrue();
+        assertThat(targetOccupations.findByTargetIds(List.of(frozenMarch.targetId())))
+                .doesNotContainKey(frozenMarch.targetId());
+        assertThat(neutralGarrisons.findByTargetIds(List.of(frozenMarch.targetId()))
+                .get(frozenMarch.targetId()).troops()).isEqualTo(completedSlot.orElseThrow().combatPlan().battle().npcSurvivors());
+        assertThat(battleReports.reportsOf(nation.king)).hasSize(1);
         assertThat(marchRepository.findById(marchId)).matches(finalMarch->finalMarch.isEmpty()
                 || finalMarch.get().status()!=com.ironoath.core.march.March.Status.FIGHTING);
     }
