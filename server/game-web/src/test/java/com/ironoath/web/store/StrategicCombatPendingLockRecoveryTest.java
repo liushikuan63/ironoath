@@ -385,6 +385,9 @@ class StrategicCombatPendingLockRecoveryTest {
                 battle.happenedAt()+1000);
         war.registerNation(battle.attacker().rally().nationId());
         if(battle.defender()!=null)war.registerNation(battle.defender().rally().nationId());else war.registerNation("owned-opponent");
+        if(battle.target().kind()==com.ironoath.core.world.WorldGenerator.EntityType.GATE
+                && battle.target().defender().occupation()!=null)
+            war.captureGate(battle.target().defender().occupation().nationId(),battle.target().targetId());
         assertThat(wars.insertIfNoneActive(war)).isTrue();var members=new ArrayList<WarScoreBoard.BattleMember>();
         addMembers(members,battle.attacker(),battle.result().atkKillsByMember());
         if(battle.defender()!=null)addMembers(members,battle.defender(),battle.result().defKillsByMember());
