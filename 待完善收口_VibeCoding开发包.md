@@ -8299,3 +8299,6 @@ TEST_EXIT=0
 
 
 | #2460 B13 award成员分段与迁都权限裁决归档 | 用户裁决同步；尚不新增业务行为 | 已按用户答复记录War奖分受益人用现存Nation/Alliance成员历史区间，seasonId从持久War/season事实恢复、缺原值即fail closed。现行WINNER/PARTICIPANT/INITIATOR bonus是固定每成员金额，无按时长比例公式；不按天数或人数自拟分配，WarEndpoint #2459 RED继续待定该分段金额/bonus公式。迁都：King离线一周后其他官员可决策，不限定岗位/不造 quorum；任何已发起且未COMBAT的capital attack March都阻止迁都直到settled/returned。当前只确认设计文字，不能据此推断现role_permission能授权该动作；已占领王城驻军的旧坐标锚点如何随迁都处理仍待裁决 | D:/tmp/ironoath-b13-policy-reconciliation-20261025.log；B13_国家与国战.md #2460 | 未做：award plan/逐区间金额与幂等落地、迁都权限调用链/endpoint及march检查；War RED与迁都语义仍未实现，不改奖分值，不写真实玩家库。|
+
+
+| #2461 宣战触发旧War结算也要投递终局奖分 | 有效RED已建；与#2459共用结算award恢复设计 | 旧War未读过时，宣战会先调用`settleIfExpired`再开启新战，现实现忽略返回的Result；扩展宣战端点回归要求旧战的WAR奖励至少触发一次，实际reportWarSeasonPoints零交互，1/1/0/0。此处与#2459面板结算后的失败重试同属所有settleIfExpired调用点必须经统一可恢复outbox；本格未改生产代码 | D:/tmp/ironoath-b13-war-season-award-declare-red-20261025.log、WarAppService.declare及WarEndpointTest | 未做：统一SETTLED result/award plan、membership-segment金额规则、季节ID持久来源、逐人幂等回执；现有#2459策略答案已知时段分段，但固定bonus按区间如何分仍待裁，不发明数值。|
