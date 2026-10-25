@@ -8307,3 +8307,6 @@ TEST_EXIT=0
 
 
 | #2462 宣战结算入口须交付旧战赛季分 | 本格有效RED+覆盖面扩展；无生产实现 | 在过期未读旧War直接POST宣战的现有端到端测试中，旧战SETTLED并成功开新战后，应调用一次RankBoardService.reportWarSeasonPoints；现有WarAppService.declare丢弃Settlement，实际0调用，1/1/0/0。它与#2459面板后重试RED共同覆盖两条settleIfExpired生产入口；统一处理仍须有持久可恢复计划 | D:/tmp/ironoath-b13-war-season-award-declare-red-20261025.log；WarEndpointTest.declaringSettlesTheExpiredWarWithoutAPanelRead | 未做：持久奖分计划与幂等逐人落榜，季节/成员分段金额规则；不改生产逻辑或奖分数字，当前分支保留RED。|
+
+
+| #2463 B19 GameItem 内部合同与生产fail-closed门现跑复核 | 验证/边界更新；未做渠道实付 | 当前HEAD定向`ProductionReadinessTest`11/0/0/0、`PayEndpointTest`25/0/0/0，Maven reactor BUILD SUCCESS。证明测试profile签名/订单/发货合同与prod readiness拒绝桩实现，不证明微信扣款/回调 | D:/tmp/ironoath-b19-readiness-current-head-20261025.log | 未做：正式/沙箱AppKey、session_key真实共享存储、商品注册、Android/微信沙箱实付与回调、退款/真实设备验收；不读任何密钥、不建真实订单、不写玩家库，B19仍未验收。|
