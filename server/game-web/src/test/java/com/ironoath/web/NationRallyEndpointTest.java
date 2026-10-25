@@ -1008,11 +1008,6 @@ class NationRallyEndpointTest {
     void nationalRallyArrivesAtWarTargetsDynamicCapitalAndRecoversCapitalCapture() throws Exception {
         DeterministicBattleSeedTestConfig.seed=2384L;
         Nation attacker=nation(4),defender=nation(2);
-        doNothing().when(strategicTargetCircleGuard).guardRallyStart(
-                org.mockito.ArgumentMatchers.anyString(),org.mockito.ArgumentMatchers.any(),
-                org.mockito.ArgumentMatchers.anyInt());
-        doNothing().when(strategicTargetCircleGuard).guardArrival(org.mockito.ArgumentMatchers.anyLong(),
-                org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyInt());
 
         long now=System.currentTimeMillis();
         var rules=new com.ironoath.web.nation.WarRulesAssembler(configs);
@@ -1036,21 +1031,26 @@ class NationRallyEndpointTest {
         assertThat(target.coord()).isNotEqualTo(com.ironoath.core.world.Coord.of(Math.toIntExact(capitalX),
                 Math.toIntExact(capitalY)));
 
-        giveTroops(attacker.king,"unit_cavalry_t4",1_000_000L);
-        giveTroops(attacker.mates.get(0),"unit_cavalry_t4",1_000_000L);
+        giveTroops(attacker.king,"unit_cavalry_t4",800_000L);
+        giveTroops(attacker.mates.get(0),"unit_cavalry_t4",800_000L);
         String rallyId=post200("/rally/nation",attacker.king,new NationRallyReq(newRequestId(),
                 new SocialCoord(Math.toIntExact(capitalX),Math.toIntExact(capitalY)),
                 SocialTargetType.STRATEGIC_TARGET,4,10,
-                List.of(new RallyTroop("unit_cavalry_t4",500_000L)),List.of()))
+                List.of(new RallyTroop("unit_cavalry_t4",400_000L)),List.of()))
                 .get("rally").get("rallyId").asText();
+        verify(strategicTargetCircleGuard).guardRallyStart(org.mockito.ArgumentMatchers.eq(attacker.king),
+                org.mockito.ArgumentMatchers.eq(com.ironoath.core.world.Coord.of(
+                        Math.toIntExact(capitalX),Math.toIntExact(capitalY))),org.mockito.ArgumentMatchers.eq(4));
         post200("/rally/join",attacker.mates.get(0),new RallyJoinReq(newRequestId(),rallyId,
-                List.of(new RallyTroop("unit_cavalry_t4",500_000L)),List.of()));
+                List.of(new RallyTroop("unit_cavalry_t4",400_000L)),List.of()));
 
         var rally=socialStore.rallyOf(rallyId).orElseThrow();
         marchAppService.processDue(attacker.king,rally.prepareUntil()+1L);
         String marchId="march_rally_"+rallyId;
         var march=marchRepository.findById(marchId).orElseThrow().snapshot();
         marchAppService.processDue(attacker.king,march.arriveAt());
+        verify(strategicTargetCircleGuard).guardArrival(org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.eq(2));
 
         var pendingSlot=targetOperations.findByTargetId("capital_center");
         assertThat(pendingSlot).as("动态都城位置必须经真实到达创建CAPITAL COMBAT槽").isPresent();
