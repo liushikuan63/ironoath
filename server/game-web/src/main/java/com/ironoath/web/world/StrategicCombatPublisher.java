@@ -7,6 +7,7 @@ import com.ironoath.web.battle.StrategicRallyCasualties;
 import com.ironoath.web.battle.StrategicBattleReportPlan;
 import com.ironoath.web.nation.WarStore;
 import com.ironoath.web.service.SocialAppService;
+import com.ironoath.web.service.WarCapitalTargetResolver;
 import com.ironoath.web.service.WorldTargets;
 import com.ironoath.web.social.SocialStore;
 import com.ironoath.web.rank.RankBoardService;
@@ -16,6 +17,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 /**
  * 原战略战果的持久发布边界：持原国家/全部集结锁后才取目标锁，核对原源版本再CAS单一COMBAT槽。
@@ -34,16 +36,26 @@ public final class StrategicCombatPublisher {
     private final StrategicGarrisonWithdrawal targetLocks;
     private final WarStore wars;
     private final RankBoardService ranks;
+    private final WarCapitalTargetResolver capitalTargets;
 
     public StrategicCombatPublisher(ConfigRegistry configs,TargetOperationStore operations,MarchRepository marches,
             StrategicTargetDefender defenders,SocialStore rallies,SocialAppService social,
             StrategicGarrisonWithdrawal targetLocks,WarStore wars,RankBoardService ranks) {
+        this(configs,operations,marches,defenders,rallies,social,targetLocks,wars,ranks,null);
+    }
+
+    @Autowired
+    public StrategicCombatPublisher(ConfigRegistry configs,TargetOperationStore operations,MarchRepository marches,
+            StrategicTargetDefender defenders,SocialStore rallies,SocialAppService social,
+            StrategicGarrisonWithdrawal targetLocks,WarStore wars,RankBoardService ranks,
+            WarCapitalTargetResolver capitalTargets) {
         this.configs=Objects.requireNonNull(configs);this.operations=Objects.requireNonNull(operations);
         this.marches=Objects.requireNonNull(marches);this.defenders=Objects.requireNonNull(defenders);
         this.rallies=Objects.requireNonNull(rallies);this.social=Objects.requireNonNull(social);
         this.targetLocks=Objects.requireNonNull(targetLocks);
         this.wars=Objects.requireNonNull(wars);
         this.ranks=Objects.requireNonNull(ranks);
+        this.capitalTargets=capitalTargets;
     }
 
     public TargetOperationStore.Snapshot publish(CapturedStrategicBattle battle) {
@@ -67,7 +79,8 @@ public final class StrategicCombatPublisher {
         }
         if(current!=null && !current.completed())throw new IllegalStateException("目标原操作未完成，不能发布下一COMBAT");
 
-        var target=WorldTargets.from(configs).targets().stream()
+        var directory=capitalTargets==null?WorldTargets.from(configs):capitalTargets.resolve(configs).targets();
+        var target=directory.targets().stream()
                 .filter(candidate->candidate.definition().id().equals(targetId)).findFirst()
                 .orElseThrow(()->new IllegalStateException("原战略目标已不在配置目录"));
         var facts=battle.target();

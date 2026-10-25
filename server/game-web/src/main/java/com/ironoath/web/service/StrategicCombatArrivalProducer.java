@@ -129,9 +129,13 @@ public class StrategicCombatArrivalProducer {
                     || !sameOptionalVersion(source.inventoryVersion(),inventory.findByPlayerId(id),()->inventory.versionOf(id)))
                 throw new IllegalStateException("战斗成员科技/城建/英雄/装备源版本在模拟期间变化，拒绝发布旧战果");
         });
-        var target=WorldTargets.from(configs).targets().stream()
+        var target=preparation.currentTargets().targets().stream()
                 .filter(value->value.definition().id().equals(battle.target().targetId())).findFirst()
                 .orElseThrow(()->new IllegalStateException("原战略目标在模拟期间移除"));
+        if(target.coord().x()!=battle.target().x() || target.coord().y()!=battle.target().y()
+                || !target.definition().kind().name().equals(battle.target().kind().name())
+                || target.battleTerrain()!=battle.input().terrain())
+            throw new IllegalStateException("原战略目标坐标、类型或地形在模拟期间变化");
         if(!battle.target().defender().equals(defenders.read(target)))
             throw new IllegalStateException("原战略目标守军在模拟期间变化");
     }

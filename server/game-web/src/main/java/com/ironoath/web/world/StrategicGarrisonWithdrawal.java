@@ -9,6 +9,7 @@ import com.ironoath.core.march.MarchDueQueue;
 import com.ironoath.core.march.MarchRepository;
 import com.ironoath.web.service.SocialAppService;
 import com.ironoath.web.service.WorldTargets;
+import com.ironoath.web.service.WarCapitalTargetResolver;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,22 +34,31 @@ public final class StrategicGarrisonWithdrawal {
     private final SocialAppService social;
     private final PlayerLock locks;
     private final StrategicCombatRecovery combatRecovery;
+    private final WarCapitalTargetResolver capitalTargets;
     private final ThreadLocal<String> targetScope=new ThreadLocal<>();
     private static final class ContextChanged extends RuntimeException {}
 
     public StrategicGarrisonWithdrawal(ConfigRegistry configs,TargetOperationStore operations,
             TargetOccupationStore occupations,MarchRepository marches,MarchDueQueue due,
             StrategicTargetDefender defenders,SocialAppService social,PlayerLock locks) {
-        this(configs,operations,occupations,marches,due,defenders,social,locks,null);
+        this(configs,operations,occupations,marches,due,defenders,social,locks,null,null);
+    }
+
+    public StrategicGarrisonWithdrawal(ConfigRegistry configs,TargetOperationStore operations,
+            TargetOccupationStore occupations,MarchRepository marches,MarchDueQueue due,
+            StrategicTargetDefender defenders,SocialAppService social,PlayerLock locks,
+            StrategicCombatRecovery combatRecovery) {
+        this(configs,operations,occupations,marches,due,defenders,social,locks,combatRecovery,null);
     }
 
     @Autowired
     public StrategicGarrisonWithdrawal(ConfigRegistry configs,TargetOperationStore operations,
             TargetOccupationStore occupations,MarchRepository marches,MarchDueQueue due,
             StrategicTargetDefender defenders,SocialAppService social,PlayerLock locks,
-            StrategicCombatRecovery combatRecovery) {
+            StrategicCombatRecovery combatRecovery,WarCapitalTargetResolver capitalTargets) {
         this.configs=configs;this.operations=operations;this.occupations=occupations;this.marches=marches;
         this.due=due;this.defenders=defenders;this.social=social;this.locks=locks;this.combatRecovery=combatRecovery;
+        this.capitalTargets=capitalTargets;
     }
 
     /** 当前槽仍留存时按冻结主人鉴权重放；完成后只回执，不重新创建March或队列。 */
@@ -134,7 +144,7 @@ public final class StrategicGarrisonWithdrawal {
         if(targetScope.get()!=null)throw new IllegalStateException("目标锁内禁止全局恢复");
         List<String> candidates;
         try {
-            var ids=WorldTargets.from(configs).targets().stream().map(t->t.definition().id()).toList();
+            var ids=targetDirectory(configs).targets().stream().map(t->t.definition().id()).toList();
             candidates=operations.pendingTargetIds(ids);
         } catch(RuntimeException unavailable){LOG.error("目标操作候选读取失败，战略推进仍须经过单目标完成屏障",unavailable);return;}
         for(String target:candidates) {
@@ -280,8 +290,12 @@ public final class StrategicGarrisonWithdrawal {
             throw state("撤防归属存在但操作槽缺失，不能推断队列和完成步骤已提交");
     }
     private WorldTargets.Target requireTarget(String id){
-        return WorldTargets.from(configs).targets().stream().filter(t->t.definition().id().equals(id)).findFirst()
+        return targetDirectory(configs).targets().stream().filter(t->t.definition().id().equals(id)).findFirst()
                 .orElseThrow(()->state("战略目标目录缺失，须先处理原驻军迁移"));
+    }
+
+    private WorldTargets targetDirectory(ConfigRegistry source) {
+        return capitalTargets==null?WorldTargets.from(source):capitalTargets.resolve(source).targets();
     }
     /** 发布者已验证原攻守国家/集结锁；只授予目标临界区，不越过待完成操作或代做恢复。 */
     public <T> T runCombatPublicationLocked(String id,Supplier<T> publication) {

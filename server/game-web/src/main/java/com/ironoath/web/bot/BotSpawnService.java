@@ -9,6 +9,7 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.ironoath.common.num.FixedPoint;
@@ -28,6 +29,7 @@ import com.ironoath.web.dto.generated.PlayerInitReq;
 import com.ironoath.web.dto.generated.PlayerInitResp;
 import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.service.ServerCalendar;
+import com.ironoath.web.service.WarCapitalTargetResolver;
 
 /**
  * 职责：Bot 孵化 —— 按密度公式把世界补到目标人口（B11 §五 B 档）。
@@ -103,6 +105,7 @@ public class BotSpawnService {
     private final PlayerRepository players;
     private final PlayerInitService playerInit;
     private final WorldRepository world;
+    private final WarCapitalTargetResolver capitalTargets;
 
     /** 下一次允许补员的时刻。见类注释第 1 条：进程内节流，多实例下必须外置。 */
     private volatile long nextSweepAt;
@@ -110,12 +113,20 @@ public class BotSpawnService {
     public BotSpawnService(ConfigRegistry configs, BotRulesAssembler assembler, BotRegistry registry,
                            PlayerRepository players, PlayerInitService playerInit,
                            WorldRepository world) {
+        this(configs,assembler,registry,players,playerInit,world,null);
+    }
+
+    @Autowired
+    public BotSpawnService(ConfigRegistry configs, BotRulesAssembler assembler, BotRegistry registry,
+                           PlayerRepository players, PlayerInitService playerInit,
+                           WorldRepository world,WarCapitalTargetResolver capitalTargets) {
         this.configs = configs;
         this.assembler = assembler;
         this.registry = registry;
         this.players = players;
         this.playerInit = playerInit;
         this.world = world;
+        this.capitalTargets = capitalTargets;
     }
 
     /** 测试辅助：清空节流预算。进程内状态，不复位会让别的用例把时间轴顶到未来（症状是「没反应」）。 */
@@ -271,7 +282,8 @@ public class BotSpawnService {
      * （2026-09-12 的 C1b-PvE 落地时补上这一步，此前 Bot 的视野为空。）
      */
     private Optional<Coord> placeNear(String botId, Coord anchor, WorldGenerator.Rules worldRules, Rng rng) {
-        var targets = com.ironoath.web.service.WorldTargets.from(configs);
+        var targets = capitalTargets==null?com.ironoath.web.service.WorldTargets.from(configs)
+                :capitalTargets.resolve(configs).targets();
         int min = (int) configs.longParam("BOT_SPAWN_DISTANCE_MIN");
         int max = (int) configs.longParam("BOT_SPAWN_DISTANCE_MAX");
         for (int probe = 0; probe < PLACEMENT_PROBE_LIMIT; probe++) {

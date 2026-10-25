@@ -93,6 +93,32 @@ class StrategicCombatSlotTest {
         return scope.freezeTargetBattle(simulation,hospitals,defenderHospitals);
     }
 
+    static CapturedStrategicBattle dynamicCapitalBattle(long seed,Coord destination,
+            com.ironoath.web.service.WarCapitalTargetResolver directory) {
+        var cfg=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));var social=mock(SocialStore.class);
+        var heroes=new HeroBattleMapper(cfg,new HeroStatsService(cfg),new EquipLedgers(mock(InventoryRepository.class),cfg),mock(HeroRepository.class),social);
+        var tech=new BattleTechBonuses(new AllianceTechBonuses(social,cfg),new TechEffects(cfg),mock(PlayerRepository.class));
+        var policies=new NationPolicyBonuses(cfg,social,mock(NationStore.class),mock(NationLeaders.class),new BattleArmyFactory(cfg));
+        var preparation=new CapturedBattlePreparation(cfg,heroes,tech,policies,directory);
+        var scope=preparation.capture(200);
+        var troops=Map.of("unit_infantry_t4",100L);
+        var rally=Rally.restore("owned-dynamic-capital-rally",Rally.Scope.NATION,"owned-N","owned-leader",2,1,100,110,
+                Map.of("owned-leader",new Rally.Participant("owned-leader",troops,List.of())),Rally.Status.PREPARING,null,
+                destination.x(),destination.y(),"STRATEGIC_TARGET",1);
+        rally.depart(110);
+        var march=new March("owned-dynamic-capital-march","owned-leader",Coord.of(10,10),destination,110,120,
+                troops,List.of(),1000,1,March.TargetType.STRATEGIC_TARGET,"capital_center",March.Action.ATTACK);
+        march.attachToRally(rally.rallyId());march.arrive(120);
+        var attacker=scope.playerSide(march,7,PlayerTech.empty(),rally);
+        var defenders=new StrategicTargetDefender(cfg,new InMemoryTargetOccupationStore(),new InMemoryMarchStore(32),
+                social,new InMemoryNeutralTargetGarrisonStore(),directory);
+        var target=scope.readTarget(defenders,"capital_center");
+        var simulation=scope.simulateTarget(attacker,target,null,null,seed,BattleModifier.none(),BattleModifier.none());
+        var save=mock(PlayerSave.class);when(save.tech()).thenReturn(PlayerTech.empty());
+        var member=new CapturedBattlePreparation.MemberHospital(mock(CityState.class),save);
+        return scope.freezeTargetBattle(simulation,scope.prepareHospitals(Map.of("owned-leader",member)),null);
+    }
+
     static CapturedStrategicBattle fortressBattle(long seed,String targetId) {
         return fortressBattle(seed,targetId,targetId);
     }

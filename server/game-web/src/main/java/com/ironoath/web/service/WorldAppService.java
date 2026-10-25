@@ -15,9 +15,6 @@ import com.ironoath.core.world.Coord;
 import com.ironoath.core.world.FogOfWar;
 import com.ironoath.core.world.WorldGenerator;
 import com.ironoath.core.world.WorldRepository;
-import com.ironoath.core.nation.Nation;
-import com.ironoath.web.nation.NationStore;
-import com.ironoath.web.nation.WarStore;
 import com.ironoath.web.world.TargetOccupationStore;
 import com.ironoath.web.world.TargetOperationStore;
 import com.ironoath.web.dto.generated.ChunkData;
@@ -102,8 +99,7 @@ public class WorldAppService {
     private final TargetOperationStore targetOperations;
     private record OccupationView(Map<String,TargetOccupationStore.Snapshot> owners,Map<String,Long> operationVersions) {}
     private record TargetDirectory(WorldTargets targets,long version) {}
-    private final NationStore nations;
-    private final WarStore wars;
+    private final WarCapitalTargetResolver capitalTargets;
 
     @Autowired
     public WorldAppService(ConfigRegistry configs, WorldRepository world,
@@ -112,7 +108,7 @@ public class WorldAppService {
                            com.ironoath.web.bot.BotSpawnService botSpawn,
                            com.ironoath.web.ws.PushGateway pushGateway,
                            TargetOccupationStore occupations,TargetOperationStore targetOperations,
-                           NationStore nations,WarStore wars) {
+                           WarCapitalTargetResolver capitalTargets) {
         this.configs = configs;
         this.world = world;
         this.players = players;
@@ -123,8 +119,7 @@ public class WorldAppService {
         this.pushGateway = pushGateway;
         this.occupations = occupations;
         this.targetOperations=targetOperations;
-        this.nations=nations;
-        this.wars=wars;
+        this.capitalTargets=capitalTargets;
         var initialTargets=targetDirectory(configs).targets();
         validateOccupationCatalog(initialTargets,occupations.findAll(initialTargets.targets().size()+1));
         validateOperationCatalog(initialTargets,targetOperations);
@@ -143,26 +138,15 @@ public class WorldAppService {
                            com.ironoath.web.ws.PushGateway pushGateway,
                            TargetOccupationStore occupations,TargetOperationStore targetOperations) {
         this(configs,world,players,timeService,powerService,publicEnemies,botSpawn,pushGateway,
-                occupations,targetOperations,null,null);
+                occupations,targetOperations,null);
     }
 
     /** Resolve the fixed CAPITAL map slot to the most recently declared War's persisted target Nation. */
     private TargetDirectory targetDirectory(ConfigRegistry source) {
-        WorldTargets targets=WorldTargets.from(source);
-        long version=source.rawTable("world_target").version();
-        if(nations==null || wars==null)return new TargetDirectory(targets,version);
-        var war=wars.findLatest().orElse(null);
-        if(war==null || war.targetNationId()==null)return new TargetDirectory(targets,version);
-        Nation target=nations.findById(war.targetNationId()).orElseThrow(
-                ()->new IllegalStateException("最新War目标国家快照缺失，拒绝退回静态王城坐标"));
-        Coord capital=Coord.of(Math.toIntExact(target.capitalX()),Math.toIntExact(target.capitalY()));
-        if(!capital.withinWorld(Math.toIntExact(source.longParam("WORLD_SIZE"))))
-            throw new IllegalStateException("War目标国都城坐标越界，拒绝投影动态王城");
-        if(world.cityAt(capital).isPresent())
-            throw new IllegalStateException("War目标国都城坐标与玩家城冲突，拒绝投影动态王城");
-        targets=targets.withCapitalCoord(capital);
-        long versionStamp=Math.addExact(war.startedAt(),target.version());
-        return new TargetDirectory(targets,Math.addExact(version,versionStamp));
+        var directory=capitalTargets==null
+                ?new WarCapitalTargetResolver.Directory(WorldTargets.from(source),source.rawTable("world_target").version(),null,-1L,-1L)
+                :capitalTargets.resolve(source);
+        return new TargetDirectory(directory.targets(),directory.version());
     }
 
     // ---------- 家坐标 ----------
