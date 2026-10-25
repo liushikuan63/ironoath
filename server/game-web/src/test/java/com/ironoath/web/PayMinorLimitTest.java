@@ -66,7 +66,10 @@ class PayMinorLimitTest {
         AtomicLong clock = new AtomicLong(BASE);
         return new PayAppService(orders, verifier, fulfiller, configs, playerLock, idempotency,
                 new TimeService(clock::get), environment, throttle(), policy,
-                new com.ironoath.web.pay.PaidProducts(configs, battlePass), players);
+                new com.ironoath.web.pay.PaidProducts(configs, battlePass), players,
+                new com.ironoath.web.pay.MidasGameItemSigner(environment,
+                        new com.ironoath.web.security.InMemoryWeChatSessionKeyStore(),
+                        new com.fasterxml.jackson.databind.ObjectMapper()));
     }
 
     /** 频控那三条口径与生产装配同源，不为测试另编一套数。 */

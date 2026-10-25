@@ -5,10 +5,12 @@ ironoath:
   storage: memory
   pay:
     # 米大师参数是部署凭据，只能来自配置文件/环境变量，不进 contract/config（那会进版本库）。
-    # 测试用假值：下单只需要 offerId 非空，验签由 PayBeansConfig 的本地实现负责
+    # 测试用假值：下单需要非空 offerId；真实 AppKey 只在具体签名测试里按类注入
     offer-id: test-offer-id
-    mode: game
+    mode: goods
     env: "1"
+    zone-id: zone-test
+    platform: android
   ops:
     # 运维端点令牌（X-Ops-Token）。与 offerId 同类：凭据不进配置表，也不该由代码内置默认值。
     # 生产走 IRONOATH_OPS_TOKEN 环境变量；这里给假值只为让「带对令牌能过鉴权」这一条可测。

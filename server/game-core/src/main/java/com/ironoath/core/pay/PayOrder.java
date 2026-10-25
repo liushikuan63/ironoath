@@ -76,18 +76,24 @@ public final class PayOrder {
     public static final List<String> CONFIRMED_STATUS_NAMES =
             List.copyOf(CONFIRMED_STATUSES).stream().map(Enum::name).toList();
 
-    /** 创建订单时锁定的渠道参数；数量由本订单的 long 分金额重建，不复制第二份金额。 */
+    /** 创建订单时锁定的渠道参数；GameItem signData 的数量/单价由本订单行重建。 */
     public record Quote(String mode, String offerId, String env, String currencyType, String signature,
-                        String outTradeNo) {
+                        String outTradeNo, String zoneId, String platform) {
         /** 老订单快照与不带渠道映射的历史测试仍可读取；新建订单必须显式带 outTradeNo。 */
         public Quote(String mode,String offerId,String env,String currencyType,String signature) {
-            this(mode,offerId,env,currencyType,signature,null);
+            this(mode,offerId,env,currencyType,signature,null,"1","android");
+        }
+        /** Existing persisted quotes predate the optional GameItem zone/platform fields. */
+        public Quote(String mode,String offerId,String env,String currencyType,String signature,String outTradeNo) {
+            this(mode,offerId,env,currencyType,signature,outTradeNo,"1","android");
         }
         public Quote {
             if (mode == null || mode.isBlank() || offerId == null || offerId.isBlank()
                     || env == null || env.isBlank() || currencyType == null || currencyType.isBlank()) {
                 throw new IllegalArgumentException("支付报价的渠道字段不得为空");
             }
+            if(zoneId==null || zoneId.isBlank()) zoneId="1";
+            if(platform==null || platform.isBlank()) platform="android";
             if(outTradeNo!=null && !outTradeNo.matches("[0-9a-f]{32}"))
                 throw new IllegalArgumentException("米大师outTradeNo必须是32位小写十六进制订单映射");
         }

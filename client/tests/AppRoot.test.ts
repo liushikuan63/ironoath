@@ -5272,7 +5272,7 @@ function monthlyTarget(h:Harness) {
   const views:Array<import('../assets/scripts/game/session/AppRoot').MonthlyShopView>=[]
   Object.assign(h.targets,{monthlyCards:(view:import('../assets/scripts/game/session/AppRoot').MonthlyShopView)=>views.push(view)})
   h.http.overrides.set('/pay/card',monthlyStatusForRoot())
-  h.http.overrides.set('/pay/order',{orderId:'fixture-monthly-order',minorNotice:null,payParams:{mode:'game',offerId:'fixture-only',buyQuantity:'3000',env:'1',currencyType:'CNY',signature:null}})
+  h.http.overrides.set('/pay/order',{orderId:'fixture-monthly-order',minorNotice:null,payParams:{signData:null,paySig:null,signature:null,outTradeNo:null}})
   h.http.overrides.set('/pay/card/claim',{claimedDays:1,rewards:[{type:'RESOURCE',id:'GOLD',count:90}],expireAt:SERVER_NOW+86400000,serverNow:SERVER_NOW,productId:'root-gold-sku'})
   return views
 }
@@ -5311,7 +5311,7 @@ test('monthly payment result and server notice remain visible in the shop withou
   h.targets.monthlyCards = view => views.push(view)
   h.http.overrides.set('/pay/order', {
     orderId: 'monthly-unsupported', minorNotice: '服务端额度提醒',
-    payParams: { mode: 'game', offerId: 'fixture-only', buyQuantity: '3000', env: '1', currencyType: 'CNY', signature: null, outTradeNo: '0123456789abcdef0123456789abcdef' },
+    payParams: { signData: null, paySig: null, signature: null, outTradeNo: '0123456789abcdef0123456789abcdef' },
   })
   await h.root.start('monthly-feedback', '月卡')
   await h.root.openMonthlyCardTab()

@@ -43,10 +43,13 @@ public class PayController {
 
     private final PayAppService pay;
     private final com.ironoath.web.pay.PaidClaimsAppService claims;
+    private final com.ironoath.web.service.MidasGameItemWebhookService gameItemWebhook;
 
-    public PayController(PayAppService pay, com.ironoath.web.pay.PaidClaimsAppService claims) {
+    public PayController(PayAppService pay, com.ironoath.web.pay.PaidClaimsAppService claims,
+                         com.ironoath.web.service.MidasGameItemWebhookService gameItemWebhook) {
         this.pay = pay;
         this.claims = claims;
+        this.gameItemWebhook = gameItemWebhook;
     }
 
     /** 价格表。**客户端不得内置任何价格**，否则调价必须发版，而发版前的旧客户端会显示旧价却按新价扣款。 */
@@ -72,6 +75,18 @@ public class PayController {
     @PostMapping("/callback")
     public Result<OrderStatusResp> callback(@RequestBody PayCallbackReq req) {
         return Result.ok(pay.callback(req));
+    }
+
+    /** Official MiniGame GameItem callback; verifies platform timestamp and PayEventSig before fulfillment. */
+    @PostMapping("/midas/game-item-callback")
+    public java.util.Map<String, Object> gameItemCallback(
+            @RequestHeader("TC-Timestamp") String timestamp,
+            @RequestHeader("TC-Signature") String signature,
+            @RequestBody com.fasterxml.jackson.databind.JsonNode event) {
+        boolean accepted = gameItemWebhook.accept(event, timestamp, signature);
+        return accepted
+                ? java.util.Map.of("returnCode", "0", "returnMessage", "OK", "data", "ok")
+                : java.util.Map.of("returnCode", "1", "returnMessage", "Rejected", "data", "fail");
     }
 
     /** 订单状态。<b>客户端在支付返回后必须轮询它</b>，不能凭客户端回调直接显示已到账。 */

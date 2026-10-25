@@ -17,6 +17,7 @@ import com.ironoath.web.dto.generated.PlayerInitResp;
 import com.ironoath.web.dto.generated.ToastTuning;
 import com.ironoath.web.security.AuthSessionService;
 import com.ironoath.web.security.WeChatCodeExchanger;
+import com.ironoath.web.security.WeChatSessionKeyStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -60,6 +61,8 @@ public class PlayerInitService {
     private final com.ironoath.core.city.CityRepository cities;
     /** 微信登录：把 wx.login 的 code 换成 openid（B15 §三）。 */
     private final WeChatCodeExchanger weChat;
+    /** session_key 只保存在服务端，给 GameItem 用户态签名使用；客户端票据不携带它。 */
+    private final WeChatSessionKeyStore weChatSessionKeys;
     /** 登录成功后签发会话票据；客户端之后每个请求都要带它。 */
     private final AuthSessionService sessions;
     /** 内容安全：昵称是玩家可自由填写的内容，建档前就要送检（上线检查清单 §二 7）。 */
@@ -80,6 +83,7 @@ public class PlayerInitService {
                              ResourceRateService resourceRates,
                              com.ironoath.core.city.CityRepository cities,
                              WeChatCodeExchanger weChat,
+                             WeChatSessionKeyStore weChatSessionKeys,
                              AuthSessionService sessions,
                              com.ironoath.web.security.ContentSecurityGuard contentSecurity,
                              com.ironoath.web.quest.QuestEvents domainEvents,
@@ -92,6 +96,7 @@ public class PlayerInitService {
         this.resourceRates = resourceRates;
         this.cities = cities;
         this.weChat = weChat;
+        this.weChatSessionKeys = weChatSessionKeys;
         this.sessions = sessions;
         this.contentSecurity = contentSecurity;
         this.domainEvents = domainEvents;
@@ -107,7 +112,8 @@ public class PlayerInitService {
      * @throws BizException 参数非法或重复请求
      */
     public PlayerInitResp init(PlayerInitReq req) {
-        PlayerInitResp resp = doInit(req);
+        InitResult result = doInit(req);
+        PlayerInitResp resp = result.response();
         // 未成年时段闸（B15 §合规）：拦在"登录成功"之后 —— 新号此刻才拿到 playerId，而年龄源的键是它。
         // 放在这里而不是 doInit 之前：拦截一个还没有身份的请求，只能按设备判，而那会与"按账号判"两套口径
         minorPlay.requirePlayable(resp.playerId(), timeService.serverNow());
@@ -116,15 +122,30 @@ public class PlayerInitService {
         // 建档走同一个出口（doInit 建号成功也返回），所以新号第一天就算上了。
         domainEvents.progress(resp.playerId(),
                 com.ironoath.core.quest.GoalType.LOGIN_DAY, null, 1L, timeService.serverNow());
+        if (result.sessionKey() != null && !result.sessionKey().isBlank()) {
+            try {
+                long expiresAt = Math.addExact(timeService.serverNow(), AuthSessionService.DEFAULT_TTL_MS);
+                weChatSessionKeys.put(resp.playerId(), result.sessionKey(), expiresAt);
+            } catch (RuntimeException e) {
+                // Login and gameplay remain available if the payment-only session-key cache is down.
+                // Payment signing will fail closed until the player logs in again successfully.
+                LOG.warn("微信 session_key 暂存失败 playerId={} reason={}",
+                        resp.playerId(), e.getClass().getSimpleName());
+            }
+        }
         return resp;
     }
 
-    private PlayerInitResp doInit(PlayerInitReq req) {
+    private record AccountIdentity(String accountKey, String sessionKey) {}
+    private record InitResult(PlayerInitResp response, String sessionKey) {}
+
+    private InitResult doInit(PlayerInitReq req) {
         validate(req);
         long now = timeService.serverNow();
         // 正式微信登录由 code2session 返回的 openid 建档；本地兑换器没有真实身份，
         // 使用持久设备号维持同机存档，不能把每次变化的临时 code 当账号键。
-        String accountKey = weChatAccountKey(req);
+        AccountIdentity identity = weChatIdentity(req);
+        String accountKey = identity.accountKey();
         // 昵称在建档之前送检：那一刻存档还不存在，账号键是唯一带着 openid 的东西。
         // 走非微信账号（本地设备号）时没有 openid，进不了送检 —— 由守卫按既定取舍处理。
         contentSecurity.requireCleanForAccount(accountKey,
@@ -152,7 +173,7 @@ public class PlayerInitService {
             }
             LOG.info("玩家登录成功 playerId={} cityLevel={} 重复requestId={}",
                     save.playerId(), save.cityLevel(), !firstAttempt);
-            return initResp(save, now, previousLoginAt);
+            return new InitResult(initResp(save, now, previousLoginAt), identity.sessionKey());
         }
 
         if (!firstAttempt) {
@@ -174,17 +195,17 @@ public class PlayerInitService {
                         winner.playerId(), accountKey);
                 // 竞态败者：这份存档是另一个请求刚刚建的 ⇒ 它自己的 lastLoginAt 就是"上一次"（约等于现在），
                 // 于是"距上次登录"≈0 分钟，客户端不会弹汇总 —— 这正是这个形状该有的结果
-                return initResp(winner, now, winner.lastLoginAt());
+                return new InitResult(initResp(winner, now, winner.lastLoginAt()), identity.sessionKey());
             }
             TraceContext.bindPlayer(save.playerId());
             LOG.info("新玩家创建成功 playerId={} nickName={} 资源种类={} 保护到期={}",
                     save.playerId(), save.nickName(), save.resources().size(), save.protectUntil());
             // 新号没有「上一次登录」可言：previousLoginAt 传 null，客户端据此不弹汇总。
             // 资源用存档里那一份（刚建档算出来的，与 now 同源），不走结算
-            return PlayerDtoMapper.toInitResp(save, now, null, save.resources(),
+            return new InitResult(PlayerDtoMapper.toInitResp(save, now, null, save.resources(),
                     sessions.issue(save.playerId(), now), offlineMinIdleMinutes(),
                     configs.longParam("OFFLINE_REPORT_MIN_ITEMS"), toastTuning(), resourceNames(),
-                            autoTrainDefaultBatches());
+                            autoTrainDefaultBatches()), identity.sessionKey());
         } catch (RuntimeException e) {
             // 建号失败必须释放幂等键：副作用没有产生，让客户端能安全重试
             idempotency.release(req.requestId());
@@ -280,13 +301,14 @@ public class PlayerInitService {
      * "同一微信 = 同一存档"这条与"同设备 = 同一存档"就自动共用同一套幂等与并发保护，
      * 不需要第二张账号表，也不会出现"两套键指向同一个玩家"的裂脑状态。
      */
-    private String weChatAccountKey(PlayerInitReq req) {
+    private AccountIdentity weChatIdentity(PlayerInitReq req) {
         String code = req.wxCode();
         if (code == null || code.isBlank()) {
-            return req.deviceId();
+            return new AccountIdentity(req.deviceId(), null);
         }
         var identity = weChat.exchange(code, req.deviceId());
-        return WeChatCodeExchanger.WECHAT_ACCOUNT_PREFIX + identity.openId();
+        return new AccountIdentity(WeChatCodeExchanger.WECHAT_ACCOUNT_PREFIX + identity.openId(),
+                identity.sessionKey());
     }
 
     /**

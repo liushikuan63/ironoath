@@ -172,6 +172,8 @@ public class PayAppService {
     private final com.ironoath.web.pay.PaidProducts catalog;
     /** 判"这一档本账号是否已经用掉"要读权益位（下单处拦，别等玩家付了第二笔钱再在发货处拦）。 */
     private final com.ironoath.core.player.PlayerRepository players;
+    /** GameItem 的 AppKey/session_key 签名边界；缺键时只返回不可拉起的空签名参数。 */
+    private final com.ironoath.web.pay.MidasGameItemSigner gameItemSigner;
 
     public PayAppService(com.ironoath.core.pay.PayOrderStore orders, SignatureVerifier verifier,
                          ProductFulfiller fulfiller,
@@ -180,7 +182,8 @@ public class PayAppService {
                          com.ironoath.core.pay.PopupThrottle throttle,
                          com.ironoath.web.pay.MinorPaymentPolicy minorPolicy,
                          com.ironoath.web.pay.PaidProducts catalog,
-                         com.ironoath.core.player.PlayerRepository players) {
+                         com.ironoath.core.player.PlayerRepository players,
+                         com.ironoath.web.pay.MidasGameItemSigner gameItemSigner) {
         this.orders = orders;
         this.verifier = verifier;
         this.fulfiller = fulfiller;
@@ -193,6 +196,7 @@ public class PayAppService {
         this.minorPolicy = minorPolicy;
         this.catalog = catalog;
         this.players = players;
+        this.gameItemSigner = gameItemSigner;
         if (!verifier.productionReady()) {
             LOG.warn("支付验签使用的是非正式实现：任何回调都会被判定为可信。"
                     + "上线前必须替换成米大师验签（B15 红线：无绕支付、回调必须验签）");
@@ -251,7 +255,7 @@ public class PayAppService {
                     throw new BizException(ErrorCode.PAY_ORDER_DUPLICATE,
                             "本次订单已结束，请重新下单");
                 }
-                return new CreateOrderResp(orderId, null, payParams(orderId,original));
+                return new CreateOrderResp(orderId, null, payParams(playerId, original, now));
             }
             acquire(req.requestId(), now);
             try {
@@ -272,7 +276,7 @@ public class PayAppService {
                 LOG.info("下单 orderId={} playerId={} 商品={} 份数={} 金额={}分 选将={}",
                         orderId, playerId, line.productId(), line.count(), line.totalCents(),
                         line.heroChoice());
-                return new CreateOrderResp(orderId, minorNotice, payParams(orderId,line));
+                return new CreateOrderResp(orderId, minorNotice, payParams(playerId, line, now));
             } catch (RuntimeException e) {
                 idempotency.release(req.requestId());
                 throw e;
@@ -417,7 +421,6 @@ public class PayAppService {
         if (req == null || isBlank(req.orderId())) {
             throw new BizException(ErrorCode.PAY_ORDER_DUPLICATE, "回调缺少 orderId");
         }
-        long now = timeService.serverNow();
         PayOrder order = orders.get(req.orderId());
         if (order == null) {
             // 不存在的订单号：可能是伪造的回调，也可能是我们先丢了订单。
@@ -431,6 +434,27 @@ public class PayAppService {
                     req.orderId(), order.playerId());
             throw new BizException(ErrorCode.PAY_SIGN_INVALID, "签名校验失败");
         }
+        return completeVerifiedCallback(req, order);
+    }
+
+    /** Package-local bridge used only after the MiniGame event HMAC and order payload are verified. */
+    OrderStatusResp callbackFromVerifiedGameItem(String orderId, String transactionId) {
+        if (isBlank(orderId) || isBlank(transactionId)) {
+            throw new BizException(ErrorCode.PAY_ORDER_DUPLICATE, "GameItem 回调缺少订单或交易标识");
+        }
+        PayOrder order = orders.get(orderId);
+        if (order == null) {
+            LOG.error("收到未知 GameItem outTradeNo 的支付回调 orderId={} transactionId={}：不发货，需人工核查",
+                    orderId, transactionId);
+            throw new BizException(ErrorCode.PAY_ORDER_DUPLICATE, "订单不存在: " + orderId);
+        }
+        // This method is package-private; callers must first verify the platform event signature and order binding.
+        return completeVerifiedCallback(new PayCallbackReq(orderId, transactionId,
+                "verified-game-item-event", true), order);
+    }
+
+    private OrderStatusResp completeVerifiedCallback(PayCallbackReq req, PayOrder order) {
+        long now = timeService.serverNow();
         PayOrder.CallbackOutcome outcome = order.confirmCallback(req.transactionId(),
                 req.success() == null || req.success(), now);
         // 写回是义务，不是可选项：confirmCallback 会改状态、交易号与 paidAt，也会让 callbackCount
@@ -698,10 +722,14 @@ public class PayAppService {
      * <p><b>offerId 缺失时不静默用空串</b>：空串会让客户端调起一个必然失败的支付，
      * 玩家看到的是「点了没反应」。当场报错虽然难看，但它指向的是配置缺失这个真问题。
      */
-    private PayParams payParams(String orderId,PayOrder.Line line) {
-        PayOrder.Quote quote = line.quote() == null ? paymentQuote(orderId) : line.quote();
-        return new PayParams(quote.mode(), quote.offerId(), String.valueOf(line.totalCents()),
-                quote.env(), quote.currencyType(), quote.signature(),quote.outTradeNo());
+    private PayParams payParams(String playerId, PayOrder.Line line, long now) {
+        // Legacy snapshots without a frozen Quote/outTradeNo must not invent a new platform identity on replay.
+        PayOrder.Quote quote = line.quote();
+        if (quote == null) return new PayParams(null, null, null, null);
+        var signed = gameItemSigner.sign(playerId, line, quote, now).orElse(null);
+        return new PayParams(signed == null ? null : signed.signData(),
+                signed == null ? null : signed.paySig(), signed == null ? null : signed.signature(),
+                quote.outTradeNo());
     }
 
     /** 首次下单时冻结渠道参数；回放不得改用此刻的部署环境或热加载币种。 */
@@ -713,12 +741,14 @@ public class PayAppService {
                             + "这是部署凭据，只能来自环境变量，不在配置表里");
         }
         return new PayOrder.Quote(
-                environment.getProperty("ironoath.pay.mode", "game"),
+                "goods",
                 offerId,
                 environment.getProperty("ironoath.pay.env", "1"),
                 currency(),
                 null,
-                channelOrderIdFor(orderId));
+                channelOrderIdFor(orderId),
+                environment.getProperty("ironoath.pay.zone-id", "1"),
+                environment.getProperty("ironoath.pay.platform", "android"));
     }
 
     /**

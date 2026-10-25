@@ -60,6 +60,11 @@ import com.ironoath.web.service.PlayerInitService;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@org.springframework.test.context.TestPropertySource(properties = {
+        "ironoath.pay.app-key-sandbox=test-only-app-key",
+        "ironoath.pay.zone-id=zone-test",
+        "ironoath.pay.superapp-signature-secret=test-secret-1234"
+})
 class PayEndpointTest {
 
     private static final String PLAYER_HEADER = "X-Player-Id";
@@ -188,22 +193,30 @@ class PayEndpointTest {
     // ---------- 下单 ----------
 
     @Test
-    @DisplayName("下单：金额由服务端按 productId 查表，客户端传什么都改不了它")
+    @DisplayName("下单：GameItem 支付原串锁定服务端商品、数量、单价与平台订单号")
     void orderAmountIsDecidedByTheServer() throws Exception {
-        String playerId = newPlayer();
+        String playerId = newWeChatPlayer();
         JsonNode data = okData(postJson("/pay/order", playerId,
-                new CreateOrderReq(newRequestId(), "first_charge", 1, "hero_sr_01")));
+                new CreateOrderReq(newRequestId(), "first_charge", 2, "hero_sr_01")));
 
         String orderId = data.get("orderId").asText();
         assertThat(orderId).isNotBlank();
-        assertThat(data.get("payParams").get("offerId").asText())
-                .as("offerId 来自部署参数，不是配置表也不是客户端").isEqualTo("test-offer-id");
-        assertThat(data.get("payParams").get("buyQuantity").asText())
-                .as("金额以分为单位透传").isEqualTo(
-                        String.valueOf(configs.longParam("PRODUCT_FIRST_CHARGE_CENTS")));
-        assertThat(data.get("payParams").path("outTradeNo").asText())
+        JsonNode payParams = data.path("payParams");
+        String signData = payParams.path("signData").asText();
+        assertThat(payParams.path("outTradeNo").asText())
                 .as("米大师通道订单号必须显式下发、可重复映射且不超过32字符")
                 .matches("[0-9a-f]{32}");
+        String expectedSignData = "{\"mode\":\"goods\",\"offerId\":\"test-offer-id\",\"buyQuantity\":2,"
+                + "\"env\":1,\"currencyType\":\"CNY\",\"platform\":\"android\","
+                + "\"productId\":\"first_charge\",\"goodsPrice\":"
+                + configs.longParam("PRODUCT_FIRST_CHARGE_CENTS") + ",\"outTradeNo\":\""
+                + payParams.path("outTradeNo").asText() + "\"}";
+        assertThat(signData).as("GameItem 支付原串按官方类型/默认值和冻结单价序列化")
+                .isEqualTo(expectedSignData);
+        assertThat(payParams.path("paySig").asText())
+                .isEqualTo(hmacHex("test-only-app-key", "requestMidasPaymentGameItem&" + signData));
+        assertThat(payParams.path("signature").asText()).isEqualTo(hmacHex("dev-session-key", signData));
+        assertThat(data.toString()).doesNotContain("dev-session-key");
 
         PayOrder order = orders.get(orderId);
         assertThat(order).isNotNull();
@@ -252,6 +265,127 @@ class PayEndpointTest {
         assertThat(order.rewards()).as("发货清单落在订单上，查单端点据此回放")
                 .hasSize(1);
         assertThat(order.needsRetry()).as("已经结清，不该还在补单队列里").isFalse();
+    }
+
+    @Test
+    @DisplayName("官方 GameItem 发货事件按 PayEventSig 和 outTradeNo 幂等履行")
+    void repeatedOfficialGameItemEventsFulfillTheMappedOrderOnlyOnce() throws Exception {
+        plan.succeedFrom(1);
+        String playerId = newWeChatPlayer();
+        String orderId = okData(postJson("/pay/order", playerId,
+                new CreateOrderReq(newRequestId(), "first_charge", 2, "hero_sr_01"))).get("orderId").asText();
+        String outTradeNo = orders.get(orderId).line().quote().outTradeNo();
+        String accountKey = players.findByPlayerId(playerId).orElseThrow().deviceId();
+        String openId = accountKey.substring(com.ironoath.web.security.WeChatCodeExchanger.WECHAT_ACCOUNT_PREFIX.length());
+        long totalCents = orders.get(orderId).line().totalCents();
+        // Deliberate spaces/order prove the verifier uses the original Payload string, not reserialized JSON.
+        String payload = "{ \"OpenId\" : \"" + openId + "\", \"OutTradeNo\" : \""
+                + outTradeNo + "\", \"GoodsInfo\" : { \"ProductId\" : \"first_charge\", \"Quantity\" : 2, "
+                + "\"OrigPrice\" : \"" + formatCents(totalCents) + "\", \"ActualPrice\" : \"" + formatCents(totalCents)
+                + "\", \"Attach\" : \"\", \"OrderSource\" : 1 }, \"PayInfo\" : "
+                + "{ \"MchOrderNo\" : \"mch-test\", \"TransactionId\" : \"txn-test\", \"PaidTime\" : 1 } }";
+        String event = "minigame_game_pay_goods_deliver_notify";
+        String eventSig = hmacHex("test-only-app-key", event + "&" + payload);
+        java.util.Map<String, Object> body = gameItemNotification(event, payload, eventSig, outTradeNo);
+
+        for (int i = 0; i < 3; i++) {
+            JsonNode ack = postGameItemNotification(body);
+            assertThat(ack.path("returnCode").asText()).isEqualTo("0");
+            assertThat(ack.path("returnMessage").asText()).isEqualTo("OK");
+        }
+        assertThat(orders.get(orderId).status()).isEqualTo(PayOrder.Status.SUCCESS);
+        assertThat(orders.get(orderId).callbackCount()).isEqualTo(3);
+        assertThat(plan.calls()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("错误 PayEventSig 不得确认订单或调用发货")
+    void invalidGameItemEventSignatureDoesNotFulfill() throws Exception {
+        String playerId = newWeChatPlayer();
+        String orderId = okData(postJson("/pay/order", playerId,
+                new CreateOrderReq(newRequestId(), "first_charge", 1, "hero_sr_01"))).get("orderId").asText();
+        String outTradeNo = orders.get(orderId).line().quote().outTradeNo();
+        String accountKey = players.findByPlayerId(playerId).orElseThrow().deviceId();
+        String openId = accountKey.substring(com.ironoath.web.security.WeChatCodeExchanger.WECHAT_ACCOUNT_PREFIX.length());
+        String payload = gameItemPayload(openId, outTradeNo, orders.get(orderId).line().totalCents());
+        java.util.Map<String, Object> event = gameItemNotification(
+                "minigame_game_pay_goods_deliver_notify", payload, "0".repeat(64), outTradeNo);
+
+        JsonNode ack = postGameItemNotification(event);
+
+        assertThat(ack.path("returnCode").asText()).isNotEqualTo("0");
+        assertThat(orders.get(orderId).status()).isEqualTo(PayOrder.Status.PENDING);
+        assertThat(plan.calls()).isZero();
+    }
+
+    @Test
+    @DisplayName("无效 TC-Signature 不得确认订单或调用发货")
+    void invalidPlatformTimestampSignatureDoesNotFulfill() throws Exception {
+        String playerId = newWeChatPlayer();
+        String orderId = okData(postJson("/pay/order", playerId,
+                new CreateOrderReq(newRequestId(), "first_charge", 1, "hero_sr_01"))).get("orderId").asText();
+        String outTradeNo = orders.get(orderId).line().quote().outTradeNo();
+        String accountKey = players.findByPlayerId(playerId).orElseThrow().deviceId();
+        String openId = accountKey.substring(com.ironoath.web.security.WeChatCodeExchanger.WECHAT_ACCOUNT_PREFIX.length());
+        String payload = gameItemPayload(openId, outTradeNo, orders.get(orderId).line().totalCents());
+        String event = "minigame_game_pay_goods_deliver_notify";
+        String payEventSig = hmacHex("test-only-app-key", event + "&" + payload);
+        java.util.Map<String, Object> notification = gameItemNotification(event, payload, payEventSig, outTradeNo);
+        long timestamp = java.time.Instant.now().getEpochSecond();
+
+        JsonNode ack = perform(post("/pay/midas/game-item-callback")
+                .header("TC-Timestamp", Long.toString(timestamp))
+                .header("TC-Signature", "00")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(JsonUtils.toJson(notification)));
+
+        assertThat(ack.path("returnCode").asText()).isNotEqualTo("0");
+        assertThat(orders.get(orderId).status()).isEqualTo(PayOrder.Status.PENDING);
+        assertThat(plan.calls()).isZero();
+    }
+
+    @Test
+    @DisplayName("平台支付失败通知得到应答但绝不置为已付或发货")
+    void paymentErrorEventDoesNotFulfill() throws Exception {
+        String playerId = newWeChatPlayer();
+        String orderId = okData(postJson("/pay/order", playerId,
+                new CreateOrderReq(newRequestId(), "first_charge", 1, "hero_sr_01"))).get("orderId").asText();
+        String outTradeNo = orders.get(orderId).line().quote().outTradeNo();
+        String accountKey = players.findByPlayerId(playerId).orElseThrow().deviceId();
+        String openId = accountKey.substring(com.ironoath.web.security.WeChatCodeExchanger.WECHAT_ACCOUNT_PREFIX.length());
+        String payload = gameItemPayload(openId, outTradeNo, orders.get(orderId).line().totalCents());
+        String event = "minigame_game_pay_goods_deliver_notify";
+        String payEventSig = hmacHex("test-only-app-key", event + "&" + payload);
+        java.util.Map<String, Object> notification = gameItemNotification(
+                "TRANSACTION.PAYERROR", event, payload, payEventSig, outTradeNo);
+
+        JsonNode ack = postGameItemNotification(notification);
+
+        assertThat(ack.path("returnCode").asText()).isEqualTo("0");
+        assertThat(orders.get(orderId).status()).isEqualTo(PayOrder.Status.PENDING);
+        assertThat(plan.calls()).isZero();
+    }
+
+    @Test
+    @DisplayName("签名 Payload 用户必须与平台事件发送方一致")
+    void gameItemEventRejectsOuterSenderMismatch() throws Exception {
+        String playerId = newWeChatPlayer();
+        String orderId = okData(postJson("/pay/order", playerId,
+                new CreateOrderReq(newRequestId(), "first_charge", 1, "hero_sr_01"))).get("orderId").asText();
+        String outTradeNo = orders.get(orderId).line().quote().outTradeNo();
+        String accountKey = players.findByPlayerId(playerId).orElseThrow().deviceId();
+        String openId = accountKey.substring(com.ironoath.web.security.WeChatCodeExchanger.WECHAT_ACCOUNT_PREFIX.length());
+        String payload = gameItemPayload(openId, outTradeNo, orders.get(orderId).line().totalCents());
+        String event = "minigame_game_pay_goods_deliver_notify";
+        String eventSig = hmacHex("test-only-app-key", event + "&" + payload);
+        java.util.Map<String, Object> notification = gameItemNotification(event, payload, eventSig,
+                "different-out-trade-no");
+
+        JsonNode ack = postGameItemNotification(notification);
+
+        assertThat(ack.path("returnCode").asText()).isNotEqualTo("0");
+        assertThat(orders.get(orderId).status()).isEqualTo(PayOrder.Status.PENDING);
+        assertThat(plan.calls()).isZero();
     }
 
     @Test
@@ -412,7 +546,10 @@ class PayEndpointTest {
                         configs.longParam("PAY_POPUP_GLOBAL_COOLDOWN_MINUTES") * 60_000L)),
                 // UNKNOWN 就是生产默认 bean：年龄未知 ⇒ 限额不拦，本用例的下单路径不会碰到 throttle
                 com.ironoath.web.pay.MinorPaymentPolicy.UNKNOWN,
-                new com.ironoath.web.pay.PaidProducts(configs, battlePass), players);
+                new com.ironoath.web.pay.PaidProducts(configs, battlePass), players,
+                new com.ironoath.web.pay.MidasGameItemSigner(payEnvironment,
+                        new com.ironoath.web.security.InMemoryWeChatSessionKeyStore(),
+                        new com.fasterxml.jackson.databind.ObjectMapper()));
     }
 
     @Test
@@ -451,7 +588,7 @@ class PayEndpointTest {
 
         assertThat(replay.orderId()).isEqualTo(original.orderId());
         assertThat(replay.payParams()).isEqualTo(original.payParams());
-        assertThat(replay.payParams().offerId()).isEqualTo("offer-original");
+        assertThat(orders.get(original.orderId()).line().quote().offerId()).isEqualTo("offer-original");
     }
 
     @Test
@@ -596,6 +733,58 @@ class PayEndpointTest {
         return playerInitService.init(new PlayerInitReq(
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "支付测试", 1_700_000_000_000L, ""))
                 .playerId();
+    }
+
+    private String newWeChatPlayer() {
+        return playerInitService.init(new PlayerInitReq(
+                "req-" + UUID.randomUUID(), "wx-device-" + UUID.randomUUID(), "支付测试",
+                1_700_000_000_000L, "wx-login-" + UUID.randomUUID())).playerId();
+    }
+
+    private static String hmacHex(String key, String value) throws Exception {
+        javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+        mac.init(new javax.crypto.spec.SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        return java.util.HexFormat.of().formatHex(mac.doFinal(value.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static String formatCents(long cents) {
+        return java.math.BigDecimal.valueOf(cents, 2).toPlainString();
+    }
+
+    private static java.util.Map<String, Object> gameItemNotification(
+            String event, String payload, String payEventSig, String outTradeNo) {
+        return gameItemNotification("TRANSACTION.SUCCESS", event, payload, payEventSig, outTradeNo);
+    }
+
+    private static java.util.Map<String, Object> gameItemNotification(
+            String eventType, String event, String payload, String payEventSig, String outTradeNo) {
+        return java.util.Map.of("eventType", eventType, "event", event,
+                "payload", payload, "payEventSig", payEventSig, "outTradeNo", outTradeNo);
+    }
+
+    private static String gameItemPayload(String openId, String outTradeNo, long totalCents) {
+        return "{\"OpenId\":\"" + openId + "\",\"OutTradeNo\":\"" + outTradeNo
+                + "\",\"GoodsInfo\":{\"ProductId\":\"first_charge\",\"Quantity\":1,"
+                + "\"OrigPrice\":\"" + formatCents(totalCents) + "\",\"ActualPrice\":\"" + formatCents(totalCents)
+                + "\",\"Attach\":\"\",\"OrderSource\":1},\"PayInfo\":{\"MchOrderNo\":\"mch-test\","
+                + "\"TransactionId\":\"txn-test\",\"PaidTime\":1}}";
+    }
+
+    private JsonNode postGameItemNotification(Object notification) throws Exception {
+        long timestamp = java.time.Instant.now().getEpochSecond();
+        String signature = aesEcbHex("test-secret-1234", Long.toString(timestamp));
+        return perform(post("/pay/midas/game-item-callback")
+                .header("TC-Timestamp", Long.toString(timestamp))
+                .header("TC-Signature", signature)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(JsonUtils.toJson(notification)));
+    }
+
+    private static String aesEcbHex(String key, String value) throws Exception {
+        javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance("AES/ECB/PKCS5Padding");
+        cipher.init(javax.crypto.Cipher.ENCRYPT_MODE,
+                new javax.crypto.spec.SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "AES"));
+        return java.util.HexFormat.of().formatHex(cipher.doFinal(value.getBytes(StandardCharsets.UTF_8)));
     }
 
     private static String newRequestId() {

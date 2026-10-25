@@ -2,6 +2,7 @@ package com.ironoath.web.config;
 
 import com.ironoath.config.ConfigRegistry;
 import org.springframework.beans.factory.InitializingBean;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -38,15 +39,18 @@ public class ProductionReadiness implements InitializingBean {
     private final com.ironoath.web.security.WeChatCodeExchanger weChat;
     private final com.ironoath.web.security.ContentSecurityClient contentSecurity;
     private final com.ironoath.web.service.PayAppService.SignatureVerifier paySignature;
+    private final com.ironoath.web.pay.MidasGameItemSigner gameItemSigner;
     private final com.ironoath.web.release.SupportConfig support;
     private final String activeProfiles;
 
+    @Autowired
     public ProductionReadiness(ConfigRegistry configs, GameProperties properties,
                                com.ironoath.web.ops.OpsTokenGuard ops,
                                com.ironoath.web.security.PlayerIdentityVerifier identity,
                                com.ironoath.web.security.WeChatCodeExchanger weChat,
                                com.ironoath.web.security.ContentSecurityClient contentSecurity,
                                com.ironoath.web.service.PayAppService.SignatureVerifier paySignature,
+                               com.ironoath.web.pay.MidasGameItemSigner gameItemSigner,
                                com.ironoath.web.release.SupportConfig support,
                                @Value("${spring.profiles.active:}") String activeProfiles) {
         this.configs = configs;
@@ -56,8 +60,21 @@ public class ProductionReadiness implements InitializingBean {
         this.weChat = weChat;
         this.contentSecurity = contentSecurity;
         this.paySignature = paySignature;
+        this.gameItemSigner = gameItemSigner;
         this.support = support;
         this.activeProfiles = activeProfiles == null ? "" : activeProfiles;
+    }
+
+    /** Compatibility constructor for isolated readiness tests predating the GameItem signer gate. */
+    public ProductionReadiness(ConfigRegistry configs, GameProperties properties,
+                               com.ironoath.web.ops.OpsTokenGuard ops,
+                               com.ironoath.web.security.PlayerIdentityVerifier identity,
+                               com.ironoath.web.security.WeChatCodeExchanger weChat,
+                               com.ironoath.web.security.ContentSecurityClient contentSecurity,
+                               com.ironoath.web.service.PayAppService.SignatureVerifier paySignature,
+                               com.ironoath.web.release.SupportConfig support,
+                               String activeProfiles) {
+        this(configs, properties, ops, identity, weChat, contentSecurity, paySignature, null, support, activeProfiles);
     }
 
     @Override
@@ -137,6 +154,9 @@ public class ProductionReadiness implements InitializingBean {
         if (!paySignature.productionReady()) {
             problems.add("支付回调验签实现是 " + paySignature.getClass().getSimpleName()
                     + "（productionReady=false）：当前 /pay/callback 不能核验渠道签名，必须接入正式米大师验签后才能启动");
+        }
+        if (gameItemSigner != null && !gameItemSigner.productionReady()) {
+            problems.add("GameItem 支付签名配置未就绪（productionReady=false）：需要正式与沙箱 AppKey、TC-Signature 加密密钥及加密 session_key 共享存储后才能启动");
         }
         if (!support.configured()) {
             // 这一条与「运维令牌」同一族：漏配不是"放松校验"，是"入口变成死按钮"。

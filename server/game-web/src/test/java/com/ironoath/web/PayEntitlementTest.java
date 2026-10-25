@@ -575,7 +575,10 @@ class PayEntitlementTest {
                         configs.longParam("PAY_FIRST_PURCHASE_QUIET_HOURS") * 3_600_000L,
                         (int) configs.longParam("PAY_POPUP_PER_GIFT_DAILY_MAX"),
                         configs.longParam("PAY_POPUP_GLOBAL_COOLDOWN_MINUTES") * 60_000L)),
-                MinorPaymentPolicy.UNKNOWN, catalog, players);
+                MinorPaymentPolicy.UNKNOWN, catalog, players,
+                new com.ironoath.web.pay.MidasGameItemSigner(environment,
+                        new com.ironoath.web.security.InMemoryWeChatSessionKeyStore(),
+                        new com.fasterxml.jackson.databind.ObjectMapper()));
     }
 
     private JsonNode okData(JsonNode root) {

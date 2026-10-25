@@ -217,6 +217,30 @@ class ProductionReadinessTest {
         assertThatThrownBy(gate::afterPropertiesSet).isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    @DisplayName("正式 GameItem signer 缺少商户密钥或加密 session-key store 时必须阻止 prod")
+    void missingGameItemSignerReadinessIsReportedAsAProdBlocker() {
+        ConfigRegistry configured = ConfigRegistry.loadFromDirectory(locateConfigDir());
+        configured.reload("global", com.ironoath.config.model.GlobalCfg.class, withDeploymentParams());
+        var missingSigner = new com.ironoath.web.pay.MidasGameItemSigner(
+                new org.springframework.mock.env.MockEnvironment(),
+                new com.ironoath.web.security.WeChatSessionKeyStore() {
+                    @Override public void put(String playerId, String sessionKey, long expiresAtMillis) {}
+                    @Override public java.util.Optional<String> find(String playerId, long nowMillis) {
+                        return java.util.Optional.empty();
+                    }
+                }, new ObjectMapper());
+        ProductionReadiness gate = new ProductionReadiness(configured,
+                new GameProperties(null, GameProperties.STORAGE_MONGO, false),
+                opsConfigured(), identityReady(), weChatReady(), contentSecurityReady(), paySignatureReady(),
+                missingSigner, supportReady(), "prod");
+
+        assertThat(gate.problems()).anySatisfy(problem -> assertThat(problem)
+                .contains("GameItem")
+                .contains("productionReady=false"));
+        assertThatThrownBy(gate::afterPropertiesSet).isInstanceOf(IllegalStateException.class);
+    }
+
     /**
      * 判别性用例：前一条同时配齐了四项，所以它绿了并不能说明其中任何一条真的在生效。
      * 这里每次只拿掉一项，其余配好 —— 少一个变量，才能确认报错来自哪个变量。

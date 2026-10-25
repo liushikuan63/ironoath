@@ -1,5 +1,5 @@
 /**
- * 职责：米大师支付的薄桥（B19 S3-iv）—— 把 `wx.requestMidasPayment` 的几种结局收敛成一个枚举。
+ * 职责：米大师道具直购薄桥（B19 S3-iv）—— 把 `wx.requestMidasPaymentGameItem` 的几种结局收敛成一个枚举。
  * 依赖：全局 `wx`（类型声明见 client/types/cc.d.ts）。
  *
  * <p><b>它只报"渠道侧这一步成没成"，不报"货发没发"</b>：发货由服务端在收到渠道回调之后做，
@@ -14,28 +14,37 @@ import type { PayParams } from './generated/PayProtocol'
 export type PaymentOutcome = 'ok' | 'cancelled' | 'unsupported' | 'failed'
 
 export function requestMidasPayment(params: PayParams): Promise<PaymentOutcome> {
-  if (typeof wx === 'undefined' || typeof wx.requestMidasPayment !== 'function') {
+  if (typeof wx === 'undefined' || typeof wx.requestMidasPaymentGameItem !== 'function') {
     return Promise.resolve('unsupported')
   }
   const outTradeNo = params.outTradeNo
-  if (!outTradeNo || !/^[0-9a-f]{32}$/.test(outTradeNo)) {
-    // Legacy PENDING orders have no frozen platform mapping; never let a retry invent a new channel identity.
+  const signData = params.signData
+  const paySig = params.paySig
+  const signature = params.signature
+  if (!outTradeNo || !/^[0-9a-f]{32}$/.test(outTradeNo)
+    || typeof signData !== 'string' || !signData
+    || typeof paySig !== 'string' || !/^[0-9a-f]{64}$/.test(paySig)
+    || typeof signature !== 'string' || !/^[0-9a-f]{64}$/.test(signature)) {
+    // Legacy orders have no frozen signed GameItem payload; never invent a new platform identity or fall back to game currency.
+    return Promise.resolve('unsupported')
+  }
+  let parsed: { mode?: unknown; outTradeNo?: unknown }
+  try {
+    parsed = JSON.parse(signData) as { mode?: unknown; outTradeNo?: unknown }
+  } catch {
+    return Promise.resolve('unsupported')
+  }
+  if (parsed.mode !== 'goods' || parsed.outTradeNo !== outTradeNo) {
     return Promise.resolve('unsupported')
   }
   return new Promise<PaymentOutcome>((resolve) => {
-    wx.requestMidasPayment({
-      mode: params.mode,
-      offerId: params.offerId,
-      buyQuantity: params.buyQuantity,
-      env: params.env,
-      currencyType: params.currencyType,
-      outTradeNo,
+    wx.requestMidasPaymentGameItem({
+      signData,
+      paySig,
+      signature,
       success: () => resolve('ok'),
-      fail: (err) => {
-        // 当前桥把 -2 归为用户取消；微信小游戏专用文档和真机回执尚未核实，不能称此映射已通过正式渠道验收。
-        // 其余归为渠道 fail；资金和发货结局由本人订单查询判定。
-        resolve(err.errCode === -2 ? 'cancelled' : 'failed')
-      },
+      // The current GameItem API docs don't define cancellation codes; query the server order for every fail.
+      fail: () => resolve('failed'),
     })
   })
 }

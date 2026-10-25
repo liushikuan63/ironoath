@@ -40,20 +40,14 @@ export interface PricesResp {
 }
 
 /**
- * 调起微信小游戏虚拟支付的当前内部参数形状。服务端冻结一个符合平台长度/字符约束的 outTradeNo，与内部订单号分开；其余支付能力和正式渠道签名仍须按适用合同接通。
+ * 微信小游戏道具直购响应，直接对应官方 wx.requestMidasPaymentGameItem。旧游戏币参数不再下发；旧客户端缺少 GameItem 字段时必须失败关闭。outTradeNo 与内部订单号分离并稳定映射。
  */
 export interface PayParams {
-  /** 米大师支付模式（game / short_series_goods 等），由服务端按渠道配置下发。 */
-  mode: string
-  /** 米大师应用 id。**这是部署参数不是游戏数值**，来自环境变量而不是配置表 —— 配置表会进版本库，而 offerId 与密钥同属一类凭据。 */
-  offerId: string
-  /** 下单金额（**分**），字符串形式透传 —— 服务端发的是 line.totalCents()，也就是这一单的应收金额。 2026-09-13 裁决：语义以代码现状（金额）为准，并改掉本字段此前那句「购买数量（游戏币个数）」。理由是全条支付链只有 totalCents 一个真实生产者，没有任何一处产出过「个数」这种语义，而 global 里的 PRODUCT_*_CENTS 本身就是分。 **接入真实渠道之前仍须拿米大师正式文档复核**：两种读法的实收金额可以差 100 倍，而唯一能定它的是官方文档（本地没有凭据，check-contract-sync 也查不出「描述与代码意图不一致」）。见收口清单 #49 与 §三·补 A2。 */
-  buyQuantity: string
-  /** 环境（0 正式 / 1 沙箱）。**沙箱参数绝不能出现在正式包里**，所以它由服务端下发而不是客户端写死 —— 客户端写死的话，一次忘了改的提交就会让正式包指向沙箱。 */
-  env: string
-  /** 币种，与 ProductPrice.currency 同源。 */
-  currencyType: string
-  /** 预留签名字段。**当前生产代码恒为 null**（PayAppService.payParams 最后一参），MidasPayment 桥也不传此字段；原注释声称『正式环境必有、不会下发 null』与代码不符。是否需要签名、签名来源及传参位置须按微信小游戏正式渠道文档和真机回执核实，本字段不构成已接通正式支付的证据。 */
+  /** 官方 GameItem 支付原串：服务端按固定属性顺序序列化的 JSON 字符串；paySig 与用户态 signature 均绑定这一个原串。旧订单缺少该字段时客户端不得临时重建。 */
+  signData: string | null
+  /** GameItem 服务端支付签名：HMAC-SHA256(AppKey, 'requestMidasPaymentGameItem&' + signData) 的小写十六进制结果。AppKey 不下发客户端。 */
+  paySig: string | null
+  /** GameItem 用户态签名，使用服务端持有的微信 session_key 对 signData 计算。旧订单可为 null，客户端遇到 null 必须拒绝拉起。session_key 不下发客户端，也不得写日志。 */
   signature: string | null
   /** 米大师通道订单号，稳定映射当前内部订单。新订单为32位小写十六进制；老订单无冻结映射时为null且不得据此新拉起支付。 */
   outTradeNo: string | null
@@ -99,6 +93,60 @@ export interface PayCallbackReq {
   sign: string
   /** 渠道告知的支付结果。false 时订单转为 FAILED，不发货。 */
   success: boolean | null
+}
+
+/**
+ * Tencent MiniGame GameItem 发货回调。HTTP 头 TC-Timestamp/TC-Signature 与原始 payload 的 payEventSig 均需验签。
+ */
+export interface MidasGameItemDeliveryEvent {
+  /** TRANSACTION.SUCCESS 或 TRANSACTION.PAYERROR。 */
+  eventType: string
+  /** 创建订单时使用的事件名。 */
+  event: string
+  /** 支付回调 JSON 原串，验签时不得先 parse 再重序列化。 */
+  payload: string
+  /** HMAC-SHA256(AppKey, event + '&' + payload) 的小写十六进制签名。 */
+  payEventSig: string
+  /** 平台回调外层订单号，必须与已验签 payload 内订单号一致。 */
+  outTradeNo: string
+  /** 平台流水号；履约使用签名 Payload.PayInfo 中的值。 */
+  transactionId: string | null
+}
+
+/**
+ * 道具发货事件的 Payload JSON 内容。
+ */
+export interface MidasGameItemDeliveryPayload {
+  OpenId: string
+  OutTradeNo: string
+  GoodsInfo: MidasGameItemGoodsInfo
+  PayInfo: MidasGameItemPayInfo
+}
+
+export interface MidasGameItemGoodsInfo {
+  ProductId: string
+  Quantity: number
+  /** 官方回调中的金额字符串，按两位小数换算为分校验。 */
+  OrigPrice: string
+  /** 官方回调中的实付金额字符串。 */
+  ActualPrice: string
+  Attach: string
+  OrderSource: number
+}
+
+export interface MidasGameItemPayInfo {
+  MchOrderNo: string
+  TransactionId: string | null
+  PaidTime: number | null
+}
+
+/**
+ * Tencent MiniGame GameItem 支付回调应答；returnCode='0' 表示成功。
+ */
+export interface MidasGameItemDeliveryAck {
+  returnCode: string
+  returnMessage: string
+  data: string
 }
 
 /**

@@ -7,6 +7,19 @@ ironoath:
     task-queue: redis
   redis:
     address: ${IRONOATH_REDIS_ADDRESS}
+  pay:
+    # The GameItem callback and client signer use environment-specific merchant AppKeys.
+    offer-id: ${IRONOATH_PAY_OFFER_ID:}
+    env: ${IRONOATH_PAY_ENV:0}
+    zone-id: ${IRONOATH_PAY_ZONE_ID:1}
+    platform: ${IRONOATH_PAY_PLATFORM:android}
+    app-key-prod: ${IRONOATH_PAY_APP_KEY_PROD:}
+    app-key-sandbox: ${IRONOATH_PAY_APP_KEY_SANDBOX:}
+    # Tencent Superapp TC-Signature timestamp encryption key; never commit the actual value.
+    superapp-signature-secret: ${IRONOATH_PAY_SUPERAPP_SIGNATURE_SECRET:}
+  wechat:
+    # Separate 32-byte Base64 key used only to encrypt short-lived session_key values in Redis.
+    session-key-encryption-key: ${IRONOATH_WECHAT_SESSION_KEY_ENCRYPTION_KEY:}
   # 生产绝不下发 detail：里面含内部字段名、配置 id 与校验规则，泄漏等于给外挂作者送地图
   expose-detail: false
 

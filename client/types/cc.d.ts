@@ -437,11 +437,8 @@ declare const wx: {
     fail?(err: { errMsg: string }): void
   }): void
   /**
-   * wx.requestMidasPayment：拉起米大师支付（B19 S3-iv）。**只有小游戏运行时才有**，
-   * 浏览器/编辑器里不存在 —— 桥用它是否可调用来判"这个环境支持不支持支付"。
-   *
-   * <p>参数与回调形状**须以米大师正式文档复核**（本地没有凭据，验不了真实扣款）。
-   * 当前桥把 errCode === -2 当作用户取消；小游戏专用文档与真机回执仍须核实。
+   * Legacy wx.requestMidasPayment game-currency API declaration, retained only for old callers.
+   * Current B19 bridge uses requestMidasPaymentGameItem; do not mix their fields or error semantics.
    */
   requestMidasPayment(options: {
     mode: string
@@ -453,6 +450,18 @@ declare const wx: {
     platform?: 'android' | 'ios'
     success?(): void
     fail?(err: { errMsg: string; errCode?: number }): void
+  }): void
+  /**
+   * wx.requestMidasPaymentGameItem：小游戏虚拟支付 2.0 道具直购。
+   * signData 必须是服务端生成并参与 paySig/signature 的 JSON 原串；客户端不能改字段或重签。
+   */
+  requestMidasPaymentGameItem(options: {
+    signData: string
+    paySig: string
+    signature: string
+    success?(res: unknown, errCode?: number): void
+    fail?(err: { errMsg: string; errCode?: number }): void
+    complete?(res: unknown): void
   }): void
 }
 

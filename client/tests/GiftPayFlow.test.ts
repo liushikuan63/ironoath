@@ -13,8 +13,8 @@ import type { NetOutcome } from '../assets/scripts/net/NetModule'
 import type { CreateOrderResp, OrderStatusResp } from '../assets/scripts/net/generated/PayProtocol'
 
 const PAY_PARAMS = {
-  mode: 'game', offerId: 'offer-1', buyQuantity: '600', env: '1',
-  currencyType: 'CNY', signature: null, outTradeNo: '0123456789abcdef0123456789abcdef',
+  signData: '{"mode":"goods","outTradeNo":"0123456789abcdef0123456789abcdef"}',
+  paySig: 'a'.repeat(64), signature: 'b'.repeat(64), outTradeNo: '0123456789abcdef0123456789abcdef',
 }
 
 function okOutcome<T>(data: T): NetOutcome<T> {
