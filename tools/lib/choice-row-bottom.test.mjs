@@ -47,3 +47,36 @@ test('vertical capacity rejects rows taller than their measured pitch even with 
   const result = assessDialogVerticalCapacity({ netContentHeight: 280, rows, footer: { bottom: 20, top: 58 } })
   assert.equal(result.pass, false, 'adjacent 44px rows at 40px pitch overlap by 4px')
 })
+
+
+const labelFixture = () => ({
+  plate: { left: 0, right: 200, bottom: 0, top: 220 }, insets: { left: 10, right: 10, top: 10, bottom: 10 },
+  labels: {
+    title: { visible: true, rect: { left: 20, right: 180, bottom: 160, top: 180 } },
+    coord: { visible: true, rect: { left: 20, right: 180, bottom: 130, top: 150 } },
+    crest: { active: true, rect: { left: 80, right: 120, bottom: 185, top: 210 } },
+    total: { visible: true, rect: { left: 20, right: 180, bottom: 15, top: 35 }, clips: [{ enabled: true, left: 10, right: 190, bottom: 10, top: 210 }] },
+    rows: [{ labels: [{ visible: true, rect: { left: 20, right: 100, bottom: 80, top: 100 } }, { visible: true, rect: { left: 120, right: 180, bottom: 80, top: 100 } }] }],
+  },
+})
+
+for (const issue of ['none', 'header', 'locked-row', 'summary', 'summary-clip', 'hidden-title', 'hidden-row', 'summary-no-mask', 'summary-disabled-mask']) {
+  test(`compose text geometry ${issue === 'none' ? 'accepts separated production regions' : 'rejects ' + issue}`, async () => {
+    const { assessComposeLabelGeometry } = await import('./choice-row-bottom.mjs')
+    assert.equal(typeof assessComposeLabelGeometry, 'function')
+    const input = labelFixture()
+    if (issue === 'header') input.labels.crest.rect = { ...input.labels.title.rect }
+    if (issue === 'locked-row') input.labels.rows[0].labels[1].rect.left = 90
+    if (issue === 'summary') input.labels.total.rect.bottom = 0
+    if (issue === 'summary-clip') input.labels.total.clips[0].bottom = 20
+    if (issue === 'hidden-title') input.labels.title.visible = false
+    if (issue === 'hidden-row') input.labels.rows[0].labels[0].visible = false
+    if (issue === 'summary-no-mask') input.labels.total.clips = []
+    if (issue === 'summary-disabled-mask') input.labels.total.clips[0].enabled = false
+    const actual = assessComposeLabelGeometry(input)
+    assert.equal(actual.pass, issue === 'none')
+    if (issue === 'header') assert.equal(actual.headerClear, false)
+    if (issue === 'locked-row') assert.equal(actual.rowsClear, false)
+    if (issue === 'summary' || issue === 'summary-clip') assert.equal(actual.summaryContained, false)
+  })
+}

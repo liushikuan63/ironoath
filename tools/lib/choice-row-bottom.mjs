@@ -60,3 +60,29 @@ export function assessDialogVerticalCapacity({ netContentHeight, rows, footer })
     footerGap,
   }
 }
+
+/** #817: measure the actual title/decor, row text and long summary bounds, never text length guesses. */
+export function assessComposeLabelGeometry({ plate, insets, labels }) {
+  const box = r => r && ['left', 'right', 'bottom', 'top'].every(k => Number.isFinite(r[k]))
+    && r.right > r.left && r.top > r.bottom
+  const epsilon = 0.5
+  const separate = (a, b) => box(a) && box(b) && (a.right <= b.left + epsilon
+    || b.right <= a.left + epsilon || a.top <= b.bottom + epsilon || b.top <= a.bottom + epsilon)
+  const title = labels?.title?.rect, coord = labels?.coord?.rect
+  const crest = labels?.crest, total = labels?.total?.rect
+  const headerClear = labels?.title?.visible === true && labels?.coord?.visible === true && separate(title, coord) && (crest?.active === false
+    || (crest?.active === true && separate(title, crest.rect) && separate(coord, crest.rect)))
+  const rowsClear = Array.isArray(labels?.rows) && labels.rows.length > 0
+    && labels.rows.every(row => row.labels?.length >= 2 && row.labels[0].visible === true
+      && row.labels[1].visible === true && separate(row.labels[0].rect, row.labels[1].rect))
+  const summaryContained = labels?.total?.visible === true && box(plate) && box(total) && insets
+    && ['left', 'right', 'top', 'bottom'].every(k => Number.isFinite(insets[k]) && insets[k] >= 0)
+    && total.left >= plate.left + insets.left - epsilon && total.right <= plate.right - insets.right + epsilon
+    && total.bottom >= plate.bottom + insets.bottom - epsilon && total.top <= plate.top - insets.top + epsilon
+    && Array.isArray(labels.total.clips) && labels.total.clips.length > 0
+    && labels.total.clips.every(clip => clip.enabled === true && box(clip)
+      && total.left >= clip.left - epsilon && total.right <= clip.right + epsilon
+      && total.bottom >= clip.bottom - epsilon && total.top <= clip.top + epsilon)
+  return { pass: Boolean(headerClear && rowsClear && summaryContained), headerClear: Boolean(headerClear),
+    rowsClear: Boolean(rowsClear), summaryContained: Boolean(summaryContained) }
+}
