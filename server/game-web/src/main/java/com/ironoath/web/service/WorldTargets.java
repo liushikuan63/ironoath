@@ -84,9 +84,8 @@ public final class WorldTargets {
         var moved = new LinkedHashMap<Coord, Target>();
         for (Target target : byCoord.values()) {
             Coord coord = target == capital ? capitalCoord : target.coord();
-            Target projected = target == capital
-                    ? new Target(target.definition(), capitalCoord, target.defender(), target.battleTerrain())
-                    : target;
+            TerrainType battleTerrain=StrategicTerrainResolver.resolve(target.definition(),coord,capitalCoord);
+            Target projected = new Target(target.definition(),coord,target.defender(),battleTerrain);
             Target previous = moved.putIfAbsent(coord, projected);
             if (previous != null) throw new IllegalStateException("王城现坐标与其它战略目标冲突");
         }
