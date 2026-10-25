@@ -34,6 +34,7 @@ export type StaticArtKey =
   | 'ui.plate.band'
   | 'ui.plate.tooltip'
   | 'ui.button.iron.hover'
+  | 'ui.button.iron.disabled'
   | 'ui.chip.close'
   | 'ui.crest.league'
   | 'ui.crest.nation'
@@ -165,6 +166,7 @@ const SPECS: Record<StaticArtKey, ArtSpec> = {
   'ui.plate.band': { path: 'ui/generated/ui/plate-band-v1' },
   'ui.plate.tooltip': { path: 'ui/generated/ui/plate-tooltip-v1' },
   'ui.button.iron.hover': { path: 'ui/generated/ui/button-iron-hover-v1' },
+  'ui.button.iron.disabled': { path: 'ui/generated/ui/button-iron-disabled-v1' },
   'ui.chip.close': { path: 'ui/generated/ui/chip-close-v1' },
   'ui.crest.league': { path: 'ui/generated/ui/crest-league-v1' },
   'ui.crest.nation': { path: 'ui/generated/ui/crest-nation-v1' },
@@ -506,12 +508,10 @@ export function applyCommandButton(node: Node, state: CommandButtonState,
  * 铁誓主按钮（C 档 `ui.button.iron` 一族）的三态取键。
  *
  * <p>chip 与铁钮采用同一 v3 母版和12·4薄边；独立取键保留各自既有状态消费。
- * 铁钮禁用继续使用运行时 tint，chip 禁用使用常态的确定性派生图；两者边形均不抖动。
+ * 三态均采用同母版派生图，禁用不再额外乘灰；池化时保留相同边形。
  */
 export function ironButtonArtKey(state: CommandButtonState): StaticArtKey {
-  // 只有两态。禁用**不在这里**：#805 已定"贴图路径的置灰用 `sprite.color` 乘灰"，
-  // 并被 `tools/verify-ui-v25-runtime.mjs` 钉成判据 ⇒ `ui.button.iron.disabled` 没有诚实消费位，
-  // 按 #216 的口径留在 art-src 草稿区、不进包（素材与派生系数都在规格 §二 表里，要接随时接）。
+  if (state === 'disabled') return 'ui.button.iron.disabled'
   return state === 'hover' ? 'ui.button.iron.hover' : 'ui.button.iron'
 }
 

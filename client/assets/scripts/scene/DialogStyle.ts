@@ -1,7 +1,7 @@
 /** 铁誓弹窗共用的材质与净区：内容按需滚动，操作固定，遮罩仍铺满。 */
 import { _decorator, Color, Component, Graphics, Label, Mask, Node, ScrollView, Size, Sprite, UITransform, Vec2, Vec3, view } from 'cc'
 import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
-import { BRONZE_GOLD, CORNER_RADIUS, DISABLED_TINT, IRON_SURFACE, MASK_SCRIM, PANEL_FALLBACK } from '../game/ui/UiTokens'
+import { BRONZE_GOLD, CORNER_RADIUS, IRON_SURFACE, MASK_SCRIM, PANEL_FALLBACK } from '../game/ui/UiTokens'
 import { dialogBodyFlow, dialogLayout } from '../game/ui/DialogLayout'
 import { applyCommandButton, applyIronButton, applySlicedSprite } from './ArtCatalog'
 import type { PanelNav } from './PanelNav'
@@ -143,8 +143,8 @@ export function applyDialogButton(node: Node, enabled: boolean, width: number, h
   const sprite = target.getComponent(Sprite)
   if (sprite !== null) {
     sprite.enabled = loaded
-    // iron禁用取常态母版，用既有灰阶tint；再次启用必须复位，不能残留池化的灰色。
-    sprite.color = enabled || width < 100 ? new Color(255, 255, 255, 255) : new Color(...DISABLED_TINT)
+    // 状态图已包含明暗；每次复位白色，避免派生图被旧池化 tint 二次压暗。
+    sprite.color = new Color(255, 255, 255, 255)
   }
   if (target !== node) target.active = loaded
   const previous = node.getChildByName('DialogButtonVector')

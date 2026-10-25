@@ -216,14 +216,29 @@ test('共用按钮贴图加载失败仍有可见兜底底画，重画不会叠�
   }
 })
 
-test('铁按钮禁用材质明确置灰，再启用恢复原亮度', () => {
-  const bitmap = (node: Node): boolean => { node.getComponent(Sprite) ?? node.addComponent(Sprite); return true }
+test('iron disabled uses a distinct derived frame and restores the normal frame', () => {
+  const catalog = exportsFor('ArtCatalog', { CITY_STAGE_ASSETS: {}, FAMILY_ASSETS: {} })
+  const key = catalog.ironButtonArtKey as (state: string) => string
+  assert.equal(key('disabled'), 'ui.button.iron.disabled')
+  assert.equal(key('normal'), 'ui.button.iron')
+  assert.equal(key('hover'), 'ui.button.iron.hover')
+})
+
+test('iron disabled consumes its derived material without double tint and resets pooled tint', () => {
+  const states: string[] = []
+  const bitmap = (node: Node, state: string): boolean => {
+    states.push(state); node.getComponent(Sprite) ?? node.addComponent(Sprite); return true
+  }
   const style = exportsFor('DialogStyle', { ...tokens, PANEL_IRON_INSET, applyIronButton: bitmap, applyCommandButton: bitmap })
   const paint = style.applyDialogButton as (node: Node, enabled: boolean, width: number, height: number) => void
-  const button = new Node('Button');button.addComponent(UITransform);button.addComponent(Graphics)
-  paint(button, true, 108, 34);const normal = child(button, 'DialogButtonArt').getComponent(Sprite)!.color.values[0]!
-  paint(button, false, 108, 34);assert.ok(child(button, 'DialogButtonArt').getComponent(Sprite)!.color.values[0]! < normal)
-  paint(button, true, 108, 34);assert.equal(child(button, 'DialogButtonArt').getComponent(Sprite)!.color.values[0], normal)
+  const button = new Node('Button'); button.addComponent(UITransform); button.addComponent(Graphics)
+  paint(button, true, 108, 34)
+  child(button, 'DialogButtonArt').getComponent(Sprite)!.color = new Color(104, 96, 88, 255)
+  paint(button, false, 108, 34)
+  assert.deepEqual(child(button, 'DialogButtonArt').getComponent(Sprite)!.color.values, [255, 255, 255, 255])
+  paint(button, true, 108, 34)
+  assert.deepEqual(child(button, 'DialogButtonArt').getComponent(Sprite)!.color.values, [255, 255, 255, 255])
+  assert.deepEqual(states, ['normal', 'disabled', 'normal'])
 })
 
 
@@ -248,4 +263,46 @@ test('共用卡片材质加载失败和恢复切换不残留底画，复用节�
     loaded = false;paint(host, 'ui.panel.gilt', 680, 184, 'CardSurface')
     assert.equal(host.children.length,count);assert.ok(host.active)
   }
+})
+
+
+test('stamina render selects disabled and normal iron materials while retaining disabled caption', () => {
+  const states: string[] = []
+  let loaded = true
+  const mod = exportsFor('StaminaDetailOverlay', { DIALOG_SCRIM: {}, applyIronButton: (node: Node, state: string) => { states.push(state); node.getComponent(Sprite)!.enabled = loaded; return loaded } })
+  const cls = mod.StaminaDetailOverlay as { prototype: { render: (data: unknown) => void } }
+  const button = new Node('BuyButton'); const sprite = button.addComponent(Sprite)
+  const label = () => ({ string: '', color: new Color() })
+  const owner = { node: new Node('StaminaDetail'), titleLabel: label(), recoverLabel: label(), nextLabel: label(), boughtLabel: label(), noteLabel: label(), buyCaption: label(), buySprite: sprite, buyBackground: null as Graphics | null, layoutDialog: () => {} }
+  cls.prototype.render.call(owner, { buyEnabled: false, buyLabel: '今日已达上限' })
+  assert.deepEqual(states, ['disabled'])
+  assert.deepEqual(sprite.color.values, [255, 255, 255, 255])
+  assert.deepEqual(owner.buyCaption.color.values, [70, 62, 52, 255])
+  cls.prototype.render.call(owner, { buyEnabled: true, buyLabel: '购买' })
+  assert.deepEqual(states, ['disabled', 'normal'])
+  loaded = false
+  cls.prototype.render.call(owner, { buyEnabled: false, buyLabel: '今日已达上限' })
+  assert.equal(owner.buyBackground?.painted, true, 'missing state frame must paint the vector fallback')
+  assert.equal(owner.buyBackground?.enabled, true)
+  loaded = true
+  cls.prototype.render.call(owner, { buyEnabled: false, buyLabel: '今日已达上限' })
+  assert.equal(sprite.enabled, true)
+  assert.equal(owner.buyBackground?.enabled, false, 'frame recovery must hide the vector fallback')
+})
+
+
+test('stamina constructor with missing art keeps exactly one visible disabled fallback', () => {
+  const style = exportsFor('DialogStyle', { ...tokens, PANEL_IRON_INSET, applyIronButton: () => false, applyCommandButton: () => false })
+  const mod = exportsFor('StaminaDetailOverlay', { DIALOG_SCRIM: new Color(), PANEL_IRON_INSET,
+    applyDialogButton: style.applyDialogButton, fitExistingDialog: () => () => {}, applySystemUiFont: (label: Label) => label,
+    applyIronButton: () => false, applySlicedSprite: () => false })
+  const Overlay = mod.StaminaDetailOverlay as new (parent: Node) => { node: Node; render: (data: unknown) => void }
+  const owner = new Overlay(new Node('Canvas'))
+  owner.render({ buyEnabled: false, buyLabel: '今日已达上限' })
+  const buy = child(child(owner.node, 'Panel'), 'BuyButton')
+  const visibleGraphics = (node: Node): Graphics[] => {
+    const graphic = node.getComponent(Graphics)
+    return [...(node.active && graphic?.enabled && graphic.painted ? [graphic] : []), ...node.children.filter(n => n.active).flatMap(visibleGraphics)]
+  }
+  assert.equal(visibleGraphics(buy).length, 1, 'one renderer must own the disabled fallback')
 })
