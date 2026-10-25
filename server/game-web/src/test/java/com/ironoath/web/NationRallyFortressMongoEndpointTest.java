@@ -100,8 +100,9 @@ class NationRallyFortressMongoEndpointTest {
 
     @TestConfiguration(proxyBeanMethods=false)
     static class DeterministicSeed {
+        static volatile long seed=2384L;
         @Bean @org.springframework.context.annotation.Primary
-        com.ironoath.web.reward.ServerSeedSource fortressBattleSeed(){return ()->2384L;}
+        com.ironoath.web.reward.ServerSeedSource fortressBattleSeed(){return ()->seed;}
     }
 
     @DynamicPropertySource
@@ -153,6 +154,8 @@ class NationRallyFortressMongoEndpointTest {
     @Autowired private NationPolicyBonuses policy;
     @Autowired private TechEffects techEffects;
     @Autowired private NationRulesAssembler nationRules;
+    @Autowired private com.ironoath.web.service.WarCapitalTargetResolver capitalTargets;
+    @Autowired private com.ironoath.web.world.StrategicTargetDefender strategicDefenders;
     @SpyBean private StrategicTargetCircleGuard circleGuard;
     private int sequence;
 
@@ -161,6 +164,7 @@ class NationRallyFortressMongoEndpointTest {
         mongoTemplate.getDb().getCollection("__owned_run").insertOne(new Document("_id",OWNER));
         MongoIndexes.ensure(mongoTemplate);
         sequence=0;
+        DeterministicSeed.seed=2384L;
     }
 
     @Test
@@ -573,9 +577,132 @@ class NationRallyFortressMongoEndpointTest {
         }
     }
 
+    @Test
+    @DirtiesContext(methodMode=DirtiesContext.MethodMode.AFTER_METHOD)
+    void dynamicCapitalPlayerGarrisonDefenderVictoryKeepsMongoOwnerAndWarEvent() throws Exception {
+        Path globalPath=locateConfigDir().resolve("global.json");String originalGlobal=Files.readString(globalPath);
+        long warNow=System.currentTimeMillis();long openSeason=DayKey.startOfDayPlusDays(warNow,-30L);
+        configs.reload("global",GlobalCfg.class,withSeasonStart(originalGlobal,openSeason));
+        try {
+            var staticCapital=WorldTargets.from(configs).targets().stream()
+                    .filter(target->target.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.CAPITAL)
+                    .findFirst().orElseThrow();
+            var defender=createNation(4,staticCapital.coord().x(),staticCapital.coord().y());
+            var attacker=createNation(4);
+            giveTroops(defender.king(),"unit_cavalry_t4",800_000L);
+            giveTroops(defender.members().get(0),"unit_cavalry_t4",800_000L);
+            String occupationRallyId=post200("/rally/nation",defender.king(),new NationRallyReq(newRequestId(),
+                    new SocialCoord(staticCapital.coord().x(),staticCapital.coord().y()),
+                    SocialTargetType.STRATEGIC_TARGET,4,10,
+                    List.of(new RallyTroop("unit_cavalry_t4",400_000L)),List.of()))
+                    .get("rally").get("rallyId").asText();
+            post200("/rally/join",defender.members().get(0),new RallyJoinReq(newRequestId(),occupationRallyId,
+                    List.of(new RallyTroop("unit_cavalry_t4",400_000L)),List.of()));
+            var occupationRally=socialStore.rallyOf(occupationRallyId).orElseThrow();
+            marchApp.processDue(defender.king(),occupationRally.prepareUntil()+1L);
+            String garrisonMarchId="march_rally_"+occupationRallyId;
+            var occupationMarch=marchRepository.findById(garrisonMarchId).orElseThrow().snapshot();
+            marchApp.processDue(defender.king(),occupationMarch.arriveAt());
+            var occupationCombat=targetOperations.findByTargetId("capital_center").orElseThrow();
+            assertThat(occupationCombat.combatPlan().battle().result().winner())
+                    .isEqualTo(com.ironoath.battle.Winner.ATTACKER);
+            recovery.recoverPending();
+            var capitalBefore=new MongoTargetOccupationStore(mongoTemplate)
+                    .findByTargetIds(List.of("capital_center")).get("capital_center");
+            assertThat(capitalBefore.nationId()).isEqualTo(defender.nationId());
+            assertThat(capitalBefore.garrison()).isEqualTo(TargetOccupationStore.Garrison.stationed(garrisonMarchId));
+            assertThat(marchRepository.findById(garrisonMarchId).orElseThrow().status()).isEqualTo(March.Status.STATIONED);
+            int defenderReportsBefore=battleReports.reportsOf(defender.king()).size();
+
+            var warRules=new WarRulesAssembler(configs);
+            post200("/nation/war/declare",attacker.king(),new WarDeclareReq(newRequestId(),defender.nationId()));
+            long warStartedAt=wars.findLatest().orElseThrow().startedAt();
+            var war=wars.findByStartedAt(warStartedAt).orElseThrow();
+            var gates=WorldTargets.from(configs).targets().stream()
+                    .filter(target->target.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.GATE)
+                    .sorted(java.util.Comparator.comparing(target->target.definition().id())).toList();
+            assertThat(gates).hasSize(warRules.rules().gateCount());
+            for(var gate:gates)war.captureGate(attacker.nationId(),gate.definition().id());
+            war.beginSiege(Math.max(warNow,war.startedAt())+1L);
+            wars.save(war);
+            var persistedWar=new com.ironoath.web.store.mongo.MongoWarStore(mongoTemplate,warRules)
+                    .findByStartedAt(warStartedAt).orElseThrow();
+            assertThat(persistedWar.targetNationId()).isEqualTo(defender.nationId());
+            var capitalDirectory=capitalTargets.resolve(configs).targets();
+            var resolvedCapital=capitalDirectory.at(staticCapital.coord());
+            assertThat(resolvedCapital).isNotNull();
+            var currentDefender=strategicDefenders.read(resolvedCapital);
+            assertThat(currentDefender.march()).as("War target lookup must still resolve the preexisting player garrison")
+                    .isNotNull();
+            assertThat(currentDefender.march().id()).isEqualTo(garrisonMarchId);
+
+            attacker.members().forEach(player->giveTroops(player,"unit_cavalry_t4",1_000_000L));
+            giveTroops(attacker.king(),"unit_cavalry_t4",1_000_000L);
+            DeterministicSeed.seed=2380L;
+            org.mockito.Mockito.clearInvocations(circleGuard);
+            String defenseRallyId=post200("/rally/nation",attacker.king(),new NationRallyReq(newRequestId(),
+                    new SocialCoord(staticCapital.coord().x(),staticCapital.coord().y()),
+                    SocialTargetType.STRATEGIC_TARGET,4,10,
+                    List.of(new RallyTroop("unit_cavalry_t4",1_000L)),List.of()))
+                    .get("rally").get("rallyId").asText();
+            org.mockito.Mockito.verify(circleGuard).guardRallyStart(ArgumentMatchers.eq(attacker.king()),
+                    ArgumentMatchers.eq(staticCapital.coord()),ArgumentMatchers.eq(4));
+            post200("/rally/join",attacker.members().get(0),new RallyJoinReq(newRequestId(),defenseRallyId,
+                    List.of(new RallyTroop("unit_cavalry_t4",1_000L)),List.of()));
+            var defenseRally=socialStore.rallyOf(defenseRallyId).orElseThrow();
+            marchApp.processDue(attacker.king(),defenseRally.prepareUntil()+1L);
+            String attackMarchId="march_rally_"+defenseRallyId;
+            var attackMarch=marchRepository.findById(attackMarchId).orElseThrow().snapshot();
+            marchApp.processDue(attacker.king(),Math.max(attackMarch.arriveAt(),occupationMarch.arriveAt()));
+            org.mockito.Mockito.verify(circleGuard).guardArrival(ArgumentMatchers.anyLong(),
+                    ArgumentMatchers.any(),ArgumentMatchers.eq(2));
+
+            var pending=targetOperations.findByTargetId("capital_center").orElseThrow();
+            assertThat(pending.combatPlan().battle().target().defender().march())
+                    .as("dynamic CAPITAL target must read its persisted player garrison, not the initial NPC roster")
+                    .isNotNull();
+            assertThat(pending.combatPlan().battle().target().defender().initialNpc()).isFalse();
+            assertThat(pending.combatPlan().battle().target().defender().march().id()).isEqualTo(garrisonMarchId);
+            assertThat(pending.combatPlan().battle().result().winner())
+                    .as("an existing player capital garrison must be able to win the same CAPITAL SIEGE")
+                    .isEqualTo(com.ironoath.battle.Winner.DEFENDER);
+            recovery.recoverPending();
+
+            var completed=new com.ironoath.web.store.mongo.MongoTargetOperationStore(mongoTemplate)
+                    .findByTargetId("capital_center").orElseThrow();
+            assertThat(completed.completed()).isTrue();
+            var ownerAfter=new MongoTargetOccupationStore(mongoTemplate)
+                    .findByTargetIds(List.of("capital_center")).get("capital_center");
+            assertThat(ownerAfter.nationId()).isEqualTo(capitalBefore.nationId());
+            assertThat(ownerAfter.garrison()).isEqualTo(capitalBefore.garrison());
+            assertThat(ownerAfter.capturedAt()).isEqualTo(capitalBefore.capturedAt());
+            assertThat(marchRepository.findById(garrisonMarchId).orElseThrow().status()).isEqualTo(March.Status.STATIONED);
+            var attackPlan=completed.combatPlan().marchRecovery().attacker();
+            assertThat(attackPlan.disposition()).isIn(
+                    com.ironoath.web.battle.StrategicBattleMarchOutcome.Disposition.RETURN,
+                    com.ironoath.web.battle.StrategicBattleMarchOutcome.Disposition.ANNIHILATED);
+            var recoveredWar=new com.ironoath.web.store.mongo.MongoWarStore(mongoTemplate,warRules)
+                    .findByStartedAt(warStartedAt).orElseThrow();
+            assertThat(recoveredWar.phase()).isEqualTo(WarScoreBoard.Phase.SIEGE);
+            assertThat(recoveredWar.capitalHolder()).isNull();
+            assertThat(recoveredWar.battleEvent("capital_center"))
+                    .isEqualTo(completed.combatPlan().warRecovery().event());
+            assertThat(recoveredWar.hasPendingBattleReservations()).isFalse();
+            assertThat(battleReports.reportsOf(attacker.king())).hasSize(1);
+            assertThat(battleReports.reportsOf(defender.king())).hasSize(defenderReportsBefore+1);
+        } finally {
+            DeterministicSeed.seed=2384L;
+            configs.reload("global",GlobalCfg.class,originalGlobal);
+        }
+    }
+
     private record NationFixture(String king,List<String> members,String nationId,String allianceId) {}
 
     private NationFixture createNation(int members) throws Exception {
+        return createNation(members,100L,200L);
+    }
+
+    private NationFixture createNation(int members,long capitalX,long capitalY) throws Exception {
         String king=newPlayer(16);sequence++;
         String allianceId=post200("/alliance/create",king,new AllianceCreateReq(newRequestId(),
                 "Mongo集结盟"+sequence,String.format("M%03d",sequence%1000))).get("alliance").get("id").asText();
@@ -587,7 +714,7 @@ class NationRallyFortressMongoEndpointTest {
             players.add(member);
         }
         String nationId=post200("/nation/found",king,new NationFoundReq(newRequestId(),"Mongo集结国"+sequence,
-                100L,200L)).get("nation").get("nationId").asText();
+                capitalX,capitalY)).get("nation").get("nationId").asText();
         return new NationFixture(king,List.copyOf(players),nationId,allianceId);
     }
 
