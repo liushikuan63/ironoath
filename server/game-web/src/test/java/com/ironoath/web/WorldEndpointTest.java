@@ -244,6 +244,25 @@ class WorldEndpointTest {
                 && entity.x() == 256 && entity.y() == 256);
     }
 
+    @Test
+    @DisplayName("War迁都后八要塞地形仍按目标国新都城主轴重新分类")
+    void fortressTerrainReclassifiesAgainstMovedWarCapital() {
+        var configured=com.ironoath.web.service.WorldTargets.from(configs);
+        var before=configured.targets().stream()
+                .filter(target->target.definition().id().equals("fortress_ne_2")).findFirst().orElseThrow();
+        assertThat(before.battleTerrain()).isEqualTo(com.ironoath.battle.TerrainType.FOREST);
+
+        var moved=configured.withCapitalCoord(Coord.of(300,300));
+        var capital=moved.targets().stream()
+                .filter(target->target.definition().id().equals("capital_center")).findFirst().orElseThrow();
+        var fortress=moved.targets().stream()
+                .filter(target->target.definition().id().equals("fortress_ne_2")).findFirst().orElseThrow();
+
+        assertThat(capital.battleTerrain()).isEqualTo(com.ironoath.battle.TerrainType.CITY_WALL);
+        assertThat(fortress.battleTerrain()).as("目标国都城移位后，主轴改为南北，不能保留旧配置坐标算出的森林")
+                .isEqualTo(com.ironoath.battle.TerrainType.MOUNTAIN);
+    }
+
     @Test void strategicTargetViewportLabelsMatchTheSelectedDirectionalTerrainRule() {
         String playerId=newPlayer();
         var expected=java.util.Map.ofEntries(
