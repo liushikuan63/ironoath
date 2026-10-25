@@ -8302,3 +8302,6 @@ TEST_EXIT=0
 
 
 | #2461 宣战触发旧War结算也要投递终局奖分 | 有效RED已建；与#2459共用结算award恢复设计 | 旧War未读过时，宣战会先调用`settleIfExpired`再开启新战，现实现忽略返回的Result；扩展宣战端点回归要求旧战的WAR奖励至少触发一次，实际reportWarSeasonPoints零交互，1/1/0/0。此处与#2459面板结算后的失败重试同属所有settleIfExpired调用点必须经统一可恢复outbox；本格未改生产代码 | D:/tmp/ironoath-b13-war-season-award-declare-red-20261025.log、WarAppService.declare及WarEndpointTest | 未做：统一SETTLED result/award plan、membership-segment金额规则、季节ID持久来源、逐人幂等回执；现有#2459策略答案已知时段分段，但固定bonus按区间如何分仍待裁，不发明数值。|
+
+
+| #2462 宣战结算入口须交付旧战赛季分 | 本格有效RED+覆盖面扩展；无生产实现 | 在过期未读旧War直接POST宣战的现有端到端测试中，旧战SETTLED并成功开新战后，应调用一次RankBoardService.reportWarSeasonPoints；现有WarAppService.declare丢弃Settlement，实际0调用，1/1/0/0。它与#2459面板后重试RED共同覆盖两条settleIfExpired生产入口；统一处理仍须有持久可恢复计划 | D:/tmp/ironoath-b13-war-season-award-declare-red-20261025.log；WarEndpointTest.declaringSettlesTheExpiredWarWithoutAPanelRead | 未做：持久奖分计划与幂等逐人落榜，季节/成员分段金额规则；不改生产逻辑或奖分数字，当前分支保留RED。|
