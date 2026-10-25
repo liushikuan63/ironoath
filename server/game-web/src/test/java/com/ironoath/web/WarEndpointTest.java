@@ -1,6 +1,11 @@
 package com.ironoath.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doCallRealMethod;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -19,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -59,6 +65,7 @@ import com.ironoath.web.nation.NationRulesAssembler;
 import com.ironoath.web.nation.NationStore;
 import com.ironoath.web.nation.WarRulesAssembler;
 import com.ironoath.web.nation.WarStore;
+import com.ironoath.web.rank.RankBoardService;
 import com.ironoath.web.rank.RankBoardService;
 import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.social.SocialStore;
@@ -102,6 +109,7 @@ class WarEndpointTest {
     @Autowired private NationRulesAssembler nationRules;
     @Autowired private TimeService timeService;
     @Autowired private ConfigRegistry configs;
+    @SpyBean private RankBoardService rankBoards;
     @Autowired private RankBoardService ranks;
     /** 所有战斗的唯一漏斗（打野/关卡/攻城/拦截都汇到这里）—— 击杀归属就挂在这一句上，所以要真的走它。 */
     @Autowired private com.ironoath.web.battle.BattleReportService battleReports;
@@ -787,6 +795,30 @@ class WarEndpointTest {
         assertThat(wars.findLatest().orElseThrow().phase())
                 .as("结算是落盘的，不是只改了这一次读手里的副本 —— 后者会让下一次读看到一场还在打的仗")
                 .isEqualTo(WarScoreBoard.Phase.SETTLED);
+    }
+
+    @Test
+    @DisplayName("国战已落SETTLED但赛季分写入失败后，下次面板读应恢复同一结算奖励")
+    void settledWarRetriesFailedSeasonAwardFromDurableState() throws Exception {
+        String playerId=newPlayer();
+        nations.insertIfAbsent(nation("n_award_live","奖分进攻国"));
+        nations.insertIfAbsent(nation("n_award_target","奖分防守国"));
+        long now=timeService.serverNow();long startedAt=now-2*HOUR;
+        var board=new WarScoreBoard(warRules.rules(),startedAt,"n_award_live",now+MINUTE);
+        board.registerNation("n_award_live");board.registerNation("n_award_target");
+        for(int gate=1;gate<=board.rules().gateCount();gate++)board.captureGate("n_award_live","gate_"+gate);
+        board.beginSiege(startedAt);board.captureCapital("n_award_live",startedAt);
+        assertThat(wars.insertIfNoneActive(board)).isTrue();
+        doThrow(new IllegalStateException("simulated WAR season-board write failure"))
+                .doCallRealMethod().when(rankBoards).reportWarSeasonPoints(any(WarScoreBoard.class),any(WarScoreBoard.Result.class));
+
+        mockMvc.perform(get("/nation/war").header(PLAYER_HEADER,playerId))
+                .andExpect(status().is5xxServerError());
+        assertThat(wars.findLatest().orElseThrow().phase()).isEqualTo(WarScoreBoard.Phase.SETTLED);
+        mockMvc.perform(get("/nation/war").header(PLAYER_HEADER,playerId))
+                .andExpect(status().isOk());
+
+        verify(rankBoards,times(2)).reportWarSeasonPoints(any(WarScoreBoard.class),any(WarScoreBoard.Result.class));
     }
 
     /**
