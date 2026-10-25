@@ -59,6 +59,9 @@ public interface WarStore {
     void captureGateForBattle(WarScoreBoard.BattleReservation reservation,String winnerNationId,
             String expectedPreviousNationId);
 
+    /** Apply the capital occupation frozen by an attacker-winning CAPITAL COMBAT in the same War snapshot. */
+    void captureCapitalForBattle(WarScoreBoard.BattleReservation reservation,String winnerNationId);
+
     /** Shared domain transition used by memory and Mongo stores; ownership itself is the replay receipt. */
     static boolean applyGateCaptureForBattle(WarScoreBoard board,WarScoreBoard.BattleReservation reservation,
             String winnerNationId,String expectedPreviousNationId) {
@@ -95,6 +98,32 @@ public interface WarStore {
         if(board.phase()==WarScoreBoard.Phase.PREPARATION && board.isQualified(winnerNationId))
             board.beginSiege(reservation.happenedAt());
         return true;
+    }
+
+    /** The exact WarEvent and still-pending reservation authorize one idempotent capital occupation transition. */
+    static boolean applyCapitalCaptureForBattle(WarScoreBoard board,WarScoreBoard.BattleReservation reservation,
+            String winnerNationId) {
+        Objects.requireNonNull(board,"原War板不得为空");Objects.requireNonNull(reservation,"原COMBAT War reservation不得为空");
+        if(winnerNationId==null || winnerNationId.isBlank())throw new IllegalArgumentException("王城攻方国家缺失");
+        if(board.startedAt()!=reservation.warStartedAt())throw new IllegalStateException("War王城捕获与原战事startedAt不一致");
+        var pending=board.pendingBattleReservation(reservation.operationId());
+        var event=board.battleEvent(reservation.sourceId());
+        boolean completedReplay=event!=null && event.sourceId().equals(reservation.sourceId())
+                && event.sequence()==reservation.sequence() && event.operationId().equals(reservation.operationId())
+                && event.warStartedAt()==reservation.warStartedAt() && event.happenedAt()==reservation.happenedAt()
+                && event.rates().equals(reservation.rates());
+        if(pending.isPresent() && !pending.get().equals(reservation))
+            throw new IllegalStateException("COMBAT War王城预留与原冻结身份不一致");
+        if(!completedReplay)throw new IllegalStateException("War王城捕获须先有精确WarEvent回执");
+        if(pending.isEmpty()) {
+            if(winnerNationId.equals(board.capitalHolder()))return false;
+            throw new IllegalStateException("War闭战reservation已释放，但COMBAT王城归属回执不完整");
+        }
+        if(board.phase()!=WarScoreBoard.Phase.SIEGE)
+            throw new IllegalStateException("王城COMBAT捕获要求War仍处于SIEGE，实际="+board.phase());
+        var before=board.toSnapshot();
+        board.captureCapital(winnerNationId,reservation.happenedAt());
+        return !before.equals(board.toSnapshot());
     }
 
     /** 在同一War快照冻结原战事、系数与成员参战资格；无适用活跃战事时返回empty。 */

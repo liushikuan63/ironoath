@@ -333,6 +333,34 @@ class StrategicCombatPendingLockRecoveryTest {
                 recovered.slot().operationId())).isEmpty();
     }
 
+    @Test void attackerWinningCapitalCombatRecoveryRegistersTheCapitalHolder() {
+        var configs=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
+        var nationRules=new NationRulesAssembler(configs);var warRules=new WarRulesAssembler(configs);
+        var nations=new com.ironoath.web.store.memory.InMemoryNationStore(nationRules);
+        var target=Nation.found("owned-capital-defender","Capital Defender","capital-defender-king",
+                "capital-defender-alliance",300,300,100,nationRules.rules());
+        assertThat(nations.insertIfAbsent(target)).isTrue();
+        var wars=new InMemoryWarStore(warRules);
+        var board=new WarScoreBoard(warRules.rules(),100,"owned-N",target.id(),10_000L);
+        board.registerNation("owned-N");board.registerNation(target.id());
+        for(String gate:List.of("gate_north","gate_east","gate_south","gate_west"))board.captureGate("owned-N",gate);
+        board.beginSiege(150);
+        assertThat(wars.insertIfNoneActive(board)).isTrue();
+        var directory=new com.ironoath.web.service.WarCapitalTargetResolver(nations,wars,
+                mock(com.ironoath.core.world.WorldRepository.class));
+        // Test-only force count ensures a deterministic attacker win; this is not a gameplay troop-value proposal.
+        var battle=StrategicCombatSlotTest.dynamicCapitalBattle(3921,com.ironoath.core.world.Coord.of(300,300),
+                directory,1_000_000L);
+        assertThat(battle.target().kind()).isEqualTo(com.ironoath.core.world.WorldGenerator.EntityType.CAPITAL);
+        assertThat(battle.result().winner()).isEqualTo(com.ironoath.battle.Winner.ATTACKER);
+
+        var recovered=recoverWholeOperation(battle);
+
+        var settledWar=recovered.wars().findByStartedAt(battle.happenedAt()-10).orElseThrow();
+        assertThat(settledWar.capitalHolder()).isEqualTo(battle.attacker().rally().nationId());
+        assertThat(recovered.slot().completed()).isTrue();
+    }
+
     private record WholeRecovery(TargetOperationStore.Snapshot slot,InMemoryTargetOccupationStore owners,
             InMemoryNeutralTargetGarrisonStore neutral,InMemoryMarchStore marches,InMemoryBattleReportStore reports,
             InMemoryWarStore wars,InMemorySeasonBoardStore rankBoards,SortedMarchDueQueue due) {}
@@ -388,6 +416,10 @@ class StrategicCombatPendingLockRecoveryTest {
         if(battle.target().kind()==com.ironoath.core.world.WorldGenerator.EntityType.GATE
                 && battle.target().defender().occupation()!=null)
             war.captureGate(battle.target().defender().occupation().nationId(),battle.target().targetId());
+        if(battle.target().kind()==com.ironoath.core.world.WorldGenerator.EntityType.CAPITAL) {
+            for(int i=1;i<=warRules.rules().gateCount();i++)war.captureGate(battle.attacker().rally().nationId(),"fixture-gate-"+i);
+            war.beginSiege(battle.happenedAt()-5);
+        }
         assertThat(wars.insertIfNoneActive(war)).isTrue();var members=new ArrayList<WarScoreBoard.BattleMember>();
         addMembers(members,battle.attacker(),battle.result().atkKillsByMember());
         if(battle.defender()!=null)addMembers(members,battle.defender(),battle.result().defKillsByMember());

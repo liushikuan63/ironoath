@@ -1,6 +1,7 @@
 package com.ironoath.web.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -894,6 +895,67 @@ class WarStoreEquivalenceTest {
             assertThat(next.toSnapshot().nations().stream().filter(row->row.nationId().equals("n1"))
                     .findFirst().orElseThrow().score().buildingScore()).isEqualTo(score);
         }
+    }
+
+    @Test
+    @DisplayName("攻击方胜利的王城COMBAT在内存与Mongo同一War快照记入持有时点且可精确重放")
+    void combatCapitalCapturePersistsAndReplaysOnBothStores() {
+        for(WarStore store:bothStores()) {
+            var board=siegePair(T0,"n1","n2");
+            assertThat(store.insertIfNoneActive(board)).isTrue();
+            long happenedAt=T0+MINUTE+123L;
+            var reservation=store.reserveBattle("capital_center",1,"battle-capital-capture",happenedAt,
+                    List.of(new WarScoreBoard.BattleMember("P1","n1",7L))).orElseThrow();
+            var event=store.findByStartedAt(T0).orElseThrow()
+                    .freezeReservedBattleEvent(reservation.operationId(),java.util.Map.of("P1",0L));
+            assertThat(store.recordBattleEvent(event)).isEqualTo(event);
+            long priorBuildingScore=store.findByStartedAt(T0).orElseThrow().toSnapshot().nations().stream()
+                    .filter(row->row.nationId().equals("n1")).findFirst().orElseThrow().score().buildingScore();
+
+            store.captureCapitalForBattle(reservation,"n1");
+            var captured=store.findByStartedAt(T0).orElseThrow();
+            assertThat(captured.phase()).isEqualTo(WarScoreBoard.Phase.SIEGE);
+            assertThat(captured.capitalHolder()).isEqualTo("n1");
+            assertThat(captured.toSnapshot().capitalHeldSince()).isEqualTo(happenedAt);
+            assertThat(captured.toSnapshot().nations().stream().filter(row->row.nationId().equals("n1"))
+                    .findFirst().orElseThrow().score().buildingScore())
+                    .isEqualTo(priorBuildingScore+rules.rules().buildingScorePerCapture());
+
+            store.captureCapitalForBattle(reservation,"n1");
+            assertThat(store.findByStartedAt(T0).orElseThrow().toSnapshot()).isEqualTo(captured.toSnapshot());
+            assertThat(store.completeBattleOperation(T0,reservation.operationId())).isTrue();
+            var released=store.findByStartedAt(T0).orElseThrow();
+            store.captureCapitalForBattle(reservation,"n1");
+            assertThat(store.findByStartedAt(T0).orElseThrow().toSnapshot()).isEqualTo(released.toSnapshot());
+        }
+    }
+
+    @Test
+    @DisplayName("Mongo王城归属更新回执丢失：用精确War快照读回确认且不重复累计")
+    void mongoCapitalCaptureAcknowledgementLossIsRecovered() {
+        MongoWarStore first=newMongoStore();
+        assertThat(first.insertIfNoneActive(siegePair(T0,"n1","n2"))).isTrue();
+        long happenedAt=T0+MINUTE+123L;
+        var reservation=first.reserveBattle("capital_center",1,"battle-capital-lost-ack",happenedAt,
+                List.of(new WarScoreBoard.BattleMember("P1","n1",7L))).orElseThrow();
+        var event=first.findByStartedAt(T0).orElseThrow()
+                .freezeReservedBattleEvent(reservation.operationId(),java.util.Map.of("P1",0L));
+        assertThat(first.recordBattleEvent(event)).isEqualTo(event);
+        MongoTemplate lostAck=spy(db.template());AtomicBoolean failOnce=new AtomicBoolean(true);
+        doAnswer(invocation->{Object result=invocation.callRealMethod();
+            if(failOnce.compareAndSet(true,false))throw new IllegalStateException("simulated capital ack loss");
+            return result;
+        }).when(lostAck).updateFirst(any(Query.class),any(UpdateDefinition.class),
+                eq(WarDocument.class),eq(WarDocument.COLLECTION));
+
+        assertThatCode(()->new MongoWarStore(lostAck,rules).captureCapitalForBattle(reservation,"n1"))
+                .doesNotThrowAnyException();
+
+        var readBack=first.findByStartedAt(T0).orElseThrow();
+        assertThat(readBack.capitalHolder()).isEqualTo("n1");
+        assertThat(readBack.toSnapshot().capitalHeldSince()).isEqualTo(happenedAt);
+        assertThat(readBack.pendingBattleReservation(reservation.operationId())).contains(reservation);
+        assertThat(first.completeBattleOperation(T0,reservation.operationId())).isTrue();
     }
 
     @Test
