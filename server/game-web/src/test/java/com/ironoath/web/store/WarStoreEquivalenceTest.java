@@ -959,6 +959,25 @@ class WarStoreEquivalenceTest {
     }
 
     @Test
+    @DisplayName("结算胜者在内存与Mongo上都跟随最终王城持有国，不跟随更高总分")
+    void capitalHolderWinsOnBothStoresDespiteLowerScore() {
+        long duration=rules.rules().durationMillis();
+        for(WarStore store:bothStores()) {
+            var board=siegePair(T0,"n1","n2");
+            for(int i=1;i<=board.rules().gateCount();i++)board.captureGate("n2","gate_"+i);
+            board.recordKill("n1",10_000L);
+            board.captureCapital("n2",T0+duration-1L);
+            assertThat(store.insertIfNoneActive(board)).isTrue();
+
+            var settlement=store.settleIfExpired(T0+duration).orElseThrow();
+
+            assertThat(settlement.result().scores().get("n1").total())
+                    .isGreaterThan(settlement.result().scores().get("n2").total());
+            assertThat(settlement.result().winnerId()).isEqualTo("n2");
+        }
+    }
+
+    @Test
     @DisplayName("COMBAT首次攻占空关卡也能准确记分并在最后一关进入Siege")
     void combatCapturesUnownedFinalGateOnBothStores() {
         for(WarStore store:bothStores()) {

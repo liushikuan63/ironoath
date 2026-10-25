@@ -623,7 +623,7 @@ class RankEndpointTest {
     @Test
     @DisplayName("3b-2 平分时不发胜方分：winnerId=null 原样继承，只发参与分与发起加成")
     void tiedWarPaysNoWinnerBonus() throws Exception {
-        War war = warWithTwoNations(40L, 40L);   // 两边同分 ⇒ 内核刻意不挑赢家
+        War war = warWithTwoNations(40L, 40L, false);   // 两边同分且无人持王城 ⇒ 没有胜者
         assertThat(war.outcome().winnerId())
                 .as("夹具前提：这一场真的打平了，否则下面那句断言什么都没测到").isNull();
         ConfigRegistry anchored = anchoredWithBonuses(7L, 5L, 3L);
@@ -774,6 +774,10 @@ class RankEndpointTest {
     }
 
     private War warWithTwoNations(long attackerKills, long defenderKills) throws Exception {
+        return warWithTwoNations(attackerKills,defenderKills,true);
+    }
+
+    private War warWithTwoNations(long attackerKills,long defenderKills,boolean defenderHoldsCapital) throws Exception {
         String attackerLeader = newPlayer(16);
         String attackerMate = newPlayer(16);
         String attackerAlliance = createAlliance(attackerLeader, attackerMate);
@@ -793,6 +797,7 @@ class RankEndpointTest {
         board.registerNation(attackerNation);
         board.registerNation(defenderNation);
         startBalancedSiege(board, attackerNation, defenderNation, timeService.serverNow());
+        if(defenderHoldsCapital)board.captureCapital(defenderNation,timeService.serverNow());
         board.recordKill(attackerNation, attackerLeader, attackerKills);
         board.recordKill(defenderNation, defenderLeader, defenderKills);
         return new War(board, board.settle(timeService.serverNow()),

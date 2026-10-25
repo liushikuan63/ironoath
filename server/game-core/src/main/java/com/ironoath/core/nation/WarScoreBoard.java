@@ -475,7 +475,7 @@ public final class WarScoreBoard {
         return playerId != null && goalClaimed.contains(playerId);
     }
 
-    /** 结束国战并结算（验收 6）。 */
+    /** 结束国战并结算（验收 6）：最终王城持有国获胜；无人持有时没有胜者，积分仍作为独立战绩。 */
     public Result settle(long now) {
         if(hasPendingBattleReservations())throw new IllegalStateException("仍有原COMBAT事件待恢复，不能结算围城战事");
         if (phase == Phase.SETTLED) {
@@ -488,20 +488,11 @@ public final class WarScoreBoard {
         phase = Phase.SETTLED;
 
         Map<String, Score> finalScores = new LinkedHashMap<>();
-        String winner = null;
-        long best = -1L;
+        String winner = capitalHolder;
         for (Map.Entry<String, long[]> entry : scores.entrySet()) {
             long[] parts = entry.getValue();
             Score score = new Score(parts[0], parts[1], parts[2]);
             finalScores.put(entry.getKey(), score);
-            // 平分时不给胜者：两国同分意味着谁都没有赢，
-            // 硬挑一个出来（比如按 id 字典序）会让玩家觉得结果是被系统指定的
-            if (score.total() > best) {
-                best = score.total();
-                winner = entry.getKey();
-            } else if (score.total() == best) {
-                winner = null;
-            }
         }
         return new Result(winner, finalScores, totalKills, serverGoalReached());
     }

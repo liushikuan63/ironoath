@@ -619,8 +619,8 @@ class NationSystemTest {
     }
 
     @Test
-    @DisplayName("验收6：最后一秒偷家无法翻盘 —— 守了 89 分钟的国家分数远高于偷家者")
-    void lastSecondCaptureCannotStealTheWin() {
+    @DisplayName("王城规则：结束时持有者获胜，即使另一国分数更高")
+    void capitalHolderAtEndWinsDespiteLowerScore() {
         WarScoreBoard board = newWar(0L);
         captureAllGates(board, "n1");
         board.beginSiege(0L);
@@ -636,8 +636,23 @@ class NationSystemTest {
         long n2Occupy = result.scores().get("n2").occupyScore();
         assertThat(n1Occupy).as("n1 守了 89 分钟").isEqualTo(89 * 10L);
         assertThat(n2Occupy).as("n2 只占了 1 分钟").isEqualTo(10L);
-        assertThat(result.winnerId()).as("偷家翻不了盘").isEqualTo("n1");
+        assertThat(result.winnerId()).as("胜负由国战结束时王城持有国决定").isEqualTo("n2");
         assertThat(n1Occupy).isGreaterThan(n2Occupy * 80L);
+    }
+
+    @Test
+    @DisplayName("没有国家持有王城到结束时，不得用总分最高国替代胜者")
+    void scoreLeaderWithoutCapitalHasNoWinner() {
+        WarScoreBoard board=newWar(0L);
+        captureAllGates(board,"n1");
+        board.beginSiege(0L);
+        board.recordKill("n1",1_000L);
+        board.recordKill("n2",1L);
+
+        WarScoreBoard.Result result=board.settle(HOUR);
+
+        assertThat(result.scores().get("n1").total()).isGreaterThan(result.scores().get("n2").total());
+        assertThat(result.winnerId()).as("胜者由终局王城持有国决定；无人持有时必须留空").isNull();
     }
 
     @Test
