@@ -8296,3 +8296,6 @@ TEST_EXIT=0
 
 
 | #2459 War结算提交后榜分写失败必须可恢复 | 有效RED已建并提交；实现等待赛季/成员快照时点裁决 | WarEndpointTest在到期War先持久SETTLED后注入首次reportWarSeasonPoints失败；第二次GET仍200但榜服务只被调用1次，期望2次，1/1/0/0。源代码审计显示SETTLED重读不再带Result，WarAppService只在settledNow调用；RankBoardService用SeasonBoardStore.accumulate，简单重放可能重复。未改生产代码/数值；需先冻结同一season与受益成员计划，再做持久可幂等补偿。用户选择结算时、开战时或成员分段待答 | D:/tmp/ironoath-b13-war-season-award-retry-red-20261025.log、D:/tmp/ironoath-b13-war-season-award-recovery-audit-20261025.log | 未做：award plan持久化、逐人CAS回执/断点恢复与Mongo故障注入；当前完整scripts/test绿读数早于这条故意保留的RED，不能据此称当前工作树全绿；B13未完成。|
+
+
+| #2460 B13 award成员分段与迁都权限裁决归档 | 用户裁决同步；尚不新增业务行为 | 已按用户答复记录War奖分受益人用现存Nation/Alliance成员历史区间，seasonId从持久War/season事实恢复、缺原值即fail closed。现行WINNER/PARTICIPANT/INITIATOR bonus是固定每成员金额，无按时长比例公式；不按天数或人数自拟分配，WarEndpoint #2459 RED继续待定该分段金额/bonus公式。迁都：King离线一周后其他官员可决策，不限定岗位/不造 quorum；任何已发起且未COMBAT的capital attack March都阻止迁都直到settled/returned。当前只确认设计文字，不能据此推断现role_permission能授权该动作；已占领王城驻军的旧坐标锚点如何随迁都处理仍待裁决 | D:/tmp/ironoath-b13-policy-reconciliation-20261025.log；B13_国家与国战.md #2460 | 未做：award plan/逐区间金额与幂等落地、迁都权限调用链/endpoint及march检查；War RED与迁都语义仍未实现，不改奖分值，不写真实玩家库。|
