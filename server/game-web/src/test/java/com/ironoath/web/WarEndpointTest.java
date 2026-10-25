@@ -867,6 +867,7 @@ class WarEndpointTest {
         assertThat(wars.insertIfAbsent(stale))
                 .as("过期那一场仍然留在原主键上（结完就查无此仗，历史与赛季榜都失去依据）")
                 .isFalse();
+        verify(rankBoards,times(1)).reportWarSeasonPoints(any(WarScoreBoard.class),any(WarScoreBoard.Result.class));
     }
 
     // ---------- 宣战冷却（切片 3a：warCooldownHours 从零消费者变成有执行点）----------
