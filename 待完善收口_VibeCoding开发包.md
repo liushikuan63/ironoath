@@ -8310,3 +8310,5 @@ TEST_EXIT=0
 
 
 | #2463 B19 GameItem 内部合同与生产fail-closed门现跑复核 | 验证/边界更新；未做渠道实付 | 当前HEAD定向`ProductionReadinessTest`11/0/0/0、`PayEndpointTest`25/0/0/0，Maven reactor BUILD SUCCESS。证明测试profile签名/订单/发货合同与prod readiness拒绝桩实现，不证明微信扣款/回调 | D:/tmp/ironoath-b19-readiness-current-head-20261025.log | 未做：正式/沙箱AppKey、session_key真实共享存储、商品注册、Android/微信沙箱实付与回调、退款/真实设备验收；不读任何密钥、不建真实订单、不写玩家库，B19仍未验收。|
+
+| #2464 动态王城国家集结HTTP到达与资本占领完整恢复 | 本格原子本地提交并FF主树；不推送 | 先将`WarCapitalTargetResolver`变为静态候选的有效mutant，真实国家集结March到达后CAPITAL COMBAT槽不存在，明确槽存在断言失败1/1/0/0；恢复resolver源码SHA `5CFD54532A80C8E615FA34FCD507B53F99DD1D64370222B52FACAC793181B3CB`与备份一致。动态坐标(100,200)的实际HTTP国家集结出发/到达识别CAPITAL、SIEGE、CITY_WALL，恢复后归属与`capitalHolder`均为攻击国、槽completed；最终定向Maven `1/0/0/0`、reactor BUILD SUCCESS | D:/tmp/ironoath-b13-dynamic-capital-http-red-20261025.log、D:/tmp/ironoath-b13-dynamic-capital-http-green-20261025.log；用例`NationRallyEndpointTest#nationalRallyArrivesAtWarTargetsDynamicCapitalAndRecoversCapitalCapture` | 未做：本格仅test profile内存存储与测试专用高兵力；没有重跑Mongo/完整Maven+client/check、没有设备或真实玩家验收；奖分持久outbox与bonus分段仍待规则回复，迁都/旧坐标驻军仍未实施，真实玩家库未写，B13 Goal未关闭。|

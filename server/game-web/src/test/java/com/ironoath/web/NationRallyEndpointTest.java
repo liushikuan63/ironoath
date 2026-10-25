@@ -1004,6 +1004,76 @@ class NationRallyEndpointTest {
 
     @Test
     @DirtiesContext(methodMode=DirtiesContext.MethodMode.AFTER_METHOD)
+    @DisplayName("动态目标国都城经国家集结HTTP到达后以CAPITAL地形发布并完整恢复王城COMBAT")
+    void nationalRallyArrivesAtWarTargetsDynamicCapitalAndRecoversCapitalCapture() throws Exception {
+        DeterministicBattleSeedTestConfig.seed=2384L;
+        Nation attacker=nation(4),defender=nation(2);
+        doNothing().when(strategicTargetCircleGuard).guardRallyStart(
+                org.mockito.ArgumentMatchers.anyString(),org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyInt());
+        doNothing().when(strategicTargetCircleGuard).guardArrival(org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyInt());
+
+        long now=System.currentTimeMillis();
+        var rules=new com.ironoath.web.nation.WarRulesAssembler(configs);
+        var war=new com.ironoath.core.nation.WarScoreBoard(rules.rules(),now,attacker.nationId,defender.nationId,
+                now+60_000L);
+        war.registerNation(attacker.nationId);war.registerNation(defender.nationId);
+        var gates=WorldTargets.from(configs).targets().stream()
+                .filter(row->row.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.GATE)
+                .sorted(java.util.Comparator.comparing(row->row.definition().id())).toList();
+        assertThat(gates).hasSize(rules.rules().gateCount());
+        for(var gate:gates)war.captureGate(attacker.nationId,gate.definition().id());
+        war.beginSiege(now);
+        assertThat(wars.insertIfNoneActive(war)).isTrue();
+        activeTestWarStartedAt=war.startedAt();
+
+        long capitalX=nationStore.findById(defender.nationId).orElseThrow().capitalX();
+        long capitalY=nationStore.findById(defender.nationId).orElseThrow().capitalY();
+        var target=WorldTargets.from(configs).targets().stream()
+                .filter(row->row.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.CAPITAL)
+                .findFirst().orElseThrow();
+        assertThat(target.coord()).isNotEqualTo(com.ironoath.core.world.Coord.of(Math.toIntExact(capitalX),
+                Math.toIntExact(capitalY)));
+
+        giveTroops(attacker.king,"unit_cavalry_t4",1_000_000L);
+        giveTroops(attacker.mates.get(0),"unit_cavalry_t4",1_000_000L);
+        String rallyId=post200("/rally/nation",attacker.king,new NationRallyReq(newRequestId(),
+                new SocialCoord(Math.toIntExact(capitalX),Math.toIntExact(capitalY)),
+                SocialTargetType.STRATEGIC_TARGET,4,10,
+                List.of(new RallyTroop("unit_cavalry_t4",500_000L)),List.of()))
+                .get("rally").get("rallyId").asText();
+        post200("/rally/join",attacker.mates.get(0),new RallyJoinReq(newRequestId(),rallyId,
+                List.of(new RallyTroop("unit_cavalry_t4",500_000L)),List.of()));
+
+        var rally=socialStore.rallyOf(rallyId).orElseThrow();
+        marchAppService.processDue(attacker.king,rally.prepareUntil()+1L);
+        String marchId="march_rally_"+rallyId;
+        var march=marchRepository.findById(marchId).orElseThrow().snapshot();
+        marchAppService.processDue(attacker.king,march.arriveAt());
+
+        var pendingSlot=targetOperations.findByTargetId("capital_center");
+        assertThat(pendingSlot).as("动态都城位置必须经真实到达创建CAPITAL COMBAT槽").isPresent();
+        var pending=pendingSlot.orElseThrow();
+        var battle=pending.combatPlan().battle();
+        assertThat(battle.target().x()).isEqualTo(Math.toIntExact(capitalX));
+        assertThat(battle.target().y()).isEqualTo(Math.toIntExact(capitalY));
+        assertThat(battle.target().kind()).isEqualTo(com.ironoath.core.world.WorldGenerator.EntityType.CAPITAL);
+        assertThat(battle.input().battleType()).isEqualTo(com.ironoath.battle.BattleType.SIEGE);
+        assertThat(battle.input().terrain()).isEqualTo(com.ironoath.battle.TerrainType.CITY_WALL);
+        assertThat(battle.result().winner()).isEqualTo(com.ironoath.battle.Winner.ATTACKER);
+
+        strategicRecovery.recoverPending();
+        var completed=targetOperations.findByTargetId("capital_center").orElseThrow();
+        assertThat(completed.completed()).isTrue();
+        assertThat(targetOccupations.findByTargetIds(List.of("capital_center")).get("capital_center").nationId())
+                .isEqualTo(attacker.nationId);
+        assertThat(wars.findByStartedAt(war.startedAt()).orElseThrow().capitalHolder()).isEqualTo(attacker.nationId);
+        assertThat(battleReports.reportsOf(attacker.king)).hasSize(1);
+    }
+
+    @Test
+    @DirtiesContext(methodMode=DirtiesContext.MethodMode.AFTER_METHOD)
     @DisplayName("活跃War四座关卡都由真实不同发起人的国家集结到达并记录Capture")
     void activeWarCapturesFourGatesFromRealNpcBattlesWithoutGateOwnershipFixtures() throws Exception {
         DeterministicBattleSeedTestConfig.seed=2384L;
