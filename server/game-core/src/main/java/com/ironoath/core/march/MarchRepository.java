@@ -18,6 +18,9 @@ public interface MarchRepository {
 
     Optional<March> findById(String marchId);
 
+    /** Indexed target lookup for strategic-target migration and recovery. */
+    List<March> findByTargetId(String targetId);
+
     /** 某玩家的全部行军（含各状态），按出发时刻升序。 */
     List<March> findByPlayerId(String playerId);
 

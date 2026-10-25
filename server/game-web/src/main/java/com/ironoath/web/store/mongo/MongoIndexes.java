@@ -72,6 +72,9 @@ public final class MongoIndexes {
         String byToChunk = marchIndexes.ensureIndex(new Index()
                 .on("toChunkKey", Sort.Direction.ASC)
                 .named("idx_to_chunk_key"));
+        String byTargetId = marchIndexes.ensureIndex(new Index()
+                .on("state.targetId", Sort.Direction.ASC)
+                .named("idx_march_target_id"));
         // 支付订单：补单队列、负债总额、超时作废三条查询的过滤条件都是
         // state.status（外加作废那条的 createdAt 范围），一个复合索引同时覆盖三者。
         // 缺它的话每一次下单都要整表扫支付表 —— 而支付表是唯一一张"只会变长、永不被清理"的表。
@@ -280,6 +283,7 @@ public final class MongoIndexes {
                 + "；" + GachaLogBatchDocument.COLLECTION + ".{playerId,lastDrawnAt} → " + drawnAtIndex
                 + "；" + MarchDocument.COLLECTION + " → " + byPlayer + " / " + byFromChunk
                 + " / " + byToChunk
+                + " / " + byTargetId
                 + "；" + PayOrderDocument.COLLECTION + ".{state.status,state.createdAt} → "
                 + byStatusAndCreatedAt
                 + "；" + BattleReportDocument.COLLECTION + " → " + byOwner + " / " + byExpiry

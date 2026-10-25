@@ -285,6 +285,17 @@ public final class MongoSocialStore implements SocialStore {
     }
 
     @Override
+    public List<AllianceMemberEpoch> allianceMemberEpochs(String allianceId) {
+        if(allianceId==null || allianceId.isBlank())return List.of();
+        AllianceDocument document=mongo.findById(allianceId,AllianceDocument.class,AllianceDocument.COLLECTION);
+        if(document==null)return List.of();
+        return safeMembershipEpochs(document).stream()
+                .map(epoch->new AllianceMemberEpoch(epoch.playerId(),epoch.fromAt(),epoch.untilAt()))
+                .sorted(Comparator.comparingLong(AllianceMemberEpoch::fromAt).thenComparing(AllianceMemberEpoch::playerId))
+                .toList();
+    }
+
+    @Override
     public List<AllianceMembershipEpoch> allianceMembershipEpochs(String playerId) {
         if(playerId==null || playerId.isBlank())return List.of();
         List<AllianceMembershipEpoch> out=new ArrayList<>();

@@ -305,6 +305,11 @@ class SocialStoreEquivalenceTest {
                             new SocialStore.AllianceMembershipEpoch("AL-EPOCH",T0+300L,T0+400L));
             assertThat(store.allianceMembershipEpochs("P-1")).as("%s closes founder epoch at disband",label)
                     .containsExactly(new SocialStore.AllianceMembershipEpoch("AL-EPOCH",T0,T0+400L));
+            assertThat(store.allianceMemberEpochs("AL-EPOCH")).as("%s reverse lookup retains all members after disband",label)
+                    .containsExactlyInAnyOrder(
+                            new SocialStore.AllianceMemberEpoch("P-1", T0, T0+400L),
+                            new SocialStore.AllianceMemberEpoch("P-2", T0+100L, T0+200L),
+                            new SocialStore.AllianceMemberEpoch("P-2", T0+300L, T0+400L));
             assertThat(store.allianceById("AL-EPOCH")).as("%s hides disbanded alliance",label).isEmpty();
             assertThat(store.allianceOf("P-2")).as("%s removes active member lookup",label).isEmpty();
             assertThat(store.allianceNameTaken("历史盟")).as("%s releases archived name",label).isFalse();

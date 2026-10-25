@@ -2657,6 +2657,8 @@ public class SocialAppService {
         long now = timeService.serverNow();
         acquire(req == null ? null : req.requestId(), now);
         try {
+            boolean strategicTarget=req!=null&&req.targetType()==SocialTargetType.STRATEGIC_TARGET;
+            if(strategicTarget)strategicTargetCircleGuard.recoverPendingRelocations();
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 String nationId = requireNationOf(playerId).id();
                 return nationLock.runLocked(nationId, () -> {
@@ -2669,9 +2671,12 @@ public class SocialAppService {
                             "START_RALLY");
                     int maxSize = Math.min(Math.max(req.maxMembers(), rules.nationRallyRules().minMembers()),
                             nationRallyCap(playerId));
-                    Rally rally = initiateRally(playerId, Rally.Scope.NATION, nation.id(),
+                    java.util.function.Supplier<Rally> start=()->initiateRally(playerId, Rally.Scope.NATION, nation.id(),
                             req.targetCoord(), req.targetType(), troopsOf(req.troops()),
                             req.heroes(), maxSize, req.prepareMinutes() * 60_000L, now);
+                    Rally rally=strategicTarget
+                            ?strategicTargetCircleGuard.withStableTargetAfterRecovery(start)
+                            :start.get();
                     LOG.info("国家集结已发起 rallyId={} nationId={} 发起人={} 承诺兵力={} 人数上限={} 准备={}分钟",
                             rally.rallyId(), nation.id(), playerId, rally.totalTroops(), maxSize,
                             rally.prepareMillis() / 60_000L);

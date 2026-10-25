@@ -133,6 +133,37 @@ class WarStoreEquivalenceTest {
     }
 
     @Test
+    @DisplayName("settled fixed award plan survives persistence and remains frozen on both stores")
+    void settlementAwardPlanSurvivesRoundTripAndRejectsReplacementOnBothStores() {
+        WarScoreBoard.SettlementAwardPlan expected = new WarScoreBoard.SettlementAwardPlan("season-B13", List.of(
+                new WarScoreBoard.SettlementAward("P1", "One", 17L),
+                new WarScoreBoard.SettlementAward("P2", "Two", 9L)));
+        WarScoreBoard.SettlementAwardPlan replacement = new WarScoreBoard.SettlementAwardPlan("season-other", List.of(
+                new WarScoreBoard.SettlementAward("P1", "One", 1L)));
+
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            WarScoreBoard settled = richBoard(T0);
+            settled.settle(T0 + 10 * MINUTE);
+            assertThat(store.insertIfAbsent(settled)).as("%s stores settled War", label).isTrue();
+
+            assertThat(store.freezeSettlementAwardPlan(T0, expected).settlementAwardPlan())
+                    .as("%s freezes the first deterministic award payload", label).isEqualTo(expected);
+            assertThatThrownBy(() -> store.freezeSettlementAwardPlan(T0, replacement))
+                    .as("%s retry cannot replace a frozen award payload", label)
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("already frozen");
+            assertThat(store.findByStartedAt(T0).orElseThrow().settlementAwardPlan())
+                    .as("%s readback keeps the frozen season and exact award amounts", label)
+                    .isEqualTo(expected);
+            if (store instanceof MongoWarStore) {
+                assertThat(newMongoStore().findByStartedAt(T0).orElseThrow().settlementAwardPlan())
+                        .as("Mongo reload keeps the frozen season and exact award amounts")
+                        .isEqualTo(expected);
+            }
+        }
+    }
+
+    @Test
     @DisplayName("targetNationId survives memory and Mongo War persistence for later capital resolution")
     void targetNationBindingSurvivesRoundTripOnBothStores() {
         WarScoreBoard source = new WarScoreBoard(rules.rules(), T0, "attacker-nation", "target-nation", T0 + 60 * MINUTE);
@@ -1103,8 +1134,8 @@ class WarStoreEquivalenceTest {
             WarStore.Settlement again = store.settleIfExpired(T0 + duration + 60_000L).orElseThrow();
             assertThat(again.settledNow()).as("%s 第二次读旗标为 false", label).isFalse();
             assertThat(again.result())
-                    .as("%s 第二次读不许再带出一份终局：赛季分是累加语义，带出来就有人可能再发一遍", label)
-                    .isNull();
+                    .as("%s retry must expose the durable prior result without settling or awarding again", label)
+                    .isEqualTo(at.result());
         }
     }
 

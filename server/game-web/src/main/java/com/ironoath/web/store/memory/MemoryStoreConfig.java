@@ -21,6 +21,11 @@ public class MemoryStoreConfig {
     private static final Logger LOG = LoggerFactory.getLogger(MemoryStoreConfig.class);
 
     @Bean
+    public com.ironoath.web.nation.NationCapitalRelocationStore nationCapitalRelocationStore() {
+        return new InMemoryNationCapitalRelocationStore();
+    }
+
+    @Bean
     public PlayerRepository playerRepository() {
         LOG.warn("使用内存玩家存储：进程重启后存档全部丢失，仅限本地开发与单测。生产请设 ironoath.storage=mongo");
         return new InMemoryPlayerStore();

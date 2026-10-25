@@ -7,6 +7,8 @@ import com.ironoath.core.march.MarchDueQueue;
 import com.ironoath.core.social.Rally;
 import com.ironoath.web.lock.InJvmPlayerLock;
 import com.ironoath.web.service.SocialAppService;
+import com.ironoath.web.service.WarCapitalTargetResolver;
+import com.ironoath.web.service.WorldTargets;
 import com.ironoath.web.social.SocialStore;
 import com.ironoath.web.world.*;
 import com.ironoath.web.store.memory.*;
@@ -51,7 +53,32 @@ class StrategicGarrisonWithdrawalTest {
         }
         StrategicGarrisonWithdrawal service(){return new StrategicGarrisonWithdrawal(configs,ops,owners,marches,due,
                 new StrategicTargetDefender(configs,owners,marches,social,new com.ironoath.web.store.memory.InMemoryNeutralTargetGarrisonStore()),app,locks);}
+        StrategicGarrisonWithdrawal service(WarCapitalTargetResolver capitalTargets){return new StrategicGarrisonWithdrawal(configs,ops,owners,marches,due,
+                new StrategicTargetDefender(configs,owners,marches,social,new com.ironoath.web.store.memory.InMemoryNeutralTargetGarrisonStore()),app,locks,null,capitalTargets);}
         March current(){return marches.findById(original.id()).orElseThrow();}
+    }
+
+    @Test
+    void recallRecoversCapitalBeforeTakingRallyLockAndUsesStableTargetScope(){
+        var f=new Fixture(Backend.MEMORY);var inRally=new java.util.concurrent.atomic.AtomicBoolean();
+        var stable=new ThreadLocal<Boolean>();var targets=mock(WarCapitalTargetResolver.class);
+        doAnswer(inv->{assertThat(inRally.get()).isFalse();return null;})
+                .when(targets).recoverPendingRelocations();
+        when(targets.withStableTargetAfterRecovery(any())).thenAnswer(inv->{
+            stable.set(true);try{return ((Supplier<?>)inv.getArgument(0)).get();}finally{stable.remove();}
+        });
+        when(targets.resolve(configs)).thenAnswer(inv->{
+            if(!Boolean.TRUE.equals(stable.get())){
+                assertThat(inRally.get()).isFalse();targets.recoverPendingRelocations();
+            }
+            return new WarCapitalTargetResolver.Directory(WorldTargets.from(configs),0,null,-1,-1);
+        });
+        doAnswer(inv->{inRally.set(true);try{return ((Supplier<?>)inv.getArgument(1)).get();}finally{inRally.set(false);}})
+                .when(f.app).runRallyDepartureLocked(anyString(),any());
+
+        assertThat(f.service(targets).recall("owned-leader",f.original.id(),120).returnArriveAt()).isEqualTo(130L);
+        verify(targets,atLeastOnce()).recoverPendingRelocations();
+        verify(targets,atLeastOnce()).withStableTargetAfterRecovery(any());
     }
 
     @ParameterizedTest @EnumSource(Backend.class)

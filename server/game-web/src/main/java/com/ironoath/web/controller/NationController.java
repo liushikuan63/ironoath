@@ -11,6 +11,7 @@ import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.Result;
 import com.ironoath.web.dto.generated.NationAppointReq;
+import com.ironoath.web.dto.generated.NationCapitalRelocateReq;
 import com.ironoath.web.dto.generated.NationDiplomacyReq;
 import com.ironoath.web.dto.generated.NationDiplomacyResp;
 import com.ironoath.web.dto.generated.NationDisbandReq;
@@ -38,6 +39,7 @@ import com.ironoath.web.dto.generated.WarGoalClaimReq;
 import com.ironoath.web.dto.generated.WarGoalClaimResp;
 import com.ironoath.web.dto.generated.WarStatusResp;
 import com.ironoath.web.service.NationAppService;
+import com.ironoath.web.service.NationCapitalRelocationService;
 import com.ironoath.web.service.WarAppService;
 
 /**
@@ -63,10 +65,12 @@ public class NationController {
 
     private final NationAppService nations;
     private final WarAppService wars;
+    private final NationCapitalRelocationService capitalRelocations;
 
-    public NationController(NationAppService nations, WarAppService wars) {
+    public NationController(NationAppService nations, WarAppService wars, NationCapitalRelocationService capitalRelocations) {
         this.nations = nations;
         this.wars = wars;
+        this.capitalRelocations = capitalRelocations;
     }
 
     /** 建国。前置（主城 16 级 / 开服 D14 / 在联盟中）全部由服务端校验。 */
@@ -119,6 +123,14 @@ public class NationController {
         requirePlayer(playerId);
         return Result.ok(nations.appoint(playerId, req));
     }
+    @PostMapping("/capital/relocate")
+    public Result<NationResp> relocateCapital(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
+            @RequestBody NationCapitalRelocateReq req) {
+        requirePlayer(playerId);
+        capitalRelocations.relocate(playerId, req.nationId(), req.requestId(), req.x(), req.y());
+        return Result.ok(nations.view(playerId));
+    }
+
 
     /**
      * 变更外交关系。权限位 MANAGE_DIPLOMACY（国王与外交官档）。

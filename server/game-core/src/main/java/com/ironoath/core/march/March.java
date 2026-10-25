@@ -75,7 +75,7 @@ public final class March {
     private final String id;
     private final String playerId;
     private final Coord from;
-    private final Coord to;
+    private Coord to;
     private final long startAt;
     private long arriveAt;
     private Long returnArriveAt;
@@ -366,6 +366,16 @@ public final class March {
     }
 
     /** 战斗调用方确认攻方胜利后留驻；成员份额必须正好覆盖真实幸存兵。 */
+    /** Move an already stationed strategic rally garrison to the relocated capital without changing custody. */
+    public void relocateStationedGarrison(Coord destination) {
+        if (destination == null) throw new IllegalArgumentException("garrison destination is required");
+        if (status != Status.STATIONED || targetType != TargetType.STRATEGIC_TARGET || !isRallyMarch()
+                || !hasGarrisonOwnership()) {
+            throw new IllegalStateException("only a fully-owned stationed strategic rally garrison can move");
+        }
+        to = destination;
+    }
+
     public void holdStrategicVictory(Map<String,Map<String,Long>> survivorsByPlayer) {
         if(targetType!=TargetType.STRATEGIC_TARGET || !isRallyMarch() || totalUnits()<=0L) {
             throw new IllegalStateException("只有有幸存兵的战略集结能留驻");

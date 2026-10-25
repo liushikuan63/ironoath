@@ -224,6 +224,9 @@ public interface WarStore {
      */
     Optional<Settlement> settleIfExpired(long now);
 
+    /** Save the fixed award payload once so a partial leaderboard write can resume unchanged. */
+    WarScoreBoard freezeSettlementAwardPlan(long startedAt, WarScoreBoard.SettlementAwardPlan plan);
+
     /**
      * 一次惰性推进的结果。
      *
@@ -258,7 +261,9 @@ public interface WarStore {
                         "settledNow=true 却不带结算结果：这一场的胜者已经没有第二次机会被算出来了，"
                                 + "发奖那一侧只能把 WINNER 那一档静默跳过");
             }
-            if (!settledNow && result != null) {
+            if (!settledNow && result != null
+                    && (board.phase() != WarScoreBoard.Phase.SETTLED
+                    || !java.util.Objects.equals(result, board.settlementResult()))) {
                 throw new IllegalArgumentException(
                         "settledNow=false 却带了结算结果：那会造出「没结掉这一场但手里有终局」这种"
                                 + "谁也无法解释的状态，而发奖判断读的正是 settledNow");

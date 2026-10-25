@@ -139,13 +139,13 @@ public class WarAppService {
         if (progressedOne.settledNow() && progressedOne.abandonedNow()) {
             LOG.info("王城战筹备逾窗口作废 战事主键={} 不发赛季分/胜者奖励",
                     WarStore.documentIdOf(board));
-        } else if (progressedOne.settledNow()) {
+        } else if (progressedOne.result() != null) {
             // 挂在"这一句把它结掉了"，不挂在"它现在是 SETTLED"上 —— 后者每一读都成立，
             // 而 SeasonBoardStore.accumulate 是累加语义，那样会变成每读一次发一遍赛季分。
             // 这一跳是本类唯一的经济写入，所以留一行审计（金额与人数都能从这里回查）。
             // 带 result 进去：那是这一场唯一的胜负来源（内核 settle() 第二次调直接抛），
             // 而 WINNER 那一档只认它 —— 见 WarStore.Settlement#result。
-            int awarded = rankBoards.reportWarSeasonPoints(board, progressedOne.result());
+            int awarded = deliverSettlementAward(progressedOne);
             LOG.info("国战赛季分进账 战事主键={} 进账人数={} 胜者={} 榜=WAR（由这一次读触发）",
                     WarStore.documentIdOf(board), awarded,
                     progressedOne.result() == null ? "无" : progressedOne.result().winnerId());
@@ -335,7 +335,7 @@ public class WarAppService {
                 // insertIfNoneActive 读的是存储里的 phase 字面值，而一场打满 90 分钟的仗在有人打开面板之前
                 // phase 仍然是 SIEGE —— 于是"仗早打完了却再也宣不了战"，解锁条件落在别人的那一次读上。
                 // 结算与插入各自收在自己的临界区里，这里没有把判断搬到服务层（见 WarStore#insertIfNoneActive）
-                wars.settleIfExpired(now);
+                wars.settleIfExpired(now).ifPresent(this::deliverSettlementAward);
                 // 发起国作为第三个参数交给板子：结算是另一次请求（面板那一次读），届时只能从档里读
                 // "谁先动的手"，而 WAR_SEASON_INITIATOR_BONUS 是 V18 那节的主钩子。
                 // 顺序仍然是 attacker 先 target 后 —— 内核 settle() 的平分判定按登记顺序遍历，
@@ -368,6 +368,16 @@ public class WarAppService {
     // ---------- 写侧的前置（与 NationAppService 同一套判定，不另起口径）----------
 
     /** 国籍跟随联盟（B13 冲突规则：联盟 ⊂ 国家）。两跳的口径收在 {@link NationMembership}，不在这里重写。 */
+    private int deliverSettlementAward(WarStore.Settlement settlement) {
+        if(settlement==null || settlement.result()==null)return 0;
+        WarScoreBoard board=settlement.board();
+        if(board.settlementAwardPlan()==null) {
+            var plan=rankBoards.planWarSeasonPoints(board,settlement.result());
+            board=wars.freezeSettlementAwardPlan(board.startedAt(),plan);
+        }
+        return rankBoards.reportWarSeasonPoints(board,board.settlementResult());
+    }
+
     private Nation requireNationOf(String playerId) {
         return membership.ofPlayer(playerId).orElseThrow(() -> new BizException(
                 ErrorCode.NATION_NOT_FOUND,

@@ -158,6 +158,29 @@ public final class MongoWarStore implements WarStore {
         return Optional.of(toDomain(doc));
     }
 
+    @Override public WarScoreBoard freezeSettlementAwardPlan(long startedAt,WarScoreBoard.SettlementAwardPlan plan) {
+        String id=WarStore.documentIdOf(startedAt);
+        synchronized(activeLock) {
+            for(int attempt=0;attempt<MAX_ATTEMPTS;attempt++) {
+                WarDocument doc=mongo.findById(id,WarDocument.class,WarDocument.COLLECTION);
+                if(doc==null || doc.state()==null || doc.startedAt()!=startedAt || doc.state().startedAt()!=startedAt)
+                    throw new IllegalStateException("War settlement is missing or inconsistent");
+                WarScoreBoard board=toDomain(doc);
+                board.freezeSettlementAwardPlan(plan);
+                if(doc.state().settlementAwardPlan()!=null)return board;
+                try {if(replace(doc,board))return board;}
+                catch(RuntimeException uncertain) {
+                    try {
+                        var saved=findByStartedAt(startedAt).orElse(null);
+                        if(saved!=null && plan.equals(saved.settlementAwardPlan()))return saved;
+                    } catch(RuntimeException readFailure) { uncertain.addSuppressed(readFailure); }
+                    throw uncertain;
+                }
+            }
+        }
+        throw conflict();
+    }
+
     @Override public WarScoreBoard.BattleEvent recordBattleEvent(WarScoreBoard.BattleEvent event) {
         if(event==null)throw new IllegalArgumentException("原战斗事件不得为空");
         String id=WarStore.documentIdOf(event.warStartedAt());
@@ -293,7 +316,8 @@ public final class MongoWarStore implements WarStore {
                 }
                 WarScoreBoard board = toDomain(doc);
                 if (!WarStore.dueToSettle(board, now)) {
-                    return Optional.of(WarStore.Settlement.notSettled(board));
+                    var savedResult=board.phase()==WarScoreBoard.Phase.SETTLED?board.settlementResult():null;
+                    return Optional.of(new WarStore.Settlement(board,false,savedResult));
                 }
                 if(board.hasPendingBattleReservations())return Optional.of(WarStore.Settlement.notSettled(board));
                 if (board.phase() == WarScoreBoard.Phase.PREPARATION) {

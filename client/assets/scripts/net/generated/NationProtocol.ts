@@ -167,6 +167,20 @@ export interface NationAppointReq {
 }
 
 /**
+ * POST /nation/capital/relocate. requestId is the durable idempotency key. The king may decide at any time; when the king has been offline for at least seven days, any other recorded Nation office holder may decide. The server rejects active COMBAT and attack marches still approaching the old capital. The occupied capital garrison moves with the new capital after COMBAT completion.
+ */
+export interface NationCapitalRelocateReq {
+  /** Durable idempotency key. */
+  requestId: string
+  /** Nation whose capital is moving. */
+  nationId: string
+  /** New capital x coordinate. */
+  x: number
+  /** New capital y coordinate. */
+  y: number
+}
+
+/**
  * 国家操作的统一响应：返回操作后的完整视图，而不是只回一个 ok。客户端据此刷新面板，不需要再发一次查询 —— 少一次往返在弱网下就是少一次超时。
  */
 export interface NationResp {

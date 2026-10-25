@@ -198,27 +198,47 @@ public interface TargetOperationStore {
             return new WithdrawalPlan(op,sequence,now,owner,after,marchVersion,before,returned.snapshot());
         }
     }
-    record Snapshot(String targetId,long version,boolean completed,WithdrawalPlan plan,Kind kind,CombatPlan combatPlan) {
-        /** 旧BSON缺kind/combatPlan时仅在原撤防计划完整存在的情况下归一化，读取不回填。 */
+    record Snapshot(String targetId,long version,boolean completed,WithdrawalPlan plan,Kind kind,CombatPlan combatPlan,
+                    Anchor activeAnchor) {
+        /** Legacy documents and constructors derive the live anchor from their frozen operation payload. */
+        public Snapshot(String targetId,long version,boolean completed,WithdrawalPlan plan,Kind kind,CombatPlan combatPlan) {
+            this(targetId,version,completed,plan,kind,combatPlan,null);
+        }
         public Snapshot(String targetId,long version,boolean completed,WithdrawalPlan plan) {
-            this(targetId,version,completed,plan,Kind.WITHDRAWAL,null);
+            this(targetId,version,completed,plan,Kind.WITHDRAWAL,null,null);
         }
         public Snapshot {
             if(kind==null && plan!=null && combatPlan==null)kind=Kind.WITHDRAWAL;
-            if(targetId==null || targetId.isBlank() || version<1 || kind==null
+            if(activeAnchor==null)activeAnchor=initialAnchor(targetId,plan,kind,combatPlan);
+            if(targetId==null || targetId.isBlank() || version<1 || kind==null || activeAnchor==null
+                    || !targetId.equals(activeAnchor.targetId())
                     || (kind==Kind.WITHDRAWAL && (plan==null || combatPlan!=null || !targetId.equals(plan.targetId())))
                     || (kind==Kind.COMBAT && (plan!=null || combatPlan==null || !targetId.equals(combatPlan.battle().target().targetId()))))
-                throw new IllegalArgumentException("目标操作槽与计划绑定无效");
+                throw new IllegalArgumentException("Ŀ�������ƻ�����Ч");
         }
         public static Snapshot combat(long version,boolean completed,CombatPlan plan) {
-            return new Snapshot(plan.battle().target().targetId(),version,completed,null,Kind.COMBAT,plan);
+            return new Snapshot(plan.battle().target().targetId(),version,completed,null,Kind.COMBAT,plan,null);
         }
         public String operationId(){return kind==Kind.WITHDRAWAL?plan.operationId():combatPlan.operationId();}
         public long sequence(){return kind==Kind.WITHDRAWAL?plan.sequence():combatPlan.sequence();}
         public long happenedAt(){return kind==Kind.WITHDRAWAL?plan.happenedAt():combatPlan.battle().happenedAt();}
-        public Anchor anchor(){
-            if(kind==Kind.WITHDRAWAL){var b=plan.before();return new Anchor(targetId,b.kind(),b.x(),b.y());}
-            var b=combatPlan.battle().target();return new Anchor(targetId,b.kind(),b.x(),b.y());
+        public Anchor anchor(){return activeAnchor;}
+        public Snapshot relocateCapitalAnchor(com.ironoath.core.world.Coord destination) {
+            if(destination==null)throw new IllegalArgumentException("destination is required");
+            if(!completed || activeAnchor.kind()!=com.ironoath.core.world.WorldGenerator.EntityType.CAPITAL)
+                throw new IllegalStateException("only a completed CAPITAL operation can move its active anchor");
+            var next=new Anchor(targetId,activeAnchor.kind(),destination.x(),destination.y());
+            if(next.equals(activeAnchor))return this;
+            return new Snapshot(targetId,Math.addExact(version,1),completed,plan,kind,combatPlan,next);
+        }
+        private static Anchor initialAnchor(String targetId,WithdrawalPlan plan,Kind kind,CombatPlan combatPlan) {
+            if(kind==Kind.WITHDRAWAL && plan!=null) {
+                var before=plan.before();return new Anchor(targetId,before.kind(),before.x(),before.y());
+            }
+            if(kind==Kind.COMBAT && combatPlan!=null) {
+                var target=combatPlan.battle().target();return new Anchor(targetId,target.kind(),target.x(),target.y());
+            }
+            return null;
         }
     }
     private static March.Snapshot freeze(March.Snapshot source){return March.fromSnapshot(source).snapshot();}
@@ -246,14 +266,23 @@ public interface TargetOperationStore {
         if(current.version()!=expectedVersion)return false;
         if(current.operationId().equals(next.operationId())) {
             if(current.kind()!=next.kind())return false;
+            if(current.completed()) {
+                return next.completed() && Objects.equals(current.plan(),next.plan())
+                        && Objects.equals(current.combatPlan(),next.combatPlan())
+                        && current.anchor().kind()==com.ironoath.core.world.WorldGenerator.EntityType.CAPITAL
+                        && next.anchor().kind()==com.ironoath.core.world.WorldGenerator.EntityType.CAPITAL
+                        && !current.anchor().equals(next.anchor());
+            }
             if(current.kind()==Kind.WITHDRAWAL)
-                return !current.completed() && next.completed() && Objects.equals(current.plan(),next.plan());
+                return next.completed() && Objects.equals(current.plan(),next.plan())
+                        && Objects.equals(current.combatPlan(),next.combatPlan())
+                        && Objects.equals(current.anchor(),next.anchor());
             var before=current.combatPlan();var after=next.combatPlan();
             if(before==null || after==null || !Objects.equals(before.operationId(),after.operationId())
                     || before.sequence()!=after.sequence() || !Objects.equals(before.battle(),after.battle())
                     || !Objects.equals(before.reportPlan(),after.reportPlan())
-                    || !Objects.equals(before.killPlan(),after.killPlan()))return false;
-            if(current.completed())return false;
+                    || !Objects.equals(before.killPlan(),after.killPlan())
+                    || !Objects.equals(current.anchor(),next.anchor()))return false;
             if(next.completed())return Objects.equals(before,after);
             boolean warSourceSame=before.warRecovery()==null?after.warRecovery()==null
                     :after.warRecovery()!=null && Objects.equals(before.warRecovery().reservation(),after.warRecovery().reservation());
@@ -268,4 +297,5 @@ public interface TargetOperationStore {
         return current.completed() && !next.completed()
                 && next.sequence()==Math.addExact(current.sequence(),1);
     }
+
 }

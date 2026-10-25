@@ -35,6 +35,11 @@ public class MongoStoreConfig {
     }
 
     @Bean
+    public com.ironoath.web.nation.NationCapitalRelocationStore nationCapitalRelocationStore(MongoTemplate mongo) {
+        return new MongoNationCapitalRelocationStore(mongo);
+    }
+
+    @Bean
     public com.ironoath.web.world.TargetOperationStore targetOperationStore(MongoTemplate mongo) {
         return new MongoTargetOperationStore(mongo);
     }

@@ -103,6 +103,24 @@ public final class WarScoreBoard {
         }
     }
 
+    public record SettlementAward(String playerId, String displayName, long points) {
+        public SettlementAward {
+            if (playerId == null || playerId.isBlank() || points <= 0)
+                throw new IllegalArgumentException("War award entry requires a player and positive points");
+        }
+    }
+
+    public record SettlementAwardPlan(String seasonId, List<SettlementAward> awards) {
+        public SettlementAwardPlan {
+            awards = List.copyOf(awards == null ? List.of() : awards);
+            if ((seasonId == null || seasonId.isBlank()) && !awards.isEmpty())
+                throw new IllegalArgumentException("seasonId is required for a non-empty award plan");
+            var players = new LinkedHashSet<String>();
+            for (var award : awards) if (award == null || !players.add(award.playerId()))
+                throw new IllegalArgumentException("War award plan has a duplicate or null player");
+        }
+    }
+
     private final Rules rules;
     private final long startedAt;
     /** 当前 CAPITAL_WAR 窗口终点；旧档缺字段为 null，开发档显式用 MAX_VALUE 无截止。 */
@@ -171,6 +189,9 @@ public final class WarScoreBoard {
     /** 已领取全服奖励的玩家 id */
     private final Set<String> goalClaimed = new LinkedHashSet<>();
     private long totalKills;
+    private Long settledAt;
+    private Result settlementResult;
+    private SettlementAwardPlan settlementAwardPlan;
 
     /** 建一块<b>没有发起方记录</b>的板子（{@code null} 那一档的含义见 {@link #initiatorNationId}）。 */
     public WarScoreBoard(Rules rules, long startedAt) {
@@ -494,10 +515,26 @@ public final class WarScoreBoard {
             Score score = new Score(parts[0], parts[1], parts[2]);
             finalScores.put(entry.getKey(), score);
         }
-        return new Result(winner, finalScores, totalKills, serverGoalReached());
+        settledAt = now;
+        settlementResult = new Result(winner, finalScores, totalKills, serverGoalReached());
+        return settlementResult;
     }
 
     // ---------- 只读访问 ----------
+
+    public Long settledAt() { return settledAt; }
+
+    public Result settlementResult() { return settlementResult; }
+
+    public SettlementAwardPlan settlementAwardPlan() { return settlementAwardPlan; }
+
+    public void freezeSettlementAwardPlan(SettlementAwardPlan plan) {
+        if (phase != Phase.SETTLED || settlementResult == null || plan == null)
+            throw new IllegalStateException("A War award plan requires a durable settled result");
+        if (settlementAwardPlan != null && !settlementAwardPlan.equals(plan))
+            throw new IllegalStateException("War award plan is already frozen with a different payload");
+        settlementAwardPlan = plan;
+    }
 
     public Phase phase() {
         return phase;
@@ -896,7 +933,31 @@ public final class WarScoreBoard {
                            List<String> goalClaimed, long totalKills,
                            List<MarchFatigueReceipt> marchFatigueReceipts, Long siegeStartedAt,
                            Long preparationExpiresAt, Boolean abandonedWithoutSiege,List<BattleEvent> battleEvents,
-                           List<BattleReservation> pendingBattleReservations) {
+                           List<BattleReservation> pendingBattleReservations, Long settledAt, Result settlementResult,
+                           SettlementAwardPlan settlementAwardPlan) {
+
+        public Snapshot(long startedAt, Phase phase, String initiatorNationId, String targetNationId,
+                        List<NationRow> nations, String capitalHolder, long capitalHeldSince,
+                        Map<String, Long> fatigue, Map<String, Long> playerKills, List<String> goalClaimed,
+                        long totalKills, List<MarchFatigueReceipt> marchFatigueReceipts, Long siegeStartedAt,
+                        Long preparationExpiresAt, Boolean abandonedWithoutSiege, List<BattleEvent> battleEvents,
+                        List<BattleReservation> pendingBattleReservations) {
+            this(startedAt, phase, initiatorNationId, targetNationId, nations, capitalHolder, capitalHeldSince,
+                    fatigue, playerKills, goalClaimed, totalKills, marchFatigueReceipts, siegeStartedAt,
+                    preparationExpiresAt, abandonedWithoutSiege, battleEvents, pendingBattleReservations, null, null, null);
+        }
+
+        public Snapshot(long startedAt, Phase phase, String initiatorNationId, String targetNationId,
+                        List<NationRow> nations, String capitalHolder, long capitalHeldSince,
+                        Map<String, Long> fatigue, Map<String, Long> playerKills, List<String> goalClaimed,
+                        long totalKills, List<MarchFatigueReceipt> marchFatigueReceipts, Long siegeStartedAt,
+                        Long preparationExpiresAt, Boolean abandonedWithoutSiege, List<BattleEvent> battleEvents,
+                        List<BattleReservation> pendingBattleReservations, Long settledAt, Result settlementResult) {
+            this(startedAt, phase, initiatorNationId, targetNationId, nations, capitalHolder, capitalHeldSince,
+                    fatigue, playerKills, goalClaimed, totalKills, marchFatigueReceipts, siegeStartedAt,
+                    preparationExpiresAt, abandonedWithoutSiege, battleEvents, pendingBattleReservations,
+                    settledAt, settlementResult, null);
+        }
 
         /** 旧战略回执快照：没有闭战预留，读时兼容，不迁移回写。 */
         public Snapshot(long startedAt,Phase phase,String initiatorNationId,List<NationRow> nations,
@@ -963,6 +1024,10 @@ public final class WarScoreBoard {
                     marchFatigueReceipts == null ? List.of() : marchFatigueReceipts);
             battleEvents=List.copyOf(battleEvents==null?List.of():battleEvents);
             pendingBattleReservations=List.copyOf(pendingBattleReservations==null?List.of():pendingBattleReservations);
+            if (settledAt != null && settledAt < 0) throw new IllegalArgumentException("settledAt must be non-negative");
+            if (settlementResult != null && phase != Phase.SETTLED) throw new IllegalArgumentException("settlement result requires SETTLED phase");
+            if (settlementAwardPlan != null && (phase != Phase.SETTLED || settlementResult == null))
+                throw new IllegalArgumentException("settlement award plan requires a saved settlement result");
             var sources=new LinkedHashSet<String>();var operations=new LinkedHashSet<String>();
             for(var reservation:pendingBattleReservations) {
                 if(reservation==null || reservation.warStartedAt()!=startedAt || !sources.add(reservation.sourceId())
@@ -1003,7 +1068,7 @@ public final class WarScoreBoard {
         return new Snapshot(startedAt, phase, initiatorNationId, targetNationId, rows, capitalHolder, capitalHeldSince,
                 new LinkedHashMap<>(fatigue), new LinkedHashMap<>(playerKills),
                 List.copyOf(goalClaimed), totalKills, List.copyOf(marchFatigueReceipts.values()), siegeStartedAt,
-                preparationExpiresAt, abandonedWithoutSiege,List.copyOf(battleEvents.values()),List.copyOf(pendingBattleReservations.values()));
+                preparationExpiresAt, abandonedWithoutSiege,List.copyOf(battleEvents.values()),List.copyOf(pendingBattleReservations.values()),settledAt,settlementResult,settlementAwardPlan);
     }
 
     /**
@@ -1031,6 +1096,9 @@ public final class WarScoreBoard {
                 snapshot.totalKills(), snapshot.preparationExpiresAt());
         board.siegeStartedAt = snapshot.siegeStartedAt();
         board.abandonedWithoutSiege = snapshot.abandonedWithoutSiege();
+        board.settledAt = snapshot.settledAt();
+        board.settlementResult = snapshot.settlementResult();
+        board.settlementAwardPlan = snapshot.settlementAwardPlan();
         for (MarchFatigueReceipt receipt : snapshot.marchFatigueReceipts()) {
             MarchFatigueReceipt previous = board.marchFatigueReceipts.putIfAbsent(receipt.marchId(), receipt);
             if (previous != null && !previous.equals(receipt)) {

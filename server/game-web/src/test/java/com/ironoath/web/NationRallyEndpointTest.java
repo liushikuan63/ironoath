@@ -120,6 +120,7 @@ class NationRallyEndpointTest {
     @Autowired private com.ironoath.web.service.SocialAppService social;
     @Autowired private SocialStore socialStore;
     @Autowired private com.ironoath.web.nation.NationStore nationStore;
+    @Autowired private com.ironoath.web.nation.NationCapitalRelocationStore capitalRelocationStore;
     @Autowired private com.ironoath.web.service.PowerRefreshService powerRefreshService;
     @Autowired private ConfigRegistry configs;
     @SpyBean private StrategicTargetCircleGuard strategicTargetCircleGuard;
@@ -1000,6 +1001,80 @@ class NationRallyEndpointTest {
         var eventKills=warRecovery.event().effects().stream().collect(java.util.stream.Collectors.toMap(
                 effect->effect.impact().playerId(),effect->effect.impact().kills()));
         assertThat(eventKills).isEqualTo(engineKillsFor(pending.combatPlan().battle()));
+    }
+
+    @Test
+    @DirtiesContext(methodMode=DirtiesContext.MethodMode.AFTER_METHOD)
+    void preparedNationalRallyAtOldCapitalAbortsAfterRelocation() throws Exception {
+        DeterministicBattleSeedTestConfig.seed=2384L;
+        Nation attacker=nation(4),defender=nation(2);
+        long now=System.currentTimeMillis();
+        var warRules=new com.ironoath.web.nation.WarRulesAssembler(configs);
+        var war=new com.ironoath.core.nation.WarScoreBoard(warRules.rules(),now,attacker.nationId,defender.nationId,now+60_000L);
+        war.registerNation(attacker.nationId);war.registerNation(defender.nationId);
+        var gates=WorldTargets.from(configs).targets().stream()
+                .filter(row->row.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.GATE)
+                .sorted(java.util.Comparator.comparing(row->row.definition().id())).toList();
+        for(var gate:gates)war.captureGate(attacker.nationId,gate.definition().id());
+        war.beginSiege(now);
+        assertThat(wars.insertIfNoneActive(war)).isTrue();
+        activeTestWarStartedAt=war.startedAt();
+
+        var defenderNation=nationStore.findById(defender.nationId).orElseThrow();
+        var oldCapital=com.ironoath.core.world.Coord.of(Math.toIntExact(defenderNation.capitalX()),
+                Math.toIntExact(defenderNation.capitalY()));
+        doNothing().when(strategicTargetCircleGuard).guardRallyStart(attacker.king,oldCapital,4);
+        giveTroops(attacker.king,"unit_cavalry_t4",800_000L);
+        giveTroops(attacker.mates.get(0),"unit_cavalry_t4",800_000L);
+        String rallyId=post200("/rally/nation",attacker.king,new NationRallyReq(newRequestId(),
+                new SocialCoord(oldCapital.x(),oldCapital.y()),SocialTargetType.STRATEGIC_TARGET,4,10,
+                List.of(new RallyTroop("unit_cavalry_t4",400_000L)),List.of())).get("rally").get("rallyId").asText();
+        post200("/rally/join",attacker.mates.get(0),new RallyJoinReq(newRequestId(),rallyId,
+                List.of(new RallyTroop("unit_cavalry_t4",400_000L)),List.of()));
+
+        post200("/nation/capital/relocate",defender.king,
+                new com.ironoath.web.dto.generated.NationCapitalRelocateReq(newRequestId(),defender.nationId,300,300));
+        assertThat(nationStore.findById(defender.nationId).orElseThrow().capitalX()).isEqualTo(300);
+        assertThat(nationStore.findById(defender.nationId).orElseThrow().capitalY()).isEqualTo(300);
+        var rally=socialStore.rallyOf(rallyId).orElseThrow();
+
+        assertThat(marchAppService.departDueRallies(rally.prepareUntil()+1L)).isZero();
+        assertThat(socialStore.rallyOf(rallyId).orElseThrow().status()).isEqualTo(Rally.Status.CANCELLED);
+        assertThat(marchRepository.findById("march_rally_"+rallyId)).isEmpty();
+    }
+
+    @Test
+    @DirtiesContext(classMode=DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
+    void nationRallyRecoversAnotherNationsPendingRelocationBeforeTakingNationLock() throws Exception {
+        Nation attacker=nation(4),target=nation(2);
+        post200("/nation/war/declare",attacker.king,new WarDeclareReq(newRequestId(),target.nationId));
+
+        var live=nationStore.findById(target.nationId).orElseThrow();
+        var before=live.snapshot();
+        int destinationX=100,destinationY=201;
+        var after=com.ironoath.core.nation.Nation.fromSnapshot(before,
+                new com.ironoath.web.nation.NationRulesAssembler(configs).rules());
+        after.moveCapital(destinationX,destinationY);
+        after.incrementVersion();
+        var pending=new com.ironoath.web.nation.NationCapitalRelocationStore.Snapshot(
+                target.nationId,"capital-move:"+target.nationId+":recover-before-rally","recover-before-rally",
+                1L,com.ironoath.web.nation.NationCapitalRelocationStore.Stage.PREPARED,live.version(),
+                100,200,destinationX,destinationY,null,-1,null,before,after.snapshot(),
+                java.util.Map.of(),java.util.Map.of(),java.util.Map.of(),-1L);
+        assertThat(capitalRelocationStore.compareAndSet(pending,0L)).isTrue();
+        assertThat(capitalRelocationStore.findPending(10)).hasSize(1);
+
+        doNothing().when(strategicTargetCircleGuard).guardRallyStart(attacker.king,
+                com.ironoath.core.world.Coord.of(destinationX,destinationY),4);
+        giveTroops(attacker.king,UNIT,500L);
+        JsonNode started=post200("/rally/nation",attacker.king,new NationRallyReq(newRequestId(),
+                new SocialCoord(destinationX,destinationY),SocialTargetType.STRATEGIC_TARGET,4,10,
+                List.of(new RallyTroop(UNIT,300L)),List.of()));
+
+        assertThat(started.get("rally").get("rallyId").asText()).isNotBlank();
+        assertThat(nationStore.findById(target.nationId).orElseThrow().capitalX()).isEqualTo(destinationX);
+        assertThat(capitalRelocationStore.findByNationId(target.nationId).orElseThrow().stage())
+                .isEqualTo(com.ironoath.web.nation.NationCapitalRelocationStore.Stage.COMPLETED);
     }
 
     @Test

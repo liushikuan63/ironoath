@@ -149,6 +149,18 @@ public class WorldAppService {
         return new TargetDirectory(directory.targets(),directory.version());
     }
 
+    public void recoverPendingCapitalRelocations() {
+        if(capitalTargets!=null)capitalTargets.recoverPendingRelocations();
+    }
+
+    public <T> T withStableCapitalTarget(java.util.function.Supplier<T> action) {
+        return capitalTargets==null?action.get():capitalTargets.withStableTarget(action);
+    }
+
+    public <T> T withStableCapitalTargetAfterRecovery(java.util.function.Supplier<T> action) {
+        return capitalTargets==null?action.get():capitalTargets.withStableTargetAfterRecovery(action);
+    }
+
     // ---------- 家坐标 ----------
 
     /**

@@ -57,6 +57,14 @@ public final class InMemoryMarchStore implements MarchRepository {
     }
 
     @Override
+    public List<March> findByTargetId(String targetId) {
+        if (targetId == null || targetId.isBlank()) return List.of();
+        return byId.values().stream().map(entry -> entry.march.get())
+                .filter(march -> targetId.equals(march.targetId()))
+                .sorted(Comparator.comparingLong(March::startAt).thenComparing(March::id))
+                .map(InMemoryMarchStore::copyOf).toList();
+    }
+    @Override
     public List<March> findByPlayerId(String playerId) {
         if (playerId == null || playerId.isBlank()) {
             throw new IllegalArgumentException("playerId 不得为空");

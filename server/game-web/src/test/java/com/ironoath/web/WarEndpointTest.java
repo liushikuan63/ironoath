@@ -815,9 +815,16 @@ class WarEndpointTest {
         mockMvc.perform(get("/nation/war").header(PLAYER_HEADER,playerId))
                 .andExpect(status().is5xxServerError());
         assertThat(wars.findLatest().orElseThrow().phase()).isEqualTo(WarScoreBoard.Phase.SETTLED);
+var frozenAwardPlan=wars.findLatest().orElseThrow().settlementAwardPlan();
+        assertThat(frozenAwardPlan).as("settlement award plan is durable before retry").isNotNull();
+var recovered = wars.settleIfExpired(timeService.serverNow()).orElseThrow();
+        assertThat(recovered.settledNow()).isFalse();
+        assertThat(recovered.result()).isNotNull();
+        assertThat(recovered.result().winnerId()).isEqualTo("n_award_live");
         mockMvc.perform(get("/nation/war").header(PLAYER_HEADER,playerId))
                 .andExpect(status().isOk());
 
+        assertThat(wars.findLatest().orElseThrow().settlementAwardPlan()).isEqualTo(frozenAwardPlan);
         verify(rankBoards,times(2)).reportWarSeasonPoints(any(WarScoreBoard.class),any(WarScoreBoard.Result.class));
     }
 

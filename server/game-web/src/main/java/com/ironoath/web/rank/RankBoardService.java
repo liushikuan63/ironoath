@@ -212,69 +212,93 @@ public class RankBoardService {
      *
      * @return 实际进账的人数（0 = 没发：赛季没开、没人打够门槛而且 bonus 又都是 0、或全是 Bot）
      */
+    public WarScoreBoard.SettlementAwardPlan planWarSeasonPoints(WarScoreBoard board, WarScoreBoard.Result result) {
+        java.util.Objects.requireNonNull(board,"board");
+        java.util.Objects.requireNonNull(result,"result");
+        String seasonId=seasonIdOrNull(board.startedAt());
+        if(seasonId==null)return new WarScoreBoard.SettlementAwardPlan(null,List.of());
+
+        var rules=assembler.warSeasonPoints();
+        var pending=new java.util.TreeMap<String,Long>();
+        for(var row:board.playerKillLedger().entrySet()) {
+            long points=rules.pointsOf(row.getValue());
+            if(points>0)pending.merge(row.getKey(),points,Math::addExact);
+        }
+
+        long participationStart=board.siegeClockStartedAt();
+        Long settledAt=board.settledAt();
+        if(settledAt==null)throw new IllegalStateException("Settled War is missing its durable settlement time");
+        long participationEnd=Math.min(settledAt,Math.addExact(participationStart,board.rules().durationMillis()));
+        for(String nationId:result.scores().keySet()) {
+            long bonus=rules.bonusOf(nationId,result.winnerId(),board.initiatorNationId());
+            if(bonus<=0)continue;
+            Map<String,Long> weights=memberTimeWeights(nationId,participationStart,participationEnd);
+            if(weights.isEmpty())throw new IllegalStateException("War fixed award has no positive human membership interval; award remains pending (nation="+nationId+", window=["+participationStart+","+participationEnd+"))");
+            for(var share:com.ironoath.core.reward.RewardSplit.byWeight(weights,bonus).entrySet())
+                pending.merge(share.getKey(),share.getValue(),Math::addExact);
+        }
+
+        var humans=pending.entrySet().stream().filter(row->row.getValue()>0
+                && bots.humanOnly(row.getKey(),"War season award")!=null).toList();
+        var briefs=humans.isEmpty()?Map.<String,PlayerBrief>of():players.findBriefs(
+                humans.stream().map(Map.Entry::getKey).collect(java.util.stream.Collectors.toSet()));
+        var awards=new ArrayList<WarScoreBoard.SettlementAward>(humans.size());
+        for(var row:humans) {
+            var brief=briefs.get(row.getKey());
+            awards.add(new WarScoreBoard.SettlementAward(row.getKey(),
+                    brief==null?null:brief.nickName(),row.getValue()));
+        }
+        return new WarScoreBoard.SettlementAwardPlan(seasonId,awards);
+    }
+
+    private Map<String,Long> memberTimeWeights(String nationId,long warStart,long warEnd) {
+        if(warEnd<=warStart)return Map.of();
+        Nation nation=nations.findById(nationId).orElse(null);
+        if(nation==null)return Map.of();
+        var allianceIds=new java.util.TreeSet<String>(nation.memberAllianceIds());
+        nation.formerAllianceMemberships().forEach(period->allianceIds.add(period.allianceId()));
+        var weights=new java.util.TreeMap<String,Long>();
+        for(String allianceId:allianceIds) {
+            var nationPeriods=nation.allianceMembershipPeriods(allianceId);
+            var memberPeriods=social.allianceMemberEpochs(allianceId);
+            for(var nationPeriod:nationPeriods) {
+                long countryFrom=Math.max(warStart,nationPeriod.fromAt());
+                long countryUntil=Math.min(warEnd,nationPeriod.untilAt());
+                if(countryUntil<=countryFrom)continue;
+                for(var memberPeriod:memberPeriods) {
+                    long from=Math.max(countryFrom,memberPeriod.fromAt());
+                    long until=Math.min(countryUntil,memberPeriod.untilAt());
+                    if(until<=from || bots.humanOnly(memberPeriod.playerId(),"War membership split")==null)continue;
+                    long duration=until-from;
+                    weights.merge(memberPeriod.playerId(),duration,Math::addExact);
+                }
+            }
+        }
+        return Map.copyOf(weights);
+    }
+
+    /** Apply the already frozen per-war payload; one source receipt per player prevents replay increments. */
     public int reportWarSeasonPoints(WarScoreBoard board, WarScoreBoard.Result result) {
-        String seasonId = seasonIdOrNull();
-        if (seasonId == null) {
-            return 0;
-        }
-        SeasonRulesAssembler.WarSeasonPoints rules = assembler.warSeasonPoints();
-        // 个人 → 这一场该进账的总分。LinkedHashMap：同一个人在击杀账和花名册里都出现时只留一行，
-        // 而插入顺序让"发奖日志"和用例读到的顺序一致（不依赖 map 的哈希顺序）。
-        Map<String, Long> pending = new LinkedHashMap<>();
-        for (Map.Entry<String, Long> row : board.playerKillLedger().entrySet()) {
-            long score = rules.pointsOf(row.getValue());
-            if (score > 0L) {
-                pending.merge(row.getKey(), score, Long::sum);
-            }
-        }
-
-        // 胜负来源只有一份：内核 settle() 那一次的返回值（第二次调它直接抛，积分也已定格）。
-        // 这里要求它非空而不是"没有就少发一档"—— 传 null 的调用方以为自己发了奖而实际没发，
-        // 那是一次静默少发；抛出来才能在下一次探针里被看见。
-        java.util.Objects.requireNonNull(result,
-                "国战赛季分必须带结算结果：winnerId 与参战方都只能从 WarScoreBoard#settle 那一份拿");
-        String winnerId = result.winnerId();
-        String initiatorId = board.initiatorNationId();
-        // result.scores() 的键集就是参战方全集，且行序与 winnerId 出自同一次遍历（两者不可能对不上）
-        for (String nationId : result.scores().keySet()) {
-            long bonus = rules.bonusOf(nationId, winnerId, initiatorId);
-            if (bonus <= 0L) {
-                continue;
-            }
-            // 只在真的要发的时候才去捞这一国的花名册 —— 上面那句短路是一条判据，不是一句优化
-            Nation nation = nations.findById(nationId).orElse(null);
-            for (String playerId : membership.playerIdsOf(nation)) {
-                pending.merge(playerId, bonus, Long::sum);
-            }
-        }
-
-        List<String> humans = new ArrayList<>();
-        for (Map.Entry<String, Long> row : pending.entrySet()) {
-            // bonus 全为 0 而击杀又没过门槛的人不会出现在 pending 里（两条路都给了 0 才被挡在门外），
-            // 所以"不建行"这一形状在击杀与 bonus 之间是同一条（见 pointsOf 与那行门槛参数的 why）。
-            if (row.getValue() <= 0L || bots.humanOnly(row.getKey(), "国战赛季分") == null) {
-                continue;
-            }
-            humans.add(row.getKey());
-        }
-        if (humans.isEmpty()) {
-            return 0;
-        }
-        // 名字一次批量读回（只取投影，不搬整档）：这条路一发奖就是整国成员，
-        // 每人一次 findByPlayerId 会把"花名册那一跳已经批量"这件事在下一跳原样还回去。
-        Map<String, PlayerBrief> briefs = players.findBriefs(humans);
-        int applied = 0;
-        for (String playerId : humans) {
-            long score = pending.get(playerId);
-            boards.accumulate(seasonId, SeasonSettlement.Board.WAR,
-                    new SeasonSettlement.Entry(playerId,
-                            briefs.get(playerId) == null ? null : briefs.get(playerId).nickName(),
-                            score),
-                    score);
+        java.util.Objects.requireNonNull(result,"settled War result is required");
+        var plan=board.settlementAwardPlan();
+        if(plan==null)plan=planWarSeasonPoints(board,result);
+        if(plan.seasonId()==null)return 0;
+        String sourceId="war:"+board.startedAt();
+        String operationId=sourceId+":season-award";
+        int applied=0;
+        for(var award:plan.awards()) {
+            var increment=new SeasonBoardStore.ScopedIncrement(sourceId,1,operationId,
+                    award.playerId(),award.displayName(),award.points());
+            var recorded=boards.recordScopedIncrement(plan.seasonId(),SeasonSettlement.Board.WAR,increment);
+            if(!increment.equals(recorded))throw new IllegalStateException("War season award receipt payload mismatch");
+            var readback=boards.scopedIncrementOf(plan.seasonId(),SeasonSettlement.Board.WAR,
+                    award.playerId(),sourceId).orElseThrow(()->new IllegalStateException("War season award receipt was not persisted"));
+            if(!increment.equals(readback))throw new IllegalStateException("War season award receipt differs from frozen plan");
             applied++;
         }
         return applied;
     }
+
 
     /**
      * 一页榜 + 我的名次（未上榜时名次为 null，不用 0 冒充 —— 验收 2）。

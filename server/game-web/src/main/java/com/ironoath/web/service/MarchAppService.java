@@ -217,7 +217,11 @@ public class MarchAppService {
     }
 
     private MarchResp doSend(String playerId, MarchReq req, long now) {
-        processDue(playerId, now);
+        processDue(playerId,now);
+        return worldAppService.withStableCapitalTarget(()->doSendWithStableTarget(playerId,req,now));
+    }
+
+    private MarchResp doSendWithStableTarget(String playerId,MarchReq req,long now) {
         Coord home = worldAppService.homeOf(playerId);
         Coord target = requireCoord(req.toX(), req.toY());
         if (target.equals(home)) {
@@ -729,6 +733,7 @@ public class MarchAppService {
         java.util.Set<String> candidates = new java.util.LinkedHashSet<>();
         socialStore.pendingRallyDepartures().forEach(plan -> candidates.add(plan.rallyId()));
         socialStore.dueRallies(now).forEach(rally -> candidates.add(rally.rallyId()));
+        if(!candidates.isEmpty())worldAppService.recoverPendingCapitalRelocations();
         int departed = 0;
         for (String rallyId : candidates) {
             try {
@@ -741,7 +746,7 @@ public class MarchAppService {
                         socialAppService.settleDueRally(latest, now);
                     }
                     var plan = socialStore.rallyDepartureOf(rallyId).orElse(null);
-                    return plan != null && consumeRallyDeparture(plan, now);
+                    return plan != null && worldAppService.withStableCapitalTargetAfterRecovery(()->consumeRallyDeparture(plan,now));
                 });
                 if (created) { departed++; }
             } catch (RuntimeException failure) {
@@ -847,6 +852,9 @@ public class MarchAppService {
         March.TargetType targetType = rallyTargetType(rally.targetType(),rally.scope());
         WorldGenerator.Cell cell = worldAppService.cellAt(target);
         String targetId = targetEntityId(cell, target);
+        if(targetType==March.TargetType.STRATEGIC_TARGET
+                &&(!cell.entityType().isStrategic()||targetId==null||targetId.isBlank()))
+            throw new BizException(ErrorCode.WORLD_TARGET_INVALID,"Strategic rally target no longer exists at its prepared coordinates");
         requireTargetOutsideRally(rally, targetType, target, targetId);
 
         Map<String, Integer> speeds = new LinkedHashMap<>();

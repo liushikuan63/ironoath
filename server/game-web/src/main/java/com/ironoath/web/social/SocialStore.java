@@ -38,6 +38,13 @@ import com.ironoath.core.social.Squad;
 public interface SocialStore {
 
     /** A player's eligibility interval in one social alliance, using [fromAt, untilAt). */
+    record AllianceMemberEpoch(String playerId,long fromAt,long untilAt) {
+        public AllianceMemberEpoch {
+            if(playerId==null || playerId.isBlank() || fromAt<0 || untilAt<fromAt)
+                throw new IllegalArgumentException("Alliance member interval is invalid");
+        }
+    }
+
     record AllianceMembershipEpoch(String allianceId,long fromAt,long untilAt) {
         public AllianceMembershipEpoch {
             if(allianceId==null || allianceId.isBlank() || fromAt<0 || untilAt<fromAt)
@@ -184,6 +191,9 @@ public interface SocialStore {
     default List<AllianceMembershipEpoch> allianceMembershipEpochs(String playerId) {
         return List.of();
     }
+
+    /** Historical member intervals for one alliance, used to settle time-proportional War awards. */
+    default List<AllianceMemberEpoch> allianceMemberEpochs(String allianceId) { return List.of(); }
 
     /**
      * Snapshot retained membership epochs and lazily open an epoch at {@code observedAt} when a current

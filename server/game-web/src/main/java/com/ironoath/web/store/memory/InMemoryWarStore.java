@@ -184,6 +184,17 @@ public final class InMemoryWarStore implements WarStore {
         return Optional.ofNullable(byId.get(WarStore.documentIdOf(startedAt))).map(this::toDomain);
     }
 
+    @Override public synchronized WarScoreBoard freezeSettlementAwardPlan(long startedAt,
+            WarScoreBoard.SettlementAwardPlan plan) {
+        var id=WarStore.documentIdOf(startedAt);
+        var stored=byId.get(id);
+        if(stored==null)throw new IllegalStateException("War settlement is missing");
+        var board=toDomain(stored);
+        board.freezeSettlementAwardPlan(plan);
+        writeBound(board);
+        return toDomain(byId.get(id));
+    }
+
     @Override public synchronized WarScoreBoard.BattleEvent recordBattleEvent(WarScoreBoard.BattleEvent event) {
         if(event==null)throw new IllegalArgumentException("原战斗事件不得为空");
         var original=byId.get(WarStore.documentIdOf(event.warStartedAt()));
@@ -251,7 +262,7 @@ public final class InMemoryWarStore implements WarStore {
         boolean settledNow = WarStore.dueToSettle(board, now);
         if(settledNow && board.hasPendingBattleReservations())
             return Optional.of(WarStore.Settlement.notSettled(board));
-        WarScoreBoard.Result result = null;
+        WarScoreBoard.Result result = settledNow ? null : board.settlementResult();
         if (settledNow) {
             if (board.phase() == WarScoreBoard.Phase.PREPARATION) {
                 board.expirePreparation(now);

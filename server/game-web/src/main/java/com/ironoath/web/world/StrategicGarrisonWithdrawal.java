@@ -63,6 +63,7 @@ public final class StrategicGarrisonWithdrawal {
 
     /** 当前槽仍留存时按冻结主人鉴权重放；完成后只回执，不重新创建March或队列。 */
     public Optional<March> replay(String playerId,String marchId) {
+        recoverCapitalRelocationsBeforeNationLock();
         var slot=operations.findByOperationId("withdraw:"+marchId).orElse(null);
         if(slot!=null) {
             requirePlayer(playerId,withdrawal(slot).stationed().playerId());
@@ -109,6 +110,7 @@ public final class StrategicGarrisonWithdrawal {
             if(!observed.hasGarrisonOwnership() || observed.status()!=March.Status.STATIONED)
                 throw state("只有实际驻军可以执行目标撤防");
             try {
+                recoverCapitalRelocationsBeforeNationLock();
                 return social.runRallyDepartureLocked(observed.rallyId(),()->withTarget(observed.targetId(),()->{
                     var slot=operations.findByTargetId(observed.targetId()).orElse(null);
                     if(slot!=null && !slot.completed()) {
@@ -297,6 +299,9 @@ public final class StrategicGarrisonWithdrawal {
     private WorldTargets targetDirectory(ConfigRegistry source) {
         return capitalTargets==null?WorldTargets.from(source):capitalTargets.resolve(source).targets();
     }
+    private void recoverCapitalRelocationsBeforeNationLock(){
+        if(capitalTargets!=null)capitalTargets.recoverPendingRelocations();
+    }
     /** 发布者已验证原攻守国家/集结锁；只授予目标临界区，不越过待完成操作或代做恢复。 */
     public <T> T runCombatPublicationLocked(String id,Supplier<T> publication) {
         if(id==null || id.isBlank() || publication==null)throw new IllegalArgumentException("目标发布上下文不得为空");
@@ -307,7 +312,9 @@ public final class StrategicGarrisonWithdrawal {
         var prior=targetScope.get();
         if(prior!=null && !prior.equals(id))throw new IllegalStateException("目标锁内禁止转入另一目标");
         return locks.runLocked("@strategic-target:"+id,3000,()->{
-            targetScope.set(id);try{return action.get();}finally{if(prior==null)targetScope.remove();else targetScope.set(prior);}
+            targetScope.set(id);try{
+                return capitalTargets==null?action.get():capitalTargets.withStableTargetAfterRecovery(action);
+            }finally{if(prior==null)targetScope.remove();else targetScope.set(prior);}
         });
     }
     private static TargetOperationStore.WithdrawalPlan withdrawal(TargetOperationStore.Snapshot slot){

@@ -42,7 +42,10 @@ class MarchSendSinglePlayerReadTest {
                 "server/game-web/src/main/java/com/ironoath/web/service/MarchAppService.java");
         String text = Files.readString(source);
 
-        int dstart = text.indexOf("private MarchResp doSend(");
+        int sendStart = text.indexOf("private MarchResp doSend(");
+        int sendEnd = text.indexOf("\n    }",sendStart);
+        String sendBody = text.substring(sendStart,sendEnd<0?text.length():sendEnd);
+        int dstart = text.indexOf("private MarchResp doSendWithStableTarget(");
         assertThat(dstart).as("必须找到 doSend").isGreaterThan(0);
         int dend = text.indexOf("\n    }", dstart);
         String dbody = text.substring(dstart, dend < 0 ? text.length() : dend);
@@ -50,8 +53,9 @@ class MarchSendSinglePlayerReadTest {
         int reads = dbody.split("findByPlayerId", -1).length - 1;
         assertThat(reads).as("doSend 里玩家档只能读一次").isEqualTo(1);
 
-        int settleAt = dbody.indexOf("processDue(");
+        int settleAt = dbody.indexOf("homeOf(");
         int readAt = dbody.indexOf("findByPlayerId");
+        int stableTargetAt = sendBody.indexOf("withStableCapitalTarget(");
         assertThat(settleAt).as("必须能看到 processDue").isGreaterThan(0);
         assertThat(readAt)
                 .as("共享读必须放在 processDue 之后（它会写玩家档，读在前面是结算前的旧快照）")
@@ -75,5 +79,15 @@ class MarchSendSinglePlayerReadTest {
         assertThat(tbody)
                 .as("给定存档时用它，不再自己读")
                 .contains("knownSave");
+        assertThat(stableTargetAt).as("stable capital target scope follows processDue").isGreaterThan(settleAt);
+        int rallyStart=text.indexOf("public int departDueRallies(");
+        int rallyEnd=text.indexOf("\n    }",rallyStart);
+        String rallyBody=text.substring(rallyStart,rallyEnd<0?text.length():rallyEnd);
+        int recoverAt=rallyBody.indexOf("recoverPendingCapitalRelocations()");
+        int rallyLockAt=rallyBody.indexOf("runRallyDepartureLocked(");
+        assertThat(recoverAt).as("capital recovery runs before acquiring a rally Nation lock").isGreaterThanOrEqualTo(0);
+        assertThat(recoverAt).isLessThan(rallyLockAt);
+        assertThat(rallyBody).as("rally departure reuses the already-recovered stable capital scope")
+                .contains("worldAppService.withStableCapitalTargetAfterRecovery(()->consumeRallyDeparture(plan,now))");
     }
 }

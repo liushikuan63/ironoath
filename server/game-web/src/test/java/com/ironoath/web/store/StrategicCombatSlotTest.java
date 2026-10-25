@@ -212,6 +212,30 @@ class StrategicCombatSlotTest {
         assertThatThrownBy(()->original.target().defender().troops().clear()).isInstanceOf(UnsupportedOperationException.class);
     }
 
+    @ParameterizedTest @EnumSource(Backend.class)
+    void completedCapitalRelocationReanchorsLiveTargetWithoutChangingFrozenCombatFacts(Backend backend) {
+        var directory=new com.ironoath.web.service.WarCapitalTargetResolver(
+                mock(NationStore.class),mock(WarStore.class),mock(com.ironoath.core.world.WorldRepository.class));
+        var oldCoord=com.ironoath.web.service.WorldTargets.from(ConfigRegistry.loadFromDirectory(Path.of("contract/config")))
+                .targets().stream().filter(t->t.definition().id().equals("capital_center"))
+                .findFirst().orElseThrow().coord();
+        var newCoord=Coord.of(300,280);
+        var battle=dynamicCapitalBattle(2380,oldCoord,directory);
+        var frozen=TargetOperationStore.CombatPlan.create(battle,1);
+        var store=store(backend);var pending=TargetOperationStore.Snapshot.combat(1,false,frozen);
+        assertThat(store.compareAndSet(pending,0)).isTrue();
+        assertThatThrownBy(()->pending.relocateCapitalAnchor(newCoord)).isInstanceOf(IllegalStateException.class);
+        var completed=TargetOperationStore.Snapshot.combat(2,true,frozen);
+        assertThat(store.compareAndSet(completed,1)).isTrue();
+        var moved=completed.relocateCapitalAnchor(newCoord);
+        assertThat(store.compareAndSet(moved,2)).as("completed operation allows only a live capital anchor update").isTrue();
+        var restored=(backend==Backend.MONGO?store(backend):store).findByTargetId("capital_center").orElseThrow();
+        assertThat(restored.anchor().x()).isEqualTo(newCoord.x());assertThat(restored.anchor().y()).isEqualTo(newCoord.y());
+        assertThat(restored.combatPlan().battle()).isEqualTo(battle);
+        assertThat(restored.combatPlan().battle().target().x()).isEqualTo(oldCoord.x());
+        assertThat(restored.combatPlan().battle().target().y()).isEqualTo(oldCoord.y());
+    }
+
     @Test void malformedMixedOrMissingPayloadAndWrongTargetCannotBecomeAbsence() {
         var battle=TargetOperationStore.CombatPlan.create(battle(2380),1);
         var withdrawal=TargetOperationStoreTest.plan("ambiguous",1,120);

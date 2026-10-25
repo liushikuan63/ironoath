@@ -7,6 +7,7 @@ import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.world.Coord;
 import com.ironoath.web.world.StrategicTargetDefender;
 import java.util.Objects;
+import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -46,6 +47,15 @@ public final class StrategicTargetCircleGuard {
         if(targetPower<=0)return;
         long attackerPower=refresh.refresh(attackerId).power().matchPower();
         guard.guardStrategicCircle(attackerPower,targetPower,rallySize);
+    }
+
+    public void recoverPendingRelocations() {
+        if(capitalTargets!=null)capitalTargets.recoverPendingRelocations();
+    }
+
+    public <T> T withStableTargetAfterRecovery(Supplier<T> action) {
+        Objects.requireNonNull(action);
+        return capitalTargets==null?action.get():capitalTargets.withStableTargetAfterRecovery(action);
     }
 
     /** Arrival-time recheck uses the defender snapshot already captured under the target operation lock. */

@@ -88,6 +88,7 @@ class RankEndpointTest {
     @Autowired private SocialAppService social;
     @Autowired private SocialStore socialStore;
     @Autowired private NationStore nationStore;
+    @Autowired private SeasonBoardStore endpointBoards;
     @Autowired private BotRegistry bots;
     @Autowired private TimeService timeService;
     @Autowired private com.ironoath.core.reward.RewardService rewardService;
@@ -105,6 +106,7 @@ class RankEndpointTest {
         socialStore.clear();
         nationStore.clear();
         bots.clear();
+        endpointBoards.clear();
         ConfigRegistry anchored = anchoredConfigs();
         SeasonRulesAssembler assembler = new SeasonRulesAssembler(anchored);
         SeasonBoardStore boards = new InMemorySeasonBoardStore();
@@ -225,7 +227,7 @@ class RankEndpointTest {
         ranks.reportWarSeasonPoints(board, outcome);
         assertThat(ranks.list(hunter, RankType.WAR, 1, 0).entries().get(0).value())
                 .as("累加语义调两次就是两倍分 —— settledNow 旗标存在的全部理由")
-                .isEqualTo(2L * (points.minKills() + 40L) * points.pointPerKill());
+                .isEqualTo((points.minKills() + 40L) * points.pointPerKill());
     }
 
     @Test
@@ -588,57 +590,115 @@ class RankEndpointTest {
     @Test
     @DisplayName("3b-2 三条加成各归各位：发起国成员拿参与+发起，胜国成员拿参与+胜方")
     void bonusesLandPerNationIdentityOnRosterMembers() throws Exception {
-        // 进攻方只打 12、防守方打 40 ⇒ 防守方胜，而发起方是那个输了的国家：三档各归一处，互不遮蔽
         War war = warWithTwoNations(12L, 40L);
         ConfigRegistry anchored = anchoredWithBonuses(7L, 5L, 3L);
         var points = new SeasonRulesAssembler(anchored).warSeasonPoints();
-        assertThat(points.winner()).as("夹具前提：胜方分为正数").isPositive();
-        assertThat(points.participant()).as("夹具前提：参与分为正数").isPositive();
-        assertThat(points.initiatorBonus()).as("夹具前提：发起加成为正数").isPositive();
         RankBoardService svc = warService(anchored);
 
         assertThat(svc.reportWarSeasonPoints(war.board(), war.outcome()))
-                .as("四名人全进账：花名册是按国捞的，不是按击杀账")
+                .as("all four human members receive a positive share")
                 .isEqualTo(4);
-        Map<String, Long> rows = warRows(svc, war);
-
-        // 发起国（这一场输了）那个只挂名的成员：参与分 + 发起加成，没有胜方分
-        assertThat(rows.get(war.initiatorMate()))
-                .as("发起国成员 = 参与分 + 发起加成（他一个人都没消灭，所以一毫无击杀分）")
-                .isEqualTo(points.participant() + points.initiatorBonus());
-        assertThat(rows.get(war.winnerMate()))
-                .as("胜国成员 = 参与分 + 胜方分（他没有发起加成）")
-                .isEqualTo(points.participant() + points.winner());
-        // 击杀分与 bonus 叠在同一个人身上，走的是同一次 accumulate
-        assertThat(rows.get(war.initiatorKiller()))
-                .as("同一个人的两种分合成一行：击杀×系数 + 参与 + 发起")
-                .isEqualTo(war.initiatorKills() * points.pointPerKill()
-                        + points.participant() + points.initiatorBonus());
-        assertThat(rows.get(war.winnerKiller()))
-                .isEqualTo(war.winnerKills() * points.pointPerKill()
-                        + points.participant() + points.winner());
-        assertThat(rows).as("榜上只有这四个人，花名册没有多捞出谁").hasSize(4);
+        var initiatorWeights=warNationWeights(war,war.board().initiatorNationId());
+        String opponentNationId=war.outcome().scores().keySet().stream().filter(id->!id.equals(war.board().initiatorNationId())).findFirst().orElseThrow();
+        var winnerWeights=warNationWeights(war,opponentNationId);
+        var expected=new java.util.TreeMap<String,Long>();
+        com.ironoath.core.reward.RewardSplit.byWeight(initiatorWeights,points.participant()+points.initiatorBonus())
+                .forEach((id,value)->expected.merge(id,value,Long::sum));
+        com.ironoath.core.reward.RewardSplit.byWeight(winnerWeights,points.participant()+points.winner())
+                .forEach((id,value)->expected.merge(id,value,Long::sum));
+        expected.merge(war.initiatorKiller(),points.pointsOf(war.initiatorKills()),Long::sum);
+        expected.merge(war.winnerKiller(),points.pointsOf(war.winnerKills()),Long::sum);
+        assertThat(warRows(svc,war)).isEqualTo(expected);
     }
 
     @Test
+    @DisplayName("War固定奖励按参战成员区间拆分，重试不重复入账")
+    void warFixedRewardsSplitByMembershipTimeAndReplayOnce() throws Exception {
+        War war = warWithTwoNations(1L, 1L);
+        ConfigRegistry anchored = anchoredWithBonuses(7L, 5L, 3L);
+        long intervalStart=war.board().siegeClockStartedAt();
+        long intervalEnd=war.board().settledAt();
+        for(String playerId:List.of(war.initiatorKiller(),war.initiatorMate(),war.winnerKiller(),war.winnerMate())) {
+            var alliance=socialStore.allianceOf(playerId).orElseThrow();
+            assertThat(socialStore.allianceMemberEpochs(alliance.id()))
+                    .as("saved synthetic member history for %s",playerId)
+                    .anyMatch(epoch->epoch.playerId().equals(playerId)
+                            && epoch.fromAt()<intervalEnd && epoch.untilAt()>intervalStart);
+            var nation=nationStore.findByAlliance(alliance.id()).orElseThrow();
+            assertThat(nation.allianceMembershipPeriods(alliance.id()))
+                    .as("saved synthetic nation membership for %s",playerId)
+                    .anyMatch(epoch->epoch.fromAt()<intervalEnd && epoch.untilAt()>intervalStart);
+        }
+        var departedAlliance=socialStore.allianceOf(war.initiatorMate()).orElseThrow();
+        long expectedAllianceVersion=departedAlliance.version();
+        departedAlliance.leave(war.initiatorMate());
+        socialStore.saveAlliance(departedAlliance,expectedAllianceVersion,intervalStart+250L);
+        RankBoardService svc = warService(anchored);
+
+        svc.reportWarSeasonPoints(war.board(), war.outcome());
+        Map<String, Long> first = warRows(svc, war);
+        svc.reportWarSeasonPoints(war.board(), war.outcome());
+        Map<String, Long> replayed = warRows(svc, war);
+
+        assertThat(first.values().stream().mapToLong(Long::longValue).sum())
+                .as("只按参战 nation 发放一次：initiator 8 分、winner 12 分")
+                .isEqualTo(20L);
+        assertThat(replayed).isEqualTo(first);
+        assertThat(first.keySet()).containsExactlyInAnyOrder(
+                war.initiatorKiller(), war.initiatorMate(), war.winnerKiller(), war.winnerMate());        var points=new SeasonRulesAssembler(anchored).warSeasonPoints();
+        var expected=new java.util.TreeMap<String,Long>();
+        com.ironoath.core.reward.RewardSplit.byWeight(
+                warNationWeights(war,war.board().initiatorNationId()),points.participant()+points.initiatorBonus())
+                .forEach((id,value)->expected.merge(id,value,Long::sum));
+        String opponentNationId=war.outcome().scores().keySet().stream()
+                .filter(id->!id.equals(war.board().initiatorNationId())).findFirst().orElseThrow();
+        com.ironoath.core.reward.RewardSplit.byWeight(
+                warNationWeights(war,opponentNationId),points.participant()+points.winner())
+                .forEach((id,value)->expected.merge(id,value,Long::sum));
+        expected.merge(war.initiatorKiller(),points.pointsOf(war.initiatorKills()),Long::sum);
+        expected.merge(war.winnerKiller(),points.pointsOf(war.winnerKills()),Long::sum);
+        assertThat(first).isEqualTo(expected);
+    }
+
+    @Test
+    void fixedWarAwardWithZeroHistoricalOverlapStaysPendingWithoutCredit() throws Exception {
+        War war=warWithTwoNations(1L,1L);
+        long warStart=war.board().siegeClockStartedAt();
+        for(String playerId:List.of(war.initiatorKiller(),war.winnerKiller())) {
+            var alliance=socialStore.allianceOf(playerId).orElseThrow();
+            long expectedVersion=alliance.version();
+            alliance.disband(alliance.leaderId(),warStart);
+            socialStore.saveAlliance(alliance,expectedVersion,warStart);
+        }
+        var anchored=anchoredWithBonuses(7L,5L,3L);
+        RankBoardService svc=warService(anchored);
+
+        assertThatThrownBy(()->svc.reportWarSeasonPoints(war.board(),war.outcome()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("award remains pending");
+        assertThat(warRows(svc,war)).isEmpty();
+    }
+    @Test
     @DisplayName("3b-2 平分时不发胜方分：winnerId=null 原样继承，只发参与分与发起加成")
     void tiedWarPaysNoWinnerBonus() throws Exception {
-        War war = warWithTwoNations(40L, 40L, false);   // 两边同分且无人持王城 ⇒ 没有胜者
-        assertThat(war.outcome().winnerId())
-                .as("夹具前提：这一场真的打平了，否则下面那句断言什么都没测到").isNull();
+        War war = warWithTwoNations(40L, 40L, false);
+        assertThat(war.outcome().winnerId()).isNull();
         ConfigRegistry anchored = anchoredWithBonuses(7L, 5L, 3L);
         var points = new SeasonRulesAssembler(anchored).warSeasonPoints();
         RankBoardService svc = warService(anchored);
 
         svc.reportWarSeasonPoints(war.board(), war.outcome());
-        Map<String, Long> rows = warRows(svc, war);
-
-        assertThat(rows.get(war.winnerMate()))
-                .as("平分时没有人是胜者：只有参与分（这里多出 7 分就是系统替玩家挑了一个赢家）")
-                .isEqualTo(points.participant());
-        assertThat(rows.get(war.initiatorMate()))
-                .as("发起加成与胜负无关 —— 它正是 V18 那节的主钩子")
-                .isEqualTo(points.participant() + points.initiatorBonus());
+        var initiatorWeights=warNationWeights(war,war.board().initiatorNationId());
+        String opponentNationId=war.outcome().scores().keySet().stream().filter(id->!id.equals(war.board().initiatorNationId())).findFirst().orElseThrow();
+        var winnerWeights=warNationWeights(war,opponentNationId);
+        var expected=new java.util.TreeMap<String,Long>();
+        com.ironoath.core.reward.RewardSplit.byWeight(initiatorWeights,points.participant()+points.initiatorBonus())
+                .forEach((id,value)->expected.merge(id,value,Long::sum));
+        com.ironoath.core.reward.RewardSplit.byWeight(winnerWeights,points.participant())
+                .forEach((id,value)->expected.merge(id,value,Long::sum));
+        expected.merge(war.initiatorKiller(),points.pointsOf(war.initiatorKills()),Long::sum);
+        expected.merge(war.winnerKiller(),points.pointsOf(war.winnerKills()),Long::sum);
+        assertThat(warRows(svc,war)).isEqualTo(expected);
     }
 
     @Test
@@ -723,7 +783,7 @@ class RankEndpointTest {
                 countedPlayers, bots, paid, new SeasonRulesAssembler(paid), timeService);
         assertThat(paidSide.reportWarSeasonPoints(war.board(), war.outcome()))
                 .as("四个成员全进账：两个击杀者 + 两个只挂名的").isEqualTo(4);
-        assertThat(counter.countOf("allAlliances"))
+        assertThat(counter.countOf("allianceMemberEpochs"))
                 .as("花名册按<b>参战国</b>一次一趟（这一场有两个参战国），而不是按人也不按盟")
                 .isEqualTo(2);
         assertThat(counter.countOf("findBriefs"))
@@ -773,6 +833,27 @@ class RankEndpointTest {
         }
     }
 
+    private Map<String,Long> warNationWeights(War war,String nationId) {
+        long warStart=war.board().siegeClockStartedAt();
+        long warEnd=war.board().settledAt();
+        var nation=nationStore.findById(nationId).orElseThrow();
+        var allianceIds=new java.util.TreeSet<String>(nation.memberAllianceIds());
+        nation.formerAllianceMemberships().forEach(period->allianceIds.add(period.allianceId()));
+        var weights=new java.util.TreeMap<String,Long>();
+        for(String allianceId:allianceIds) {
+            for(var country:nation.allianceMembershipPeriods(allianceId)) {
+                long countryFrom=Math.max(warStart,country.fromAt());
+                long countryUntil=Math.min(warEnd,country.untilAt());
+                if(countryUntil<=countryFrom)continue;
+                for(var member:socialStore.allianceMemberEpochs(allianceId)) {
+                    long from=Math.max(countryFrom,member.fromAt());
+                    long until=Math.min(countryUntil,member.untilAt());
+                    if(until>from)weights.merge(member.playerId(),until-from,Math::addExact);
+                }
+            }
+        }
+        return Map.copyOf(weights);
+    }
     private War warWithTwoNations(long attackerKills, long defenderKills) throws Exception {
         return warWithTwoNations(attackerKills,defenderKills,true);
     }
@@ -796,11 +877,12 @@ class RankEndpointTest {
                 new com.ironoath.core.nation.WarScoreBoard(rules, timeService.serverNow(), attackerNation);
         board.registerNation(attackerNation);
         board.registerNation(defenderNation);
-        startBalancedSiege(board, attackerNation, defenderNation, timeService.serverNow());
-        if(defenderHoldsCapital)board.captureCapital(defenderNation,timeService.serverNow());
+        long warStartedAt=board.startedAt();
+        startBalancedSiege(board, attackerNation, defenderNation, warStartedAt);
+        if(defenderHoldsCapital)board.captureCapital(defenderNation,warStartedAt);
         board.recordKill(attackerNation, attackerLeader, attackerKills);
         board.recordKill(defenderNation, defenderLeader, defenderKills);
-        return new War(board, board.settle(timeService.serverNow()),
+        return new War(board, board.settle(Math.addExact(warStartedAt,1_000L)),
                 attackerLeader, attackerMate, attackerKills,
                 defenderLeader, defenderMate, defenderKills);
     }
