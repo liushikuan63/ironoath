@@ -8290,3 +8290,6 @@ TEST_EXIT=0
 
 
 | #2457 动态CAPITAL真实到达生产链覆盖Mongo COMBAT恢复 | 本格原子本地提交并FF主树；不推送 | #2456真实ArrivalProducer→完整恢复现扩MEMORY/MONGO两参数；恢复时新建MongoTargetOperationStore、MongoWarStore实例读pending战果，最终cap owner/capitalHolder/completed一致。屏蔽captureCapital恢复分支的MEMORY与MONGO mutant RED各1，合计2/2 failure/0 error/0 skip；恢复源码SHA一致，green2/2。Mongo是TestMongo随机库，未写真实玩家库。全量`check.sh`/`test.sh`最终读数见日志 | D:/tmp/ironoath-b13-capital-arrival-recovery-memory-mongo-mutant-red-20261025.log、ironoath-b13-capital-arrival-recovery-memory-mongo-green-20261025.log、D:/tmp/ironoath-b13-capital-arrival-recovery-full-test-20261025.log、D:/tmp/ironoath-b13-capital-arrival-recovery-check-20261025.log | 未做：真实NPC/玩家王城守军与部署验收、王城奖分/胜者奖励口径，迁都actor与未COMBAT在途March边界；军值/坐标不编造，B13未关闭。|
+
+
+| #2458 War结算落盘与赛季分进榜之间的崩溃窗口审计 | 源码审计/等待受益人时点裁决；本格不改业务实现 | InMemory/Mongo settleIfExpired只在首次settledNow=true返回Result；WarAppService其后才调RankBoardService.reportWarSeasonPoints。结算文档已SETTLED后崩溃会导致重读无Result/不重试；重放现有非幂等SeasonBoardStore.accumulate又可能重复，且seasonId/Nation roster按重试当前值重取。现有WarStoreEquivalence只验正常二次读取不重复发，不覆盖故障窗口 | D:/tmp/ironoath-b13-war-season-award-recovery-audit-20261025.log；WarStore.settleIfExpired、WarAppService.warStatus、RankBoardService.reportWarSeasonPoints | 未做：可靠恢复需先冻结结算季节与成员受益人、生成持久计划、逐玩家CAS回执/失败续跑。用户选择何时冻结成员与season仍待回答；不改奖励/计分数字，不宣称恢复验收通过。|
