@@ -8284,3 +8284,6 @@ TEST_EXIT=0
 
 
 | #2455 结算胜者严格取终局王城持有国 | 本格原子本地提交并FF主树；不推送 | 用户规则要求“王城持有到结束即胜”。有效旧算法mutant RED：积分高的n1虽未持有终局王城仍获winnerId；另一个用例在没人持有时也会因积分领先产生胜者，NationSystemTest47项中2 failure/0 error/0 skip。修后仅取capitalHolder，空持有返回null，积分账保持不变。Green：NationSystemTest47/0、WarStoreEquivalence44/0（内存/Mongo）、WarEndpoint27/0、RankEndpoint17/0；全量scripts/test.sh Maven六模块3517/0/0/0，Node20客户端1420/0/0/0。`scripts/check.sh` EXIT0见日志 | D:/tmp/ironoath-b13-capital-settlement-mutant-red-20261025.log、ironoath-b13-capital-settlement-targeted-final-20261025.log、ironoath-b13-capital-holder-full-test-20261025.log | 未做：胜者奖励、积分/奖励数值及无人持有王城后的额外处理；不改已冻结COMBAT/迁都边界、不写真实玩家库，5000未跑，B13保持开放。|
+
+
+| #2456 实际战略到达生产者发布王城COMBAT并走完完整恢复 | 本格原子本地提交并FF主树；不推送 | 新增真实StrategicCombatArrivalProducer→动态War目标CAPITAL→pending COMBAT→StrategicCombatRecovery整链用例，攻击胜利后断言目标归属/War资本持有均落盘且槽完成。移除资本恢复分支的mutant RED为1/1/0/0，源恢复SHA相同；真实生产链green1/0/0/0。测试夹具高兵量只确保攻击胜利，不更改单位配置。`scripts/test.sh` Maven六模块3517/0/0/0、Node20客户端1420/0/0/0；`scripts/check.sh` EXIT0见日志 | D:/tmp/ironoath-b13-arrival-capital-recovery-mutant-red-20261025.log、ironoath-b13-arrival-capital-recovery-green-final-20261025.log、ironoath-b13-capital-arrival-full-test-20261025.log、ironoath-b13-capital-arrival-check-20261025.log | 未做：真实NPC/玩家王城的实装验收、奖分与奖励数值、迁都权限和未进入COMBAT在途March；B13未关闭，无真实玩家库写入。|
