@@ -143,6 +143,8 @@ public final class WarScoreBoard {
      * （少发可以补，错发给别国再回收就是事故）。
      */
     private final String initiatorNationId;
+    /** 被宣战国家；旧 War 快照缺此字段时保持 null，不按参战顺序推断。 */
+    private final String targetNationId;
     private Phase phase = Phase.PREPARATION;
     /** 参战国家 id → 积分 */
     private final Map<String, long[]> scores = new LinkedHashMap<>();
@@ -191,18 +193,35 @@ public final class WarScoreBoard {
     /** 新宣战档带当前王城窗口终点；Long.MAX_VALUE 是未启用赛季的开发档，null 只给旧存档。 */
     public WarScoreBoard(Rules rules, long startedAt, String initiatorNationId,
                          Long preparationExpiresAt) {
+        this(rules, startedAt, initiatorNationId, null, preparationExpiresAt);
+    }
+
+    /** 新国战必须冻结被宣战国家身份，后续王城坐标从此 Nation 的当前快照解析。
+     * @param targetNationId 被宣战国家 id；旧战事可以是 null，不按参战行序推断。
+     */
+    public WarScoreBoard(Rules rules, long startedAt, String initiatorNationId,
+                         String targetNationId, Long preparationExpiresAt) {
         if (rules == null) {
             throw new IllegalArgumentException("rules 不得为 null");
         }
         if (preparationExpiresAt != null && preparationExpiresAt <= startedAt) {
             throw new IllegalArgumentException("筹备窗口终点必须晚于宣战时刻");
         }
+        if (targetNationId != null && targetNationId.isBlank()) {
+            throw new IllegalArgumentException("targetNationId 不得为空白");
+        }
+        if (targetNationId != null && targetNationId.equals(initiatorNationId)) {
+            throw new IllegalArgumentException("targetNationId 不能等于 initiatorNationId");
+        }
         this.rules = rules;
         this.startedAt = startedAt;
         this.preparationExpiresAt = preparationExpiresAt;
         this.initiatorNationId = initiatorNationId == null || initiatorNationId.isBlank()
                 ? null : initiatorNationId;
+        this.targetNationId = targetNationId;
     }
+
+    public String targetNationId() { return targetNationId; }
 
     /** 加入一个参战方。 */
     public void registerNation(String nationId) {
@@ -866,7 +885,9 @@ public final class WarScoreBoard {
      * 把某一次的值冻进存档，症状是改了 {@code global} 的 WAR_* 那几行对已有战事不生效且不报错。
      * 所以重建必须现取规则 —— 见 {@code WarRulesAssembler}。
      *
-     * <p><b>{@code initiatorNationId} 反过来说要进快照</b>：它是<b>这一场的事实</b>而不是规则，
+     * <p><b>{@code initiatorNationId} 与 {@code targetNationId} 都是战事事实，必须进快照</b>：
+     * 旧档缺 {@code targetNationId} 时保留 null，不能从参战行序推断目标国。
+     * 发起方同样不能结算时推断，因为它们是事实而不是规则，
      * 而结算发发起加成发生在<b>另一次请求</b>里（宣战那次不会发奖）。不带它的表现是
      * "内存板上有、落盘再读回来就没了" —— 于是 dev 上一切正常、生产上发起方永远领不到加成。
      *
@@ -877,7 +898,7 @@ public final class WarScoreBoard {
      * 顺带把「行序」变成显式的：{@link #settle} 的平分判定依赖遍历顺序，List 比 map 更诚实。
      */
 
-    public record Snapshot(long startedAt, Phase phase, String initiatorNationId,
+    public record Snapshot(long startedAt, Phase phase, String initiatorNationId, String targetNationId,
                            List<NationRow> nations,
                            String capitalHolder, long capitalHeldSince,
                            Map<String, Long> fatigue, Map<String, Long> playerKills,
@@ -891,7 +912,16 @@ public final class WarScoreBoard {
                         String capitalHolder,long capitalHeldSince,Map<String,Long> fatigue,Map<String,Long> playerKills,
                         List<String> goalClaimed,long totalKills,List<MarchFatigueReceipt> marchFatigueReceipts,Long siegeStartedAt,
                         Long preparationExpiresAt,Boolean abandonedWithoutSiege,List<BattleEvent> battleEvents) {
-            this(startedAt,phase,initiatorNationId,nations,capitalHolder,capitalHeldSince,fatigue,playerKills,goalClaimed,
+            this(startedAt,phase,initiatorNationId,null,nations,capitalHolder,capitalHeldSince,fatigue,playerKills,goalClaimed,
+                    totalKills,marchFatigueReceipts,siegeStartedAt,preparationExpiresAt,abandonedWithoutSiege,battleEvents,List.of());
+        }
+
+        /** 旧战略回执快照：没有闭战预留；缺 targetNationId 时保留历史未知，不推断参战顺序。 */
+        public Snapshot(long startedAt,Phase phase,String initiatorNationId,String targetNationId,List<NationRow> nations,
+                        String capitalHolder,long capitalHeldSince,Map<String,Long> fatigue,Map<String,Long> playerKills,
+                        List<String> goalClaimed,long totalKills,List<MarchFatigueReceipt> marchFatigueReceipts,Long siegeStartedAt,
+                        Long preparationExpiresAt,Boolean abandonedWithoutSiege,List<BattleEvent> battleEvents) {
+            this(startedAt,phase,initiatorNationId,targetNationId,nations,capitalHolder,capitalHeldSince,fatigue,playerKills,goalClaimed,
                     totalKills,marchFatigueReceipts,siegeStartedAt,preparationExpiresAt,abandonedWithoutSiege,battleEvents,List.of());
         }
 
@@ -900,7 +930,7 @@ public final class WarScoreBoard {
                         String capitalHolder,long capitalHeldSince,Map<String,Long> fatigue,Map<String,Long> playerKills,
                         List<String> goalClaimed,long totalKills,List<MarchFatigueReceipt> marchFatigueReceipts,Long siegeStartedAt,
                         Long preparationExpiresAt,Boolean abandonedWithoutSiege) {
-            this(startedAt,phase,initiatorNationId,nations,capitalHolder,capitalHeldSince,fatigue,playerKills,goalClaimed,
+            this(startedAt,phase,initiatorNationId,null,nations,capitalHolder,capitalHeldSince,fatigue,playerKills,goalClaimed,
                     totalKills,marchFatigueReceipts,siegeStartedAt,preparationExpiresAt,abandonedWithoutSiege,List.of(),List.of());
         }
 
@@ -927,6 +957,9 @@ public final class WarScoreBoard {
         public Snapshot {
             if (phase == null) {
                 throw new IllegalArgumentException("phase 不得为 null：没有 phase 就不知道该不该继续记分");
+            }
+            if (targetNationId != null && targetNationId.isBlank()) {
+                throw new IllegalArgumentException("targetNationId 不得为空白");
             }
             abandonedWithoutSiege = Boolean.TRUE.equals(abandonedWithoutSiege);
             nations = List.copyOf(nations == null ? List.of() : nations);
@@ -976,7 +1009,7 @@ public final class WarScoreBoard {
                     new Score(parts[0], parts[1], parts[2]),
                     held == null ? List.of() : List.copyOf(held)));
         }
-        return new Snapshot(startedAt, phase, initiatorNationId, rows, capitalHolder, capitalHeldSince,
+        return new Snapshot(startedAt, phase, initiatorNationId, targetNationId, rows, capitalHolder, capitalHeldSince,
                 new LinkedHashMap<>(fatigue), new LinkedHashMap<>(playerKills),
                 List.copyOf(goalClaimed), totalKills, List.copyOf(marchFatigueReceipts.values()), siegeStartedAt,
                 preparationExpiresAt, abandonedWithoutSiege,List.copyOf(battleEvents.values()),List.copyOf(pendingBattleReservations.values()));
@@ -1001,7 +1034,7 @@ public final class WarScoreBoard {
             gateMap.put(row.nationId(), new LinkedHashSet<>(row.gates()));
         }
         WarScoreBoard board = restore(rules, snapshot.startedAt(), snapshot.phase(),
-                snapshot.initiatorNationId(), scoreMap, gateMap,
+                snapshot.initiatorNationId(), snapshot.targetNationId(), scoreMap, gateMap,
                 snapshot.capitalHolder(), snapshot.capitalHeldSince(), snapshot.fatigue(),
                 snapshot.playerKills(), new LinkedHashSet<>(snapshot.goalClaimed()),
                 snapshot.totalKills(), snapshot.preparationExpiresAt());
@@ -1032,18 +1065,19 @@ public final class WarScoreBoard {
                                         String capitalHolder, long capitalHeldSince,
                                         Map<String, Long> fatigue, Map<String, Long> playerKills,
                                         Set<String> goalClaimed, long totalKills) {
-        return restore(rules, startedAt, phase, initiatorNationId, scores, gates,
+        return restore(rules, startedAt, phase, initiatorNationId, null, scores, gates,
                 capitalHolder, capitalHeldSince, fatigue, playerKills, goalClaimed, totalKills, null);
     }
 
     private static WarScoreBoard restore(Rules rules, long startedAt, Phase phase,
                                          String initiatorNationId,
+                                         String targetNationId,
                                          Map<String, long[]> scores, Map<String, Set<String>> gates,
                                          String capitalHolder, long capitalHeldSince,
                                          Map<String, Long> fatigue, Map<String, Long> playerKills,
                                          Set<String> goalClaimed, long totalKills,
                                          Long preparationExpiresAt) {
-        WarScoreBoard board = new WarScoreBoard(rules, startedAt, initiatorNationId, preparationExpiresAt);
+        WarScoreBoard board = new WarScoreBoard(rules, startedAt, initiatorNationId, targetNationId, preparationExpiresAt);
         board.phase = phase;
         // 逐份 clone 数组：传进来的那份 map 常常就是调用方手里的活对象，共享数组等于读返回别名
         for (Map.Entry<String, long[]> entry : scores.entrySet()) {
