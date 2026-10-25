@@ -132,6 +132,25 @@ class WarStoreEquivalenceTest {
     }
 
     @Test
+    @DisplayName("targetNationId survives memory and Mongo War persistence for later capital resolution")
+    void targetNationBindingSurvivesRoundTripOnBothStores() {
+        WarScoreBoard source = new WarScoreBoard(rules.rules(), T0, "attacker-nation", "target-nation", T0 + 60 * MINUTE);
+        source.registerNation("attacker-nation");
+        source.registerNation("target-nation");
+
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            assertThat(store.insertIfAbsent(source)).as("%s must persist the declared target nation", label).isTrue();
+
+            WarScoreBoard restored = store.findByStartedAt(T0).orElseThrow();
+
+            assertThat(restored.targetNationId()).as("%s must not infer a target from nation row order", label)
+                    .isEqualTo("target-nation");
+            assertThat(restored.toSnapshot().targetNationId()).isEqualTo("target-nation");
+        }
+    }
+
+    @Test
     @DisplayName("占领起点必须活过落盘：重启后结算占领分不能被重算或清零（验收 6 的防偷家机制）")
     void occupationStartSurvivesRoundTripOnBothStores() {
         for (WarStore store : bothStores()) {

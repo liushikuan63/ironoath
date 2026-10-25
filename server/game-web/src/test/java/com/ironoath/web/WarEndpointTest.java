@@ -210,6 +210,10 @@ class WarEndpointTest {
                     .isEqualTo("PREPARATION");
             assertThat(wars.findLatest().orElseThrow().preparationExpiresAt())
                     .isEqualTo(DayKey.startOfDayPlusDays(openAnchor, 42L));
+            JsonNode persistedWar = JsonUtils.readTree(JsonUtils.toJson(wars.findLatest().orElseThrow().toSnapshot()));
+            assertThat(persistedWar.path("targetNationId").asText())
+                    .as("宣战的 targetNationId 必须持久化，后续王城地图和 COMBAT 以该国都城解析")
+                    .isEqualTo(b.nationId);
 
             configs.reload("global", GlobalCfg.class,
                     withSeasonStart(originalGlobal, DayKey.startOfDayPlusDays(now, -10L)));

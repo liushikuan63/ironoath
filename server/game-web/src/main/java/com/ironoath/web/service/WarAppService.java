@@ -340,7 +340,7 @@ public class WarAppService {
                 // "谁先动的手"，而 WAR_SEASON_INITIATOR_BONUS 是 V18 那节的主钩子。
                 // 顺序仍然是 attacker 先 target 后 —— 内核 settle() 的平分判定按登记顺序遍历，
                 // 但发奖读的是显式的 initiatorNationId，不是行序（见 WarScoreBoard 那一段注释）。
-                WarScoreBoard board = new WarScoreBoard(assembler.rules(), now, attacker.id(),
+                WarScoreBoard board = new WarScoreBoard(assembler.rules(), now, attacker.id(), target.id(),
                         preparationExpiresAt == null ? Long.MAX_VALUE : preparationExpiresAt);
                 board.registerNation(attacker.id());
                 board.registerNation(target.id());
