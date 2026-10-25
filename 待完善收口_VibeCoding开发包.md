@@ -8293,3 +8293,6 @@ TEST_EXIT=0
 
 
 | #2458 War结算落盘与赛季分进榜之间的崩溃窗口审计 | 源码审计/等待受益人时点裁决；本格不改业务实现 | InMemory/Mongo settleIfExpired只在首次settledNow=true返回Result；WarAppService其后才调RankBoardService.reportWarSeasonPoints。结算文档已SETTLED后崩溃会导致重读无Result/不重试；重放现有非幂等SeasonBoardStore.accumulate又可能重复，且seasonId/Nation roster按重试当前值重取。现有WarStoreEquivalence只验正常二次读取不重复发，不覆盖故障窗口 | D:/tmp/ironoath-b13-war-season-award-recovery-audit-20261025.log；WarStore.settleIfExpired、WarAppService.warStatus、RankBoardService.reportWarSeasonPoints | 未做：可靠恢复需先冻结结算季节与成员受益人、生成持久计划、逐玩家CAS回执/失败续跑。用户选择何时冻结成员与season仍待回答；不改奖励/计分数字，不宣称恢复验收通过。|
+
+
+| #2459 War结算提交后榜分写失败必须可恢复 | 有效RED已建并提交；实现等待赛季/成员快照时点裁决 | WarEndpointTest在到期War先持久SETTLED后注入首次reportWarSeasonPoints失败；第二次GET仍200但榜服务只被调用1次，期望2次，1/1/0/0。源代码审计显示SETTLED重读不再带Result，WarAppService只在settledNow调用；RankBoardService用SeasonBoardStore.accumulate，简单重放可能重复。未改生产代码/数值；需先冻结同一season与受益成员计划，再做持久可幂等补偿。用户选择结算时、开战时或成员分段待答 | D:/tmp/ironoath-b13-war-season-award-retry-red-20261025.log、D:/tmp/ironoath-b13-war-season-award-recovery-audit-20261025.log | 未做：award plan持久化、逐人CAS回执/断点恢复与Mongo故障注入；当前完整scripts/test绿读数早于这条故意保留的RED，不能据此称当前工作树全绿；B13未完成。|
