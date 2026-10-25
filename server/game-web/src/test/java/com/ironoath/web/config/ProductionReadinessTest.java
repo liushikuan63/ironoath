@@ -241,6 +241,34 @@ class ProductionReadinessTest {
         assertThatThrownBy(gate::afterPropertiesSet).isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    @DisplayName("GameItem readiness 要求 SAS ApplicationID 与两个环境的 BackendConfigID")
+    void gameItemReadinessRequiresCallbackIdentityForBothEnvironments() {
+        var environment = new org.springframework.mock.env.MockEnvironment()
+                .withProperty("ironoath.pay.app-key-prod", "test-production-app-key")
+                .withProperty("ironoath.pay.app-key-sandbox", "test-sandbox-app-key")
+                .withProperty("ironoath.pay.superapp-signature-secret", "test-secret-1234");
+        var sessionKeys = new com.ironoath.web.security.WeChatSessionKeyStore() {
+            @Override public void put(String playerId, String sessionKey, long expiresAtMillis) {}
+            @Override public java.util.Optional<String> find(String playerId, long nowMillis) {
+                return java.util.Optional.empty();
+            }
+            @Override public boolean productionReady() { return true; }
+        };
+        var signer = new com.ironoath.web.pay.MidasGameItemSigner(environment, sessionKeys, new ObjectMapper());
+
+        assertThat(signer.productionReady()).isFalse();
+        environment.setProperty("ironoath.pay.superapp-application-id", "test-sas-app");
+        environment.setProperty("ironoath.pay.superapp-backend-config-id-prod", "test-prod-backend");
+        environment.setProperty("ironoath.pay.superapp-backend-config-id-sandbox", "test-sandbox-backend");
+
+        assertThat(signer.productionReady()).isTrue();
+        assertThat(signer.verifyCallbackIdentity("test-sas-app", "test-prod-backend", "0")).isTrue();
+        assertThat(signer.verifyCallbackIdentity("test-sas-app", "test-sandbox-backend", "1")).isTrue();
+        assertThat(signer.verifyCallbackIdentity("test-sas-app", "test-prod-backend", "1")).isFalse();
+        assertThat(signer.verifyCallbackIdentity("other-app", "test-prod-backend", "0")).isFalse();
+    }
+
     /**
      * 判别性用例：前一条同时配齐了四项，所以它绿了并不能说明其中任何一条真的在生效。
      * 这里每次只拿掉一项，其余配好 —— 少一个变量，才能确认报错来自哪个变量。

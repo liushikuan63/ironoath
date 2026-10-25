@@ -44,7 +44,8 @@ public final class MidasGameItemWebhookService {
      * Tencent's callback is a flat eventType/event/payload/payEventSig/outTradeNo object. The original
      * payload string is authenticated as-is; parsed values are only used after its HMAC has passed.
      */
-    public boolean accept(JsonNode notification, String timestamp, String platformSignature) {
+    public boolean accept(JsonNode notification, String applicationId, String backendConfigId,
+                          String timestamp, String platformSignature) {
         String outTradeNo = null;
         try {
             if (!signer.verifyPlatformCallbackSignature(timestamp, platformSignature))
@@ -76,6 +77,8 @@ public final class MidasGameItemWebhookService {
                 return reject("平台订单号与冻结报价不符", outTradeNo);
             if (!signer.verifyPayEventSig(event, payloadText, payEventSig, quote.env()))
                 return reject("PayEventSig验签失败", outTradeNo);
+            if (!signer.verifyCallbackIdentity(applicationId, backendConfigId, quote.env()))
+                return reject("SAS应用或后端配置身份不匹配", outTradeNo);
 
             PlayerSave player = players.findByPlayerId(order.playerId()).orElse(null);
             if (player == null || !Objects.equals(player.deviceId(),

@@ -81,10 +81,20 @@ public class PayController {
     /** Official MiniGame GameItem callback; verifies platform timestamp and PayEventSig before fulfillment. */
     @PostMapping("/midas/game-item-callback")
     public MidasGameItemDeliveryAck gameItemCallback(
-            @RequestHeader("TC-Timestamp") String timestamp,
-            @RequestHeader("TC-Signature") String signature,
+            @RequestHeader(value="TC-ApplicationID",required=false) String applicationId,
+            @RequestHeader(value="TC-BackendConfigID",required=false) String backendConfigId,
+            @RequestHeader(value="TC-Timestamp",required=false) String timestamp,
+            @RequestHeader(value="TC-Signature",required=false) String signature,
             @RequestBody com.fasterxml.jackson.databind.JsonNode event) {
-        boolean accepted = gameItemWebhook.accept(event, timestamp, signature);
+        if(isBlank(applicationId) || isBlank(backendConfigId) || isBlank(timestamp) || isBlank(signature))
+            return gameItemAck(false);
+        boolean accepted = gameItemWebhook.accept(event, applicationId, backendConfigId, timestamp, signature);
+        return gameItemAck(accepted);
+    }
+
+    private static boolean isBlank(String value) { return value == null || value.isBlank(); }
+
+    private static MidasGameItemDeliveryAck gameItemAck(boolean accepted) {
         return accepted
                 ? new MidasGameItemDeliveryAck("0", "OK", "ok", com.ironoath.common.log.TraceContext.traceId())
                 : new MidasGameItemDeliveryAck("1", "Rejected", "fail", com.ironoath.common.log.TraceContext.traceId());

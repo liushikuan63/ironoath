@@ -96,12 +96,32 @@ public final class MidasGameItemSigner {
         }
     }
 
+    /** The timestamp signature does not bind these required callback identity headers; pin them to the order environment. */
+    public boolean verifyCallbackIdentity(String applicationId, String backendConfigId, String env) {
+        String expectedApplicationId = trimToNull(environment.getProperty("ironoath.pay.superapp-application-id", ""));
+        String expectedBackendConfigId = trimToNull(switch (env == null ? "" : env) {
+            case "0" -> environment.getProperty("ironoath.pay.superapp-backend-config-id-prod", "");
+            case "1" -> environment.getProperty("ironoath.pay.superapp-backend-config-id-sandbox", "");
+            default -> null;
+        });
+        return expectedApplicationId != null && expectedBackendConfigId != null
+                && expectedApplicationId.equals(applicationId)
+                && expectedBackendConfigId.equals(backendConfigId);
+    }
+
     /** True only when both merchant AppKeys and the encrypted shared session-key store are configured. */
     public boolean productionReady() {
         return appKeyFor("0") != null && !appKeyFor("0").isBlank()
                 && appKeyFor("1") != null && !appKeyFor("1").isBlank()
                 && sessionKeys.productionReady()
-                && validAesKey(environment.getProperty("ironoath.pay.superapp-signature-secret", ""));
+                && validAesKey(environment.getProperty("ironoath.pay.superapp-signature-secret", ""))
+                && trimToNull(environment.getProperty("ironoath.pay.superapp-application-id", "")) != null
+                && trimToNull(environment.getProperty("ironoath.pay.superapp-backend-config-id-prod", "")) != null
+                && trimToNull(environment.getProperty("ironoath.pay.superapp-backend-config-id-sandbox", "")) != null;
+    }
+
+    private static String trimToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private static boolean validAesKey(String secret) {

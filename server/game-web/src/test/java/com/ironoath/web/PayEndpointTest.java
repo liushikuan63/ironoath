@@ -63,7 +63,10 @@ import com.ironoath.web.service.PlayerInitService;
 @org.springframework.test.context.TestPropertySource(properties = {
         "ironoath.pay.app-key-sandbox=test-only-app-key",
         "ironoath.pay.zone-id=zone-test",
-        "ironoath.pay.superapp-signature-secret=test-secret-1234"
+        "ironoath.pay.superapp-signature-secret=test-secret-1234",
+        "ironoath.pay.superapp-application-id=test-only-sas-app",
+        "ironoath.pay.superapp-backend-config-id-prod=test-production-config",
+        "ironoath.pay.superapp-backend-config-id-sandbox=test-sandbox-config"
 })
 class PayEndpointTest {
 
@@ -335,6 +338,8 @@ class PayEndpointTest {
         long timestamp = java.time.Instant.now().getEpochSecond();
 
         JsonNode ack = perform(post("/pay/midas/game-item-callback")
+                .header("TC-ApplicationID", "test-only-sas-app")
+                .header("TC-BackendConfigID", "test-sandbox-config")
                 .header("TC-Timestamp", Long.toString(timestamp))
                 .header("TC-Signature", "00")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -342,6 +347,73 @@ class PayEndpointTest {
 
         assertThat(ack.path("returnCode").asText()).isNotEqualTo("0");
         assertThat(orders.get(orderId).status()).isEqualTo(PayOrder.Status.PENDING);
+        assertThat(plan.calls()).isZero();
+    }
+
+    @Test
+    @DisplayName("GameItem 回调头中的应用身份与订单沙箱配置必须与服务端预期一致")
+    void gameItemCallbackRejectsMismatchedApplicationAndBackendConfigHeaders() throws Exception {
+        String playerId = newWeChatPlayer();
+        String orderId = okData(postJson("/pay/order", playerId,
+                new CreateOrderReq(newRequestId(), "first_charge", 1, "hero_sr_01"))).get("orderId").asText();
+        String outTradeNo = orders.get(orderId).line().quote().outTradeNo();
+        String accountKey = players.findByPlayerId(playerId).orElseThrow().deviceId();
+        String openId = accountKey.substring(com.ironoath.web.security.WeChatCodeExchanger.WECHAT_ACCOUNT_PREFIX.length());
+        String payload = gameItemPayload(openId, outTradeNo, orders.get(orderId).line().totalCents());
+        String event = "minigame_game_pay_goods_deliver_notify";
+        String payEventSig = hmacHex("test-only-app-key", event + "&" + payload);
+        var notification = gameItemNotification(event, payload, payEventSig, outTradeNo);
+        long timestamp = java.time.Instant.now().getEpochSecond();
+        String signature = aesEcbHex("test-secret-1234", Long.toString(timestamp));
+
+        JsonNode wrongApplication = perform(post("/pay/midas/game-item-callback")
+                .header("TC-ApplicationID", "other-sas-app")
+                .header("TC-BackendConfigID", "test-sandbox-config")
+                .header("TC-Timestamp", Long.toString(timestamp))
+                .header("TC-Signature", signature)
+                .contentType(MediaType.APPLICATION_JSON).content(JsonUtils.toJson(notification)));
+        assertThat(wrongApplication.path("returnCode").asText()).isNotEqualTo("0");
+        assertThat(orders.get(orderId).status()).isEqualTo(PayOrder.Status.PENDING);
+        assertThat(plan.calls()).isZero();
+
+        JsonNode wrongBackend = perform(post("/pay/midas/game-item-callback")
+                .header("TC-ApplicationID", "test-only-sas-app")
+                .header("TC-BackendConfigID", "production-backend")
+                .header("TC-Timestamp", Long.toString(timestamp))
+                .header("TC-Signature", signature)
+                .contentType(MediaType.APPLICATION_JSON).content(JsonUtils.toJson(notification)));
+        assertThat(wrongBackend.path("returnCode").asText()).isNotEqualTo("0");
+        assertThat(orders.get(orderId).status()).isEqualTo(PayOrder.Status.PENDING);
+        assertThat(plan.calls()).isZero();
+    }
+
+    @Test
+    @DisplayName("GameItem 回调缺少 SAS 应用或后端配置身份头时返回 400")
+    void gameItemCallbackRequiresApplicationAndBackendConfigHeaders() throws Exception {
+        long timestamp = java.time.Instant.now().getEpochSecond();
+        String signature = aesEcbHex("test-secret-1234", Long.toString(timestamp));
+        var body = "{}";
+
+        MvcResult missingApplication = mockMvc.perform(post("/pay/midas/game-item-callback")
+                        .header("TC-BackendConfigID", "test-sandbox-config")
+                        .header("TC-Timestamp", Long.toString(timestamp))
+                .header("TC-Signature", signature)
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk()).andReturn();
+        JsonNode missingApplicationAck=JsonUtils.readTree(missingApplication.getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertThat(missingApplicationAck.path("returnCode").asText()).isNotEqualTo("0");
+        assertThat(missingApplicationAck.path("requestId").asText())
+                .isEqualTo(missingApplication.getResponse().getHeader("X-Trace-Id"));
+        MvcResult missingBackend = mockMvc.perform(post("/pay/midas/game-item-callback")
+                        .header("TC-ApplicationID", "test-only-sas-app")
+                        .header("TC-Timestamp", Long.toString(timestamp))
+                .header("TC-Signature", signature)
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk()).andReturn();
+        JsonNode missingBackendAck=JsonUtils.readTree(missingBackend.getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertThat(missingBackendAck.path("returnCode").asText()).isNotEqualTo("0");
+        assertThat(missingBackendAck.path("requestId").asText())
+                .isEqualTo(missingBackend.getResponse().getHeader("X-Trace-Id"));
         assertThat(plan.calls()).isZero();
     }
 
@@ -775,6 +847,8 @@ class PayEndpointTest {
         long timestamp = java.time.Instant.now().getEpochSecond();
         String signature = aesEcbHex("test-secret-1234", Long.toString(timestamp));
         MvcResult response=mockMvc.perform(post("/pay/midas/game-item-callback")
+                .header("TC-ApplicationID", "test-only-sas-app")
+                .header("TC-BackendConfigID", "test-sandbox-config")
                 .header("TC-Timestamp", Long.toString(timestamp))
                 .header("TC-Signature", signature)
                 .contentType(MediaType.APPLICATION_JSON)

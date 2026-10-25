@@ -15,6 +15,10 @@ ironoath:
     platform: ${IRONOATH_PAY_PLATFORM:android}
     app-key-prod: ${IRONOATH_PAY_APP_KEY_PROD:}
     app-key-sandbox: ${IRONOATH_PAY_APP_KEY_SANDBOX:}
+    # Required GameItem callback identity; backend config separates production from sandbox.
+    superapp-application-id: ${IRONOATH_PAY_SUPERAPP_APPLICATION_ID:}
+    superapp-backend-config-id-prod: ${IRONOATH_PAY_SUPERAPP_BACKEND_CONFIG_ID_PROD:}
+    superapp-backend-config-id-sandbox: ${IRONOATH_PAY_SUPERAPP_BACKEND_CONFIG_ID_SANDBOX:}
     # Tencent Superapp TC-Signature timestamp encryption key; never commit the actual value.
     superapp-signature-secret: ${IRONOATH_PAY_SUPERAPP_SIGNATURE_SECRET:}
   wechat:

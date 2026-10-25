@@ -156,7 +156,7 @@ public class ProductionReadiness implements InitializingBean {
                     + "（productionReady=false）：当前 /pay/callback 不能核验渠道签名，必须接入正式米大师验签后才能启动");
         }
         if (gameItemSigner != null && !gameItemSigner.productionReady()) {
-            problems.add("GameItem 支付签名配置未就绪（productionReady=false）：需要正式与沙箱 AppKey、TC-Signature 加密密钥及加密 session_key 共享存储后才能启动");
+            problems.add("GameItem 支付配置未就绪（productionReady=false）：需要正式与沙箱 AppKey、TC-Signature 加密密钥、SAS ApplicationID、正式/沙箱 BackendConfigID 及加密 session_key 共享存储后才能启动");
         }
         if (!support.configured()) {
             // 这一条与「运维令牌」同一族：漏配不是"放松校验"，是"入口变成死按钮"。
