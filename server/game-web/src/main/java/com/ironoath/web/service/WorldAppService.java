@@ -15,6 +15,9 @@ import com.ironoath.core.world.Coord;
 import com.ironoath.core.world.FogOfWar;
 import com.ironoath.core.world.WorldGenerator;
 import com.ironoath.core.world.WorldRepository;
+import com.ironoath.core.nation.Nation;
+import com.ironoath.web.nation.NationStore;
+import com.ironoath.web.nation.WarStore;
 import com.ironoath.web.world.TargetOccupationStore;
 import com.ironoath.web.world.TargetOperationStore;
 import com.ironoath.web.dto.generated.ChunkData;
@@ -29,6 +32,7 @@ import com.ironoath.web.dto.generated.WorldEntity;
 import com.ironoath.web.dto.generated.WorldEntityType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -97,13 +101,18 @@ public class WorldAppService {
     private final TargetOccupationStore occupations;
     private final TargetOperationStore targetOperations;
     private record OccupationView(Map<String,TargetOccupationStore.Snapshot> owners,Map<String,Long> operationVersions) {}
+    private record TargetDirectory(WorldTargets targets,long version) {}
+    private final NationStore nations;
+    private final WarStore wars;
 
+    @Autowired
     public WorldAppService(ConfigRegistry configs, WorldRepository world,
                            PlayerRepository players, TimeService timeService,
                            PowerService powerService, PublicEnemyBroadcaster publicEnemies,
                            com.ironoath.web.bot.BotSpawnService botSpawn,
                            com.ironoath.web.ws.PushGateway pushGateway,
-                           TargetOccupationStore occupations,TargetOperationStore targetOperations) {
+                           TargetOccupationStore occupations,TargetOperationStore targetOperations,
+                           NationStore nations,WarStore wars) {
         this.configs = configs;
         this.world = world;
         this.players = players;
@@ -114,14 +123,46 @@ public class WorldAppService {
         this.pushGateway = pushGateway;
         this.occupations = occupations;
         this.targetOperations=targetOperations;
-        var initialTargets=WorldTargets.from(configs);
+        this.nations=nations;
+        this.wars=wars;
+        var initialTargets=targetDirectory(configs).targets();
         validateOccupationCatalog(initialTargets,occupations.findAll(initialTargets.targets().size()+1));
         validateOperationCatalog(initialTargets,targetOperations);
         configs.addReloadGuard("world_target","occupation-and-operations",candidate -> {
-            var targets=WorldTargets.from(candidate);
+            var targets=targetDirectory(candidate).targets();
             validateOccupationCatalog(targets,occupations.findAll(targets.targets().size()+1));
             validateOperationCatalog(targets,targetOperations);
         });
+    }
+
+    /** Backward-compatible test constructor; production wiring always supplies the nation/War stores. */
+    public WorldAppService(ConfigRegistry configs, WorldRepository world,
+                           PlayerRepository players, TimeService timeService,
+                           PowerService powerService, PublicEnemyBroadcaster publicEnemies,
+                           com.ironoath.web.bot.BotSpawnService botSpawn,
+                           com.ironoath.web.ws.PushGateway pushGateway,
+                           TargetOccupationStore occupations,TargetOperationStore targetOperations) {
+        this(configs,world,players,timeService,powerService,publicEnemies,botSpawn,pushGateway,
+                occupations,targetOperations,null,null);
+    }
+
+    /** Resolve the fixed CAPITAL map slot to the most recently declared War's persisted target Nation. */
+    private TargetDirectory targetDirectory(ConfigRegistry source) {
+        WorldTargets targets=WorldTargets.from(source);
+        long version=source.rawTable("world_target").version();
+        if(nations==null || wars==null)return new TargetDirectory(targets,version);
+        var war=wars.findLatest().orElse(null);
+        if(war==null || war.targetNationId()==null)return new TargetDirectory(targets,version);
+        Nation target=nations.findById(war.targetNationId()).orElseThrow(
+                ()->new IllegalStateException("最新War目标国家快照缺失，拒绝退回静态王城坐标"));
+        Coord capital=Coord.of(Math.toIntExact(target.capitalX()),Math.toIntExact(target.capitalY()));
+        if(!capital.withinWorld(Math.toIntExact(source.longParam("WORLD_SIZE"))))
+            throw new IllegalStateException("War目标国都城坐标越界，拒绝投影动态王城");
+        if(world.cityAt(capital).isPresent())
+            throw new IllegalStateException("War目标国都城坐标与玩家城冲突，拒绝投影动态王城");
+        targets=targets.withCapitalCoord(capital);
+        long versionStamp=Math.addExact(war.startedAt(),target.version());
+        return new TargetDirectory(targets,Math.addExact(version,versionStamp));
     }
 
     // ---------- 家坐标 ----------
@@ -145,7 +186,7 @@ public class WorldAppService {
         // 用 playerId 的哈希作为螺旋起点序号：不同玩家从不同位置开始铺开，
         // 而不是所有人都从 index 0 开始挤在同一个点
         long index = Math.floorMod((long) playerId.hashCode(), 1_000_000L);
-        WorldTargets targets = WorldTargets.from(configs);
+        WorldTargets targets = targetDirectory(configs).targets();
         for (int probe = 0; probe < SPAWN_PROBE_LIMIT; probe++) {
             Coord candidate = WorldGenerator.spawnCoord(rules, index + probe);
             if (!candidate.withinWorld(rules.worldSize()) || targets.reserved(candidate)) {
@@ -207,7 +248,7 @@ public class WorldAppService {
      */
     public Coord randomFreeCoord(long seed) {
         WorldGenerator.Rules rules = rules();
-        WorldTargets targets = WorldTargets.from(configs);
+        WorldTargets targets = targetDirectory(configs).targets();
         long start = Math.floorMod(com.ironoath.common.rng.Rng.of(seed).nextLong(), 1_000_000L);
         for (int probe = 0; probe < SPAWN_PROBE_LIMIT; probe++) {
             Coord candidate = WorldGenerator.spawnCoord(rules, start + probe);
@@ -228,7 +269,7 @@ public class WorldAppService {
      * @return true 迁移成功；false 表示目标格已被占用（调用方另找一格）
      */
     public boolean relocateCity(String playerId, Coord to) {
-        if (WorldTargets.from(configs).reserved(to)) {
+        if (targetDirectory(configs).targets().reserved(to)) {
             return false;
         }
         if (!world.moveCity(playerId, to)) {
@@ -266,7 +307,7 @@ public class WorldAppService {
             return new WorldGenerator.Cell(WorldGenerator.EntityType.CITY, null,
                     playerLevelOf(world.cityAt(coord).orElseThrow()));
         }
-        var target = WorldTargets.from(configs).at(coord);
+        var target = targetDirectory(configs).targets().at(coord);
         if (target != null) {
             return new WorldGenerator.Cell(WorldGenerator.EntityType.valueOf(target.definition().kind().name()),
                     target.definition().id(), Math.toIntExact(target.defender().level()));
@@ -307,7 +348,7 @@ public class WorldAppService {
         java.util.Collections.sort(keys);
         java.util.List<WorldEntity> out = new java.util.ArrayList<>();
         Map<Coord, String> cityIndex = cityIndex();
-        var targets = WorldTargets.from(configs);
+        var targets = targetDirectory(configs).targets();
         var owners = occupationSnapshot(targets).owners();
         for (String key : keys) {
             if (fog.chunks().contains(key)) {
@@ -418,8 +459,9 @@ public class WorldAppService {
         Map<Coord, String> cityIndex = null;
         // 静态图层变化也必须让旧地形缓存失效；只读请求不为此写世界版本。
         // 发布坐标/名称或由坐标解析的战略地形变化时 world_target.version 必须递增，回滚须刷新客户端地图缓存。
-        long targetLayerVersion = configs.rawTable("world_target").version();
-        var targets = WorldTargets.from(configs);
+        var targetDirectory = targetDirectory(configs);
+        long targetLayerVersion = targetDirectory.version();
+        var targets = targetDirectory.targets();
         var ownership=occupationSnapshot(targets);var owners=ownership.owners();
 
         for (String key : wanted) {
