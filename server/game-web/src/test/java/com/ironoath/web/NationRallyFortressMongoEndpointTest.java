@@ -497,6 +497,82 @@ class NationRallyFortressMongoEndpointTest {
         }
     }
 
+    @Test
+    @DirtiesContext(methodMode=DirtiesContext.MethodMode.AFTER_METHOD)
+    void targetNationCapitalArrivesThroughHttpAndRecoversFromMongoWithRealB08Guards() throws Exception {
+        Path globalPath=locateConfigDir().resolve("global.json");String originalGlobal=Files.readString(globalPath);
+        long warNow=System.currentTimeMillis();long openSeason=DayKey.startOfDayPlusDays(warNow,-30L);
+        configs.reload("global",GlobalCfg.class,withSeasonStart(originalGlobal,openSeason));
+        try {
+            var attacker=createNation(4);var defender=createNation(2);
+            var warRules=new WarRulesAssembler(configs);
+            post200("/nation/war/declare",attacker.king(),new WarDeclareReq(newRequestId(),defender.nationId()));
+            long warStartedAt=wars.findLatest().orElseThrow().startedAt();
+            var war=wars.findByStartedAt(warStartedAt).orElseThrow();
+            var gates=WorldTargets.from(configs).targets().stream()
+                    .filter(target->target.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.GATE)
+                    .sorted(java.util.Comparator.comparing(target->target.definition().id())).toList();
+            assertThat(gates).hasSize(warRules.rules().gateCount());
+            for(var gate:gates)war.captureGate(attacker.nationId(),gate.definition().id());
+            war.beginSiege(Math.max(warNow,war.startedAt())+1L);
+            wars.save(war);
+
+            var defenderNation=nationStore.findById(defender.nationId()).orElseThrow();
+            var dynamicCapital=com.ironoath.core.world.Coord.of(Math.toIntExact(defenderNation.capitalX()),
+                    Math.toIntExact(defenderNation.capitalY()));
+            var staticCapital=WorldTargets.from(configs).targets().stream()
+                    .filter(target->target.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.CAPITAL)
+                    .findFirst().orElseThrow();
+            assertThat(dynamicCapital).isNotEqualTo(staticCapital.coord());
+
+            giveTroops(attacker.king(),"unit_cavalry_t4",800_000L);
+            giveTroops(attacker.members().get(0),"unit_cavalry_t4",800_000L);
+            String rallyId=post200("/rally/nation",attacker.king(),new NationRallyReq(newRequestId(),
+                    new SocialCoord(dynamicCapital.x(),dynamicCapital.y()),SocialTargetType.STRATEGIC_TARGET,4,10,
+                    List.of(new RallyTroop("unit_cavalry_t4",400_000L)),List.of()))
+                    .get("rally").get("rallyId").asText();
+            org.mockito.Mockito.verify(circleGuard).guardRallyStart(ArgumentMatchers.eq(attacker.king()),
+                    ArgumentMatchers.eq(dynamicCapital),ArgumentMatchers.eq(4));
+            post200("/rally/join",attacker.members().get(0),new RallyJoinReq(newRequestId(),rallyId,
+                    List.of(new RallyTroop("unit_cavalry_t4",400_000L)),List.of()));
+
+            var rally=socialStore.rallyOf(rallyId).orElseThrow();
+            marchApp.processDue(attacker.king(),rally.prepareUntil()+1L);
+            String marchId="march_rally_"+rallyId;
+            var march=marchRepository.findById(marchId).orElseThrow().snapshot();
+            marchApp.processDue(attacker.king(),march.arriveAt());
+            org.mockito.Mockito.verify(circleGuard).guardArrival(ArgumentMatchers.anyLong(),
+                    ArgumentMatchers.any(),ArgumentMatchers.eq(2));
+
+            var pending=targetOperations.findByTargetId("capital_center").orElseThrow();
+            var battle=pending.combatPlan().battle();
+            assertThat(battle.target().x()).isEqualTo(dynamicCapital.x());
+            assertThat(battle.target().y()).isEqualTo(dynamicCapital.y());
+            assertThat(battle.target().kind()).isEqualTo(com.ironoath.core.world.WorldGenerator.EntityType.CAPITAL);
+            assertThat(battle.input().battleType()).isEqualTo(com.ironoath.battle.BattleType.SIEGE);
+            assertThat(battle.input().terrain()).isEqualTo(com.ironoath.battle.TerrainType.CITY_WALL);
+            assertThat(battle.result().winner()).isEqualTo(com.ironoath.battle.Winner.ATTACKER);
+
+            recovery.recoverPending();
+            var completed=new com.ironoath.web.store.mongo.MongoTargetOperationStore(mongoTemplate)
+                    .findByTargetId("capital_center").orElseThrow();
+            assertThat(completed.completed()).isTrue();
+            var owner=new MongoTargetOccupationStore(mongoTemplate)
+                    .findByTargetIds(List.of("capital_center")).get("capital_center");
+            assertThat(owner.nationId()).isEqualTo(attacker.nationId());
+            assertThat(owner.garrison()).isEqualTo(TargetOccupationStore.Garrison.stationed(marchId));
+            var recoveredWar=new com.ironoath.web.store.mongo.MongoWarStore(mongoTemplate,warRules)
+                    .findByStartedAt(warStartedAt).orElseThrow();
+            assertThat(recoveredWar.capitalHolder()).isEqualTo(attacker.nationId());
+            assertThat(recoveredWar.battleEvent("capital_center"))
+                    .isEqualTo(completed.combatPlan().warRecovery().event());
+            assertThat(recoveredWar.hasPendingBattleReservations()).isFalse();
+            assertThat(battleReports.reportsOf(attacker.king())).hasSize(1);
+        } finally {
+            configs.reload("global",GlobalCfg.class,originalGlobal);
+        }
+    }
+
     private record NationFixture(String king,List<String> members,String nationId,String allianceId) {}
 
     private NationFixture createNation(int members) throws Exception {
