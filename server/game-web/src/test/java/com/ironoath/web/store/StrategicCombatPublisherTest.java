@@ -55,16 +55,25 @@ class StrategicCombatPublisherTest {
         final TargetOperationStore operations;
         final RankBoardService ranks;
         final StrategicCombatPublisher publisher;
+        final com.ironoath.web.service.WarCapitalTargetResolver capitalTargets;
         Fixture(boolean mongo,boolean player) {
-            battle=StrategicCombatSlotTest.battle(2394,player,true,false);
+            this(mongo,player,StrategicCombatSlotTest.battle(2394,player,true,false),null,null);
+        }
+        Fixture(boolean mongo,boolean player,CapturedStrategicBattle battle,WarStore preloadedWars,
+                com.ironoath.web.service.WarCapitalTargetResolver capitalTargets) {
+            this.battle=battle;this.capitalTargets=capitalTargets;
             operations=mongo?new MongoTargetOperationStore(db.template()):new InMemoryTargetOperationStore();
             if(mongo)db.template().remove(new org.springframework.data.mongodb.core.query.Query(),"world_target_operation");
             var lock=new InJvmPlayerLock();
-            var warRules=new WarRulesAssembler(cfg);wars=mongo?new MongoWarStore(db.template(),warRules):new InMemoryWarStore(warRules);
-            wars.clear();
-            var board=new WarScoreBoard(warRules.rules(),100,"owned-N",300L);
-            board.registerNation("owned-N");board.registerNation(player?"owned-defender-N":"owned-opponent");
-            assertThat(wars.insertIfNoneActive(board)).isTrue();
+            var warRules=new WarRulesAssembler(cfg);
+            if(preloadedWars!=null)wars=preloadedWars;
+            else {
+                wars=mongo?new MongoWarStore(db.template(),warRules):new InMemoryWarStore(warRules);
+                wars.clear();
+                var board=new WarScoreBoard(warRules.rules(),100,"owned-N",300L);
+                board.registerNation("owned-N");board.registerNation(player?"owned-defender-N":"owned-opponent");
+                assertThat(wars.insertIfNoneActive(board)).isTrue();
+            }
             ReflectionTestUtils.setField(social,"store",store);
             ReflectionTestUtils.setField(social,"armies",mock(ArmyRepository.class));
             doAnswer(call->"nick:"+call.getArgument(0)).when(social).nicknameOf(anyString());
@@ -74,8 +83,12 @@ class StrategicCombatPublisherTest {
             install(battle.attacker());if(battle.defender()!=null)install(battle.defender());
             if(battle.target().defender().occupation()!=null)
                 assertThat(owners.compareAndSet(battle.target().defender().occupation(),0)).isTrue();
-            defenders=new StrategicTargetDefender(cfg,owners,marches,store,new InMemoryNeutralTargetGarrisonStore());
-            targetLocks=new StrategicGarrisonWithdrawal(cfg,operations,owners,marches,mock(MarchDueQueue.class),defenders,social,lock);
+            defenders=capitalTargets==null
+                    ?new StrategicTargetDefender(cfg,owners,marches,store,new InMemoryNeutralTargetGarrisonStore())
+                    :new StrategicTargetDefender(cfg,owners,marches,store,new InMemoryNeutralTargetGarrisonStore(),capitalTargets);
+            targetLocks=capitalTargets==null
+                    ?new StrategicGarrisonWithdrawal(cfg,operations,owners,marches,mock(MarchDueQueue.class),defenders,social,lock)
+                    :new StrategicGarrisonWithdrawal(cfg,operations,owners,marches,mock(MarchDueQueue.class),defenders,social,lock,null,capitalTargets);
             var players=mock(PlayerRepository.class);var bots=mock(BotRegistry.class);
             when(bots.humanOnly(anyString(),anyString())).thenAnswer(call->call.getArgument(0));
             when(players.findBriefs(anyCollection())).thenAnswer(call->{
@@ -90,10 +103,14 @@ class StrategicCombatPublisherTest {
             var seasonBoards=new InMemorySeasonBoardStore();
             ranks=new RankBoardService(seasonBoards,store,mock(NationStore.class),new NationMembership(store,mock(NationStore.class)),
                     players,bots,cfg,rankRules,mock(com.ironoath.common.time.TimeService.class));
-            publisher=new StrategicCombatPublisher(cfg,operations,marches,defenders,store,social,targetLocks,wars,ranks);
+            publisher=capitalTargets==null
+                    ?new StrategicCombatPublisher(cfg,operations,marches,defenders,store,social,targetLocks,wars,ranks)
+                    :new StrategicCombatPublisher(cfg,operations,marches,defenders,store,social,targetLocks,wars,ranks,capitalTargets);
         }
         StrategicCombatPublisher publisherWith(TargetOperationStore port) {
-            return new StrategicCombatPublisher(cfg,port,marches,defenders,store,social,targetLocks,wars,ranks);
+            return capitalTargets==null
+                    ?new StrategicCombatPublisher(cfg,port,marches,defenders,store,social,targetLocks,wars,ranks)
+                    :new StrategicCombatPublisher(cfg,port,marches,defenders,store,social,targetLocks,wars,ranks,capitalTargets);
         }
         void install(StrategicRallyCasualties side) {
             var identity=side.rally();
@@ -126,6 +143,100 @@ class StrategicCombatPublisherTest {
         assertThat(f.locked(()->f.publisher.publish(f.battle))).isEqualTo(slot);
         assertThat(f.marches.versionOf(f.battle.attacker().march().id())).isEqualTo(f.battle.attacker().marchVersion());
         assertThat(f.owners.findByTargetIds(List.of(slot.targetId()))).isEmpty();
+    }
+
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void dynamicWarCapitalCoordinatesAreFrozenIntoPublishedCombat(boolean mongo) {
+        var cfg=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
+        var nationRules=new com.ironoath.web.nation.NationRulesAssembler(cfg);
+        var warRules=new WarRulesAssembler(cfg);
+        var nations=new com.ironoath.web.store.memory.InMemoryNationStore(nationRules);
+        var targetNation=com.ironoath.core.nation.Nation.found("owned-capital-target","Capital Target","owned-capital-king",
+                "owned-capital-alliance",300,300,100,nationRules.rules());
+        assertThat(nations.insertIfAbsent(targetNation)).isTrue();
+        WarStore wars=mongo?new MongoWarStore(db.template(),warRules):new InMemoryWarStore(warRules);
+        wars.clear();
+        var board=new WarScoreBoard(warRules.rules(),100,"owned-N",targetNation.id(),10_000L);
+        board.registerNation("owned-N");board.registerNation(targetNation.id());
+        assertThat(wars.insertIfNoneActive(board)).isTrue();
+        var directory=new com.ironoath.web.service.WarCapitalTargetResolver(nations,wars,
+                mock(com.ironoath.core.world.WorldRepository.class));
+        var battle=StrategicCombatSlotTest.dynamicCapitalBattle(2394,com.ironoath.core.world.Coord.of(300,300),directory);
+        assertThat(battle.target().targetId()).isEqualTo("capital_center");
+        assertThat(battle.target().x()).isEqualTo(300);
+        assertThat(battle.target().y()).isEqualTo(300);
+
+        var fixture=new Fixture(mongo,false,battle,wars,directory);
+        var published=new java.util.concurrent.atomic.AtomicReference<TargetOperationStore.Snapshot>();
+        Throwable failure=catchThrowable(()->published.set(fixture.locked(()->fixture.publisher.publish(battle))));
+
+        assertThat(failure).as("新COMBAT应按当前War目标国都城发布，并冻结其坐标").isNull();
+        assertThat(published.get().kind()).isEqualTo(TargetOperationStore.Kind.COMBAT);
+        TargetOperationStore stored=mongo?new MongoTargetOperationStore(db.template()):fixture.operations;
+        var readBack=stored.findByTargetId("capital_center").orElseThrow();
+        assertThat(readBack.combatPlan().battle().target().x()).isEqualTo(300);
+        assertThat(readBack.combatPlan().battle().target().y()).isEqualTo(300);
+    }
+
+    @Test
+    void realArrivalProducerCapturesAndPublishesTheDynamicWarCapitalCoordinates() {
+        var cfg=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
+        var nationRules=new com.ironoath.web.nation.NationRulesAssembler(cfg);
+        var warRules=new WarRulesAssembler(cfg);
+        var nations=new com.ironoath.web.store.memory.InMemoryNationStore(nationRules);
+        var targetNation=com.ironoath.core.nation.Nation.found("owned-capital-producer-target","Capital Producer Target",
+                "owned-capital-producer-king","owned-capital-producer-alliance",300,300,100,nationRules.rules());
+        assertThat(nations.insertIfAbsent(targetNation)).isTrue();
+        var wars=new InMemoryWarStore(warRules);
+        var board=new WarScoreBoard(warRules.rules(),100,"owned-N",targetNation.id(),10_000L);
+        board.registerNation("owned-N");board.registerNation(targetNation.id());assertThat(wars.insertIfNoneActive(board)).isTrue();
+        var directory=new com.ironoath.web.service.WarCapitalTargetResolver(nations,wars,
+                mock(com.ironoath.core.world.WorldRepository.class));
+        var battle=StrategicCombatSlotTest.dynamicCapitalBattle(2395,com.ironoath.core.world.Coord.of(300,300),directory);
+        var fixture=new Fixture(false,false,battle,wars,directory);
+
+        var players=mock(com.ironoath.core.player.PlayerRepository.class);
+        var cities=mock(com.ironoath.core.city.CityRepository.class);
+        var heroRepo=mock(com.ironoath.core.hero.HeroRepository.class);
+        var inventory=mock(com.ironoath.core.bag.InventoryRepository.class);
+        for(String id:battle.attacker().currentMembers().keySet()) {
+            var save=mock(com.ironoath.core.player.PlayerSave.class);
+            when(save.tech()).thenReturn(com.ironoath.core.player.PlayerTech.empty());
+            when(save.power()).thenReturn(new com.ironoath.core.player.PlayerPower(1_000_000,1_000_000,1_000_000));
+            when(save.version()).thenReturn(1L);when(players.findByPlayerId(id)).thenReturn(Optional.of(save));
+            var city=mock(com.ironoath.core.city.CityState.class);when(city.buildings()).thenReturn(List.of());
+            when(cities.findVersionedByPlayerId(id)).thenReturn(Optional.of(
+                    new com.ironoath.core.city.CityRepository.VersionedCity(city,1)));
+            when(heroRepo.findByPlayerId(id)).thenReturn(Optional.empty());
+            when(inventory.findByPlayerId(id)).thenReturn(Optional.empty());
+        }
+        var factory=new com.ironoath.web.battle.BattleArmyFactory(fixture.cfg);
+        var heroMapper=new com.ironoath.web.battle.HeroBattleMapper(fixture.cfg,
+                new com.ironoath.web.service.HeroStatsService(fixture.cfg),
+                new com.ironoath.web.hero.EquipLedgers(inventory,fixture.cfg),heroRepo,fixture.store);
+        var tech=new com.ironoath.web.battle.BattleTechBonuses(
+                new com.ironoath.web.battle.AllianceTechBonuses(fixture.store,fixture.cfg),
+                new com.ironoath.web.tech.TechEffects(fixture.cfg),players);
+        var policies=new com.ironoath.web.nation.NationPolicyBonuses(fixture.cfg,fixture.store,
+                mock(NationStore.class),mock(com.ironoath.web.nation.NationLeaders.class),factory);
+        var preparation=new CapturedBattlePreparation(fixture.cfg,heroMapper,tech,policies,directory);
+        var circle=mock(com.ironoath.web.service.StrategicTargetCircleGuard.class);
+        var seeds=mock(com.ironoath.web.reward.ServerSeedSource.class);when(seeds.nextSeed()).thenReturn(battle.result().seed());
+        var producer=new com.ironoath.web.service.StrategicCombatArrivalProducer(fixture.cfg,preparation,fixture.defenders,
+                fixture.publisher,fixture.marches,players,cities,heroRepo,inventory,fixture.store,circle,seeds);
+        var march=March.fromSnapshot(battle.attacker().march());
+
+        Throwable producerFailure=catchThrowable(()->fixture.locked(()->{
+            producer.publish(march,battle.attacker().marchVersion(),battle.happenedAt());return null;
+        }));
+        assertThat(producerFailure).as("实际到达生产者应沿War目标Nation当前都城读取、核验并发布COMBAT").isNull();
+
+        var published=fixture.operations.findByTargetId("capital_center").orElseThrow();
+        assertThat(published.kind()).isEqualTo(TargetOperationStore.Kind.COMBAT);
+        assertThat(published.completed()).isFalse();
+        assertThat(published.combatPlan().battle().target().x()).isEqualTo(300);
+        assertThat(published.combatPlan().battle().target().y()).isEqualTo(300);
+        assertThat(fixture.wars.pendingBattleReservation(100,published.operationId())).isPresent();
     }
 
     @Test void publicationMustFreezeStableBattleReportOwnersBeforeAnyRecoveryEffect() {

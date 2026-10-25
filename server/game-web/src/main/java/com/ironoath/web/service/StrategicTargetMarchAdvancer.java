@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.TreeSet;
 import java.util.function.Supplier;
+import org.springframework.beans.factory.annotation.Autowired;
 
 /**
  * Strategic arrivals acquire every original battle rally before the target operation lock.
@@ -25,6 +26,7 @@ public final class StrategicTargetMarchAdvancer {
     private final SocialAppService social;
     private final StrategicGarrisonWithdrawal targetOperations;
     private final TargetOperationStore operations;
+    private final WarCapitalTargetResolver capitalTargets;
 
     private static final class TargetContextChanged extends RuntimeException {
         private static final long serialVersionUID=1L;
@@ -33,9 +35,18 @@ public final class StrategicTargetMarchAdvancer {
     public StrategicTargetMarchAdvancer(ConfigRegistry configs,MarchRepository marches,
             StrategicTargetDefender defenders,SocialAppService social,
             StrategicGarrisonWithdrawal targetOperations,TargetOperationStore operations) {
+        this(configs,marches,defenders,social,targetOperations,operations,null);
+    }
+
+    @Autowired
+    public StrategicTargetMarchAdvancer(ConfigRegistry configs,MarchRepository marches,
+            StrategicTargetDefender defenders,SocialAppService social,
+            StrategicGarrisonWithdrawal targetOperations,TargetOperationStore operations,
+            WarCapitalTargetResolver capitalTargets) {
         this.configs=Objects.requireNonNull(configs);this.marches=Objects.requireNonNull(marches);
         this.defenders=Objects.requireNonNull(defenders);this.social=Objects.requireNonNull(social);
         this.targetOperations=Objects.requireNonNull(targetOperations);this.operations=Objects.requireNonNull(operations);
+        this.capitalTargets=capitalTargets;
     }
 
     public boolean advance(March observed,long now,Supplier<Boolean> advance) {
@@ -82,10 +93,12 @@ public final class StrategicTargetMarchAdvancer {
     }
 
     private TargetContext readTarget(March march) {
-        var target=WorldTargets.from(configs).targets().stream()
+        var directory=capitalTargets==null?WorldTargets.from(configs):capitalTargets.resolve(configs).targets();
+        var target=directory.targets().stream()
                 .filter(candidate->candidate.definition().id().equals(march.targetId()))
                 .findFirst().orElseThrow(()->new IllegalStateException("战略行军原目标已不在配置目录"));
-        if(!target.coord().equals(march.to()))throw new IllegalStateException("战略行军原目标坐标与目标目录不一致");
+        if(!target.coord().equals(march.to()))throw new IllegalStateException("战略行军原目标坐标与目标目录不一致：目标="
+                + target.coord() + " 行军to=" + march.to());
         var defender=defenders.read(target);
         var anchor=new com.ironoath.web.world.TargetOperationStore.Anchor(march.targetId(),
                 com.ironoath.core.world.WorldGenerator.EntityType.valueOf(target.definition().kind().name()),

@@ -9,9 +9,11 @@ import com.ironoath.core.player.PlayerTech;
 import com.ironoath.core.social.Rally;
 import com.ironoath.web.nation.NationPolicyBonuses;
 import com.ironoath.web.service.ArmyAppService;
+import com.ironoath.web.service.WarCapitalTargetResolver;
 import com.ironoath.web.service.WorldTargets;
 import com.ironoath.web.world.StrategicTargetDefender;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -31,17 +33,27 @@ public final class CapturedBattlePreparation {
     private final HeroBattleMapper heroes;
     private final BattleTechBonuses tech;
     private final NationPolicyBonuses policies;
+    private final WarCapitalTargetResolver capitalTargets;
     public CapturedBattlePreparation(ConfigRegistry configs,HeroBattleMapper heroes,
                                      BattleTechBonuses tech,NationPolicyBonuses policies) {
+        this(configs,heroes,tech,policies,null);
+    }
+    @Autowired
+    public CapturedBattlePreparation(ConfigRegistry configs,HeroBattleMapper heroes,
+                                     BattleTechBonuses tech,NationPolicyBonuses policies,
+                                     WarCapitalTargetResolver capitalTargets) {
         this.configs=Objects.requireNonNull(configs);this.heroes=Objects.requireNonNull(heroes);
         this.tech=Objects.requireNonNull(tech);this.policies=Objects.requireNonNull(policies);
+        this.capitalTargets=capitalTargets;
     }
     public Scope capture(long happenedAt) {
         if(happenedAt<0)throw new IllegalArgumentException("原战斗时点不得为负");
         var view=configs.readOnlySnapshot();
+        var targets=capitalTargets==null?WorldTargets.from(view):capitalTargets.resolve(view).targets();
         return new Scope(view,heroes.usingConfiguration(view),tech.usingConfiguration(view),
-                policies.usingConfiguration(view),happenedAt);
+                policies.usingConfiguration(view),targets,happenedAt);
     }
+    public WorldTargets currentTargets(){return capitalTargets==null?WorldTargets.from(configs):capitalTargets.resolve(configs).targets();}
 
     public static final class PreparedSide {
         private final Scope owner;
@@ -101,11 +113,12 @@ public final class CapturedBattlePreparation {
         private final HeroBattleMapper heroes;
         private final BattleTechBonuses tech;
         private final NationPolicyBonuses policies;
+        private final WorldTargets targets;
         private final long happenedAt;
         private Scope(ConfigRegistry view,HeroBattleMapper heroes,BattleTechBonuses tech,
-                      NationPolicyBonuses policies,long happenedAt) {
+                      NationPolicyBonuses policies,WorldTargets targets,long happenedAt) {
             this.view=view;this.armies=new BattleArmyFactory(view);this.heroes=heroes;this.tech=tech;
-            this.policies=policies;this.happenedAt=happenedAt;
+            this.policies=policies;this.targets=targets;this.happenedAt=happenedAt;
         }
         /** 仅供版本追踪，版本字符串并非内容SHA或跨Scope兵权凭证。 */
         public String fingerprint(){return view.fingerprint();}
@@ -146,7 +159,7 @@ public final class CapturedBattlePreparation {
         }
         /** 初始NPC构成也从本视图读取；实际余兵/归属/行军仍来自原仓储并由读取口复查版本。 */
         public TargetInput readTarget(StrategicTargetDefender reader,String targetId) {
-            var target=WorldTargets.from(view).targets().stream().filter(t->t.definition().id().equals(targetId))
+            var target=targets.targets().stream().filter(t->t.definition().id().equals(targetId))
                     .findFirst().orElseThrow(()->new IllegalArgumentException("捕获视图中没有该战略目标"));
             return new TargetInput(this,target,Objects.requireNonNull(reader).readFromConfiguration(target,view));
         }

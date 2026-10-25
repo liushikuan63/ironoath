@@ -6,8 +6,10 @@ import com.ironoath.core.march.March;
 import com.ironoath.core.march.MarchRepository;
 import com.ironoath.core.social.Rally;
 import com.ironoath.web.service.WorldTargets;
+import com.ironoath.web.service.WarCapitalTargetResolver;
 import com.ironoath.web.social.SocialStore;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,12 +33,24 @@ public final class StrategicTargetDefender {
     private final MarchRepository marches;
     private final SocialStore social;
     private final NeutralTargetGarrisonStore neutralGarrisons;
+    private final WarCapitalTargetResolver capitalTargets;
     public StrategicTargetDefender(ConfigRegistry configs,TargetOccupationStore occupations,
                                    MarchRepository marches,SocialStore social,NeutralTargetGarrisonStore neutralGarrisons) {
+        this(configs,occupations,marches,social,neutralGarrisons,null);
+    }
+    @Autowired
+    public StrategicTargetDefender(ConfigRegistry configs,TargetOccupationStore occupations,
+                                   MarchRepository marches,SocialStore social,NeutralTargetGarrisonStore neutralGarrisons,
+                                   WarCapitalTargetResolver capitalTargets) {
         this.configs=configs;this.occupations=occupations;this.marches=marches;this.social=social;
         this.neutralGarrisons=Objects.requireNonNull(neutralGarrisons);
-        validateNeutralCatalog(WorldTargets.from(configs));
-        configs.addReloadGuard("world_target","neutral-garrison",candidate->validateNeutralCatalog(WorldTargets.from(candidate)));
+        this.capitalTargets=capitalTargets;
+        validateNeutralCatalog(targetDirectory(configs));
+        configs.addReloadGuard("world_target","neutral-garrison",candidate->validateNeutralCatalog(targetDirectory(candidate)));
+    }
+
+    private WorldTargets targetDirectory(ConfigRegistry configuration) {
+        return capitalTargets==null?WorldTargets.from(configuration):capitalTargets.resolve(configuration).targets();
     }
 
     public Defender read(WorldTargets.Target target) {

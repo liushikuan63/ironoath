@@ -39,6 +39,54 @@ import static org.mockito.Mockito.when;
 
 class StrategicTargetMarchAdvancerTest {
     @Test
+    void newCapitalTargetMarchUsesThePersistedWarTargetNationDirectory() {
+        var configs=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
+        var nationRules=new com.ironoath.web.nation.NationRulesAssembler(configs);
+        var warRules=new com.ironoath.web.nation.WarRulesAssembler(configs);
+        var nations=new com.ironoath.web.store.memory.InMemoryNationStore(nationRules);
+        var wars=new com.ironoath.web.store.memory.InMemoryWarStore(warRules);
+        var targetNation=com.ironoath.core.nation.Nation.found("owned-target-nation","Target Nation","owned-king",
+                "owned-alliance",300,300,100,nationRules.rules());
+        assertThat(nations.insertIfAbsent(targetNation)).isTrue();
+        var war=new com.ironoath.core.nation.WarScoreBoard(warRules.rules(),100,"owned-attacker-nation",
+                targetNation.id(),10_000L);
+        war.registerNation("owned-attacker-nation");war.registerNation(targetNation.id());
+        assertThat(wars.insertIfNoneActive(war)).isTrue();
+        var directory=new com.ironoath.web.service.WarCapitalTargetResolver(nations,wars,
+                mock(com.ironoath.core.world.WorldRepository.class));
+        assertThat(wars.findLatest().orElseThrow().targetNationId()).isEqualTo(targetNation.id());
+        var resolvedCapital=directory.resolve(configs).targets().at(Coord.of(300,300));
+        assertThat(resolvedCapital).isNotNull();
+        assertThat(resolvedCapital.definition().id()).isEqualTo("capital_center");
+        assertThat(resolvedCapital.coord()).isEqualTo(Coord.of(300,300));
+        var marches=new InMemoryMarchStore(32);var occupations=new InMemoryTargetOccupationStore();
+        var neutral=new InMemoryNeutralTargetGarrisonStore();var socialStore=mock(SocialStore.class);
+        var destination=Coord.of(300,300);var attackerRally=rallyAt("owned-capital-rally","owned-attacker",
+                "owned-attacker-nation",destination);
+        when(socialStore.rallyOf(attackerRally.rallyId())).thenReturn(Optional.of(attackerRally));
+        var attacker=new March("owned-capital-march","owned-attacker",Coord.of(10,10),destination,110,120,
+                Map.of("unit_infantry_t4",1L),List.of(),100,1,March.TargetType.STRATEGIC_TARGET,
+                "capital_center",March.Action.ATTACK);
+        attacker.attachToRally(attackerRally.rallyId());assertThat(marches.insertIfAbsent(attacker)).isTrue();
+        assertThat(marches.findById(attacker.id()).orElseThrow().to()).isEqualTo(destination);
+        var defenders=new StrategicTargetDefender(configs,occupations,marches,socialStore,neutral,directory);
+        var social=mock(SocialAppService.class);
+        when(social.runRalliesDepartureLocked(anyCollection(),any())).thenAnswer(call->((Supplier<?>)call.getArgument(1)).get());
+        var lock=new InJvmPlayerLock();var operationStore=new InMemoryTargetOperationStore();
+        var withdrawals=new StrategicGarrisonWithdrawal(configs,operationStore,occupations,marches,
+                mock(com.ironoath.core.march.MarchDueQueue.class),defenders,social,lock,null,directory);
+        var advancer=new StrategicTargetMarchAdvancer(configs,marches,defenders,social,withdrawals,operationStore,directory);
+
+        boolean[] advanced = {false};
+        Throwable failure = org.assertj.core.api.Assertions.catchThrowable(
+                () -> advanced[0] = advancer.advance(attacker,120,()->true));
+        assertThat(failure)
+                .as("新都城坐标上的王城集结应使用持久War目标目录，而不是静态capital_center配置坐标")
+                .isNull();
+        assertThat(advanced[0]).isTrue();
+    }
+
+    @Test
     void playerGarrisonRallyIsLockedBeforeSharedTargetOperationLock() {
         var configs=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
         var marches=new InMemoryMarchStore(32);var occupations=new InMemoryTargetOccupationStore();
@@ -140,10 +188,13 @@ class StrategicTargetMarchAdvancerTest {
     }
 
     private static Rally rally(String id,String player,String nation) {
+        return rallyAt(id,player,nation,Coord.of(256,216));
+    }
+    private static Rally rallyAt(String id,String player,String nation,Coord target) {
         var troops=Map.of("unit_infantry_t4",1L);
         var rally=Rally.restore(id,Rally.Scope.NATION,nation,player,2,1,100,110,
                 Map.of(player,new Rally.Participant(player,troops,List.of())),Rally.Status.PREPARING,null,
-                256,216,"STRATEGIC_TARGET",1);
+                target.x(),target.y(),"STRATEGIC_TARGET",1);
         rally.depart(110);return rally;
     }
     private static March march(String id,String player,String rallyId) {
