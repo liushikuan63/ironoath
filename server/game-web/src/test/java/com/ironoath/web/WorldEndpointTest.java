@@ -10,6 +10,8 @@ import com.ironoath.core.city.CityRepository;
 import com.ironoath.core.march.March;
 import com.ironoath.core.march.MarchDueQueue;
 import com.ironoath.core.march.MarchRepository;
+import com.ironoath.core.nation.Nation;
+import com.ironoath.core.nation.WarScoreBoard;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.world.Coord;
@@ -40,6 +42,9 @@ import com.ironoath.web.service.HeroAppService;
 import com.ironoath.web.service.MarchAppService;
 import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.service.WorldAppService;
+import com.ironoath.web.nation.NationStore;
+import com.ironoath.web.nation.WarRulesAssembler;
+import com.ironoath.web.nation.WarStore;
 import com.ironoath.web.store.memory.InMemoryArmyStore;
 import com.ironoath.web.store.memory.InMemoryCityStore;
 import com.ironoath.web.store.memory.InMemoryGachaLogStore;
@@ -47,8 +52,10 @@ import com.ironoath.web.store.memory.InMemoryGachaStateStore;
 import com.ironoath.web.store.memory.InMemoryHeroStore;
 import com.ironoath.web.store.memory.InMemoryInventoryStore;
 import com.ironoath.web.store.memory.InMemoryMarchStore;
+import com.ironoath.web.store.memory.InMemoryNationStore;
 import com.ironoath.web.store.memory.InMemoryPlayerStore;
 import com.ironoath.web.store.memory.InMemoryWorldStore;
+import com.ironoath.web.store.memory.InMemoryWarStore;
 import com.ironoath.web.store.memory.SortedMarchDueQueue;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -96,6 +103,9 @@ class WorldEndpointTest {
     @Autowired private WorldRepository world;
     @Autowired private MarchRepository marches;
     @Autowired private MarchDueQueue dueQueue;
+    @Autowired private NationStore nations;
+    @Autowired private WarStore wars;
+    @Autowired private WarRulesAssembler warRules;
     @Autowired private com.ironoath.core.gacha.GachaStateRepository gachaStates;
     @Autowired private com.ironoath.core.gacha.GachaLogStore gachaLogs;
 
@@ -108,6 +118,8 @@ class WorldEndpointTest {
         ((InMemoryHeroStore) heroes).clear();
         ((InMemoryWorldStore) world).clear();
         ((InMemoryMarchStore) marches).clear();
+        ((InMemoryNationStore) nations).clear();
+        ((InMemoryWarStore) wars).clear();
         ((SortedMarchDueQueue) dueQueue).clear();
         ((InMemoryGachaStateStore) gachaStates).clear();
         ((InMemoryGachaLogStore) gachaLogs).clear();
@@ -134,6 +146,102 @@ class WorldEndpointTest {
                         .path("terrainName").asText()).isEqualTo("城下");
             });
         });
+    }
+
+    @Test
+    @DisplayName("War地图王城投影跟随 targetNation 持久化后的都城坐标")
+    void warCapitalMapFollowsPersistedTargetNationCoordinates() {
+        String targetId = "nation_dynamic_capital_target";
+        Nation target = Nation.found(targetId, "迁都地图测试国", "king-dynamic-target", "alliance-dynamic-target",
+                256, 256, 1_700_000_000_000L, new com.ironoath.web.nation.NationRulesAssembler(configs).rules());
+        assertThat(nations.insertIfAbsent(target)).isTrue();
+        var war = new WarScoreBoard(warRules.rules(), 1_700_000_000_000L, "nation_dynamic_attacker", targetId,
+                Long.MAX_VALUE);
+        war.registerNation("nation_dynamic_attacker");
+        war.registerNation(targetId);
+        assertThat(wars.insertIfNoneActive(war)).isTrue();
+
+        String playerId = newPlayer();
+        int chunkSize = Math.toIntExact(configs.longParam("WORLD_CHUNK_SIZE"));
+        String oldKey = Coord.of(256, 256).chunkKey(chunkSize);
+        Coord newCapital = null;
+        for (long seed = 12_345L; seed < 12_360L; seed++) {
+            Coord candidate = worldAppService.randomFreeCoord(seed);
+            if (!candidate.chunkKey(chunkSize).equals(oldKey)) {
+                newCapital = candidate;
+                break;
+            }
+        }
+        assertThat(newCapital).as("测试迁都落点应来自现有空格选择器并在另一个chunk").isNotNull();
+        Coord movedTo = newCapital;
+        String newKey = newCapital.chunkKey(chunkSize);
+        var fog = world.fogOf(playerId);
+        fog.exploreChunk(newKey);
+        fog.exploreChunk(oldKey);
+        world.saveFog(playerId, fog, fog.version());
+        var versions = new java.util.LinkedHashMap<String, Long>();
+        var beforeEntities = new ArrayList<WorldEntity>();
+        for (int page = 0; page < 12; page++) {
+            var response = worldAppService.viewport(playerId, new ViewportReq(256, 256, 1,
+                    versions.entrySet().stream().map(e -> new ChunkVersion(e.getKey(), e.getValue())).toList()));
+            for (var chunk : response.chunks()) {
+                versions.put(chunk.key(), chunk.version());
+                beforeEntities.addAll(chunk.entities());
+            }
+            if (response.staleChunks().isEmpty()) break;
+        }
+        assertThat(beforeEntities).anySatisfy(entity -> {
+            assertThat(entity.id()).isEqualTo("capital_center");
+            assertThat(entity.x()).isEqualTo(256);
+            assertThat(entity.y()).isEqualTo(256);
+        });
+        var beforeNewChunk = new ArrayList<WorldEntity>();
+        for (int page = 0; page < 12; page++) {
+            var response = worldAppService.viewport(playerId, new ViewportReq(movedTo.x(), movedTo.y(), 1,
+                    versions.entrySet().stream().map(e -> new ChunkVersion(e.getKey(), e.getValue())).toList()));
+            for (var chunk : response.chunks()) {
+                versions.put(chunk.key(), chunk.version());
+                beforeNewChunk.addAll(chunk.entities());
+            }
+            if (response.staleChunks().isEmpty()) break;
+        }
+        assertThat(beforeNewChunk).noneMatch(entity -> entity.id().equals("capital_center"));
+
+        Nation moved = nations.findById(targetId).orElseThrow();
+        moved.moveCapital(movedTo.x(), movedTo.y());
+        nations.save(moved, moved.version());
+
+        var afterNewChunk = new ArrayList<WorldEntity>();
+        var afterVersions = new java.util.LinkedHashMap<>(versions);
+        for (int page = 0; page < 12; page++) {
+            var response = worldAppService.viewport(playerId, new ViewportReq(movedTo.x(), movedTo.y(), 1,
+                    afterVersions.entrySet().stream().map(e -> new ChunkVersion(e.getKey(), e.getValue())).toList()));
+            for (var chunk : response.chunks()) {
+                afterVersions.put(chunk.key(), chunk.version());
+                afterNewChunk.addAll(chunk.entities());
+            }
+            if (response.staleChunks().isEmpty()) break;
+        }
+        var afterOldChunk = new ArrayList<WorldEntity>();
+        for (int page = 0; page < 12; page++) {
+            var response = worldAppService.viewport(playerId, new ViewportReq(256, 256, 1,
+                    afterVersions.entrySet().stream().map(e -> new ChunkVersion(e.getKey(), e.getValue())).toList()));
+            for (var chunk : response.chunks()) {
+                afterVersions.put(chunk.key(), chunk.version());
+                afterOldChunk.addAll(chunk.entities());
+            }
+            if (response.staleChunks().isEmpty()) break;
+        }
+
+        assertThat(afterVersions.get(oldKey)).isGreaterThan(versions.get(oldKey));
+        assertThat(afterVersions.get(newKey)).isGreaterThan(versions.get(newKey));
+        assertThat(afterNewChunk).anySatisfy(entity -> {
+            assertThat(entity.id()).isEqualTo("capital_center");
+            assertThat(entity.x()).isEqualTo(movedTo.x());
+            assertThat(entity.y()).isEqualTo(movedTo.y());
+        });
+        assertThat(afterOldChunk).noneMatch(entity -> entity.id().equals("capital_center")
+                && entity.x() == 256 && entity.y() == 256);
     }
 
     @Test void strategicTargetViewportLabelsMatchTheSelectedDirectionalTerrainRule() {

@@ -73,6 +73,26 @@ public final class WorldTargets {
         return byCoord.values().stream().sorted(java.util.Comparator.comparing(t -> t.definition().id())).toList();
     }
 
+    /** Move the single world-layer CAPITAL slot to the persisted capital of the latest War target nation. */
+    public WorldTargets withCapitalCoord(Coord capitalCoord) {
+        if (capitalCoord == null) throw new IllegalArgumentException("王城动态坐标不得为空");
+        List<Target> capitals = byCoord.values().stream()
+                .filter(target -> target.definition().kind() == WorldTargetCfg.Kind.CAPITAL).toList();
+        if (capitals.size() != 1) throw new IllegalStateException("动态王城投影要求固定目录恰好有一个 CAPITAL 候选");
+        Target capital = capitals.get(0);
+        if (capital.coord().equals(capitalCoord)) return this;
+        var moved = new LinkedHashMap<Coord, Target>();
+        for (Target target : byCoord.values()) {
+            Coord coord = target == capital ? capitalCoord : target.coord();
+            Target projected = target == capital
+                    ? new Target(target.definition(), capitalCoord, target.defender(), target.battleTerrain())
+                    : target;
+            Target previous = moved.putIfAbsent(coord, projected);
+            if (previous != null) throw new IllegalStateException("王城现坐标与其它战略目标冲突");
+        }
+        return new WorldTargets(moved);
+    }
+
     /** 调用方提供当前城快照。冲突只返回报告，旧城由后续显式迁移方案处理。 */
     public List<Conflict> conflicts(Map<String, Coord> cities) {
         return cities.entrySet().stream().filter(e -> byCoord.containsKey(e.getValue()))

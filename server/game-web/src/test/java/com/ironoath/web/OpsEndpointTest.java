@@ -83,6 +83,8 @@ class OpsEndpointTest {
     @Autowired private TrackEventStore store;
     @Autowired private ReleaseRulesAssembler assembler;
     @Autowired private com.ironoath.common.time.TimeService time;
+    @Autowired private com.ironoath.web.nation.NationStore nations;
+    @Autowired private com.ironoath.web.nation.WarStore wars;
 
     @BeforeEach
     void resetStores() {
@@ -90,6 +92,8 @@ class OpsEndpointTest {
         // 于是「不足一批时库里是空的」这条断言会被上一个用例的事件污染
         flusher.flushNow("用例切换");
         ((InMemoryTrackStore) store).clear();
+        ((com.ironoath.web.store.memory.InMemoryNationStore) nations).clear();
+        ((com.ironoath.web.store.memory.InMemoryWarStore) wars).clear();
     }
 
     // ---------- 验收 3：埋点批量 ----------

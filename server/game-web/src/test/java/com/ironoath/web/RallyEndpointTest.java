@@ -42,6 +42,8 @@ import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.service.WorldAppService;
 import com.ironoath.web.store.memory.InMemoryArmyStore;
 import com.ironoath.web.store.memory.InMemoryPlayerStore;
+import com.ironoath.web.store.memory.InMemoryNationStore;
+import com.ironoath.web.store.memory.InMemoryWarStore;
 import com.ironoath.web.social.SocialStore;
 
 /**
@@ -72,12 +74,16 @@ class RallyEndpointTest {
     @Autowired private ArmyRepository armies;
     @Autowired private SocialStore socialStore;
     @Autowired private com.ironoath.web.service.PowerRefreshService powerRefreshService;
+    @Autowired private com.ironoath.web.nation.NationStore nations;
+    @Autowired private com.ironoath.web.nation.WarStore wars;
 
     @BeforeEach
     void resetStores() {
         ((InMemoryPlayerStore) players).clear();
         ((InMemoryArmyStore) armies).clear();
         socialStore.clear();
+        ((InMemoryNationStore) nations).clear();
+        ((InMemoryWarStore) wars).clear();
     }
 
     // ---------- 发起与承诺 ----------
