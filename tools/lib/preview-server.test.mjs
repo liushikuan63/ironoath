@@ -17,7 +17,7 @@ const BAKED = 'http://localhost:8080'
 // 每条用例一个端口，避免同一进程内前后用例抢同一个监听口。
 let nextPort = 8341 + (process.pid % 40)
 
-async function withRoot(files, backend, run, port = nextPort++) {
+async function withRoot(files, backend, run, port = nextPort++, host) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'preview-'))
   for (const [name, text] of Object.entries(files)) {
     const dir = path.join(root, path.dirname(name))
@@ -27,7 +27,7 @@ async function withRoot(files, backend, run, port = nextPort++) {
   const { startPreviewServer } = await import('./preview-server.mjs')
   let preview
   try {
-    preview = await startPreviewServer({ root, backend, port })
+    preview = await startPreviewServer({ root, backend, port, host })
     return await run(preview, root)
   } finally {
     await preview?.close()
@@ -75,4 +75,12 @@ test('服务时确实把地址换掉了', async () => {
     assert.ok(!text.includes(BAKED))
     assert.equal(preview.rewrites(), 2)
   })
+})
+
+test('explicit host binds a loopback preview origin', async () => {
+  await withRoot(ARTIFACT, 'http://localhost:8199', async (preview) => {
+    assert.equal(new URL(preview.origin).hostname, '127.0.0.1')
+    const res = await fetch(preview.origin)
+    assert.equal(res.status, 200)
+  }, nextPort++, '127.0.0.1')
 })
