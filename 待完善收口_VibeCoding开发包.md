@@ -8305,3 +8305,4 @@ TEST_EXIT=0
 
 
 | #2462 宣战结算入口须交付旧战赛季分 | 本格有效RED+覆盖面扩展；无生产实现 | 在过期未读旧War直接POST宣战的现有端到端测试中，旧战SETTLED并成功开新战后，应调用一次RankBoardService.reportWarSeasonPoints；现有WarAppService.declare丢弃Settlement，实际0调用，1/1/0/0。它与#2459面板后重试RED共同覆盖两条settleIfExpired生产入口；统一处理仍须有持久可恢复计划 | D:/tmp/ironoath-b13-war-season-award-declare-red-20261025.log；WarEndpointTest.declaringSettlesTheExpiredWarWithoutAPanelRead | 未做：持久奖分计划与幂等逐人落榜，季节/成员分段金额规则；不改生产逻辑或奖分数字，当前分支保留RED。|
+| #2467 #2464-#2466后整仓验证状态 | 验证边界记录；不改源码行为，不推送 | 完整`scripts/test.sh`（JDK17/Node20/Mongo27）服务端2525/2/0/0，两个且仅两个失败为既有War奖分RED：declare遗漏旧战award与SETTLED后无重试；新动态CAPITAL Mongo HTTP类在此整套中4/0/0/0。wrapper在Maven失败后停止，故内置client未运行；单独Node20 `test-client.sh`1420/0/0/0。Mongo隔离前缀后置核查[] | D:/tmp/ironoath-b13-capital-mongo-http-full-test-20261025.log、D:/tmp/ironoath-b13-capital-mongo-http-client-test-20261025.log；未重跑`scripts/check.sh`（最近完整Node20检查早于#2466） | 当前全套不全绿；本行不宣称B13验收/发布就绪。奖分outbox需等成员区间固定bonus金额规则；迁都旧坐标驻军处理待答；不推送，真实玩家库未触碰。|
