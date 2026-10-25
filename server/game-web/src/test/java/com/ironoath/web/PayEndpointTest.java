@@ -292,6 +292,7 @@ class PayEndpointTest {
             JsonNode ack = postGameItemNotification(body);
             assertThat(ack.path("returnCode").asText()).isEqualTo("0");
             assertThat(ack.path("returnMessage").asText()).isEqualTo("OK");
+            assertThat(ack.path("requestId").asText()).isNotBlank();
         }
         assertThat(orders.get(orderId).status()).isEqualTo(PayOrder.Status.SUCCESS);
         assertThat(orders.get(orderId).callbackCount()).isEqualTo(3);
@@ -773,11 +774,17 @@ class PayEndpointTest {
     private JsonNode postGameItemNotification(Object notification) throws Exception {
         long timestamp = java.time.Instant.now().getEpochSecond();
         String signature = aesEcbHex("test-secret-1234", Long.toString(timestamp));
-        return perform(post("/pay/midas/game-item-callback")
+        MvcResult response=mockMvc.perform(post("/pay/midas/game-item-callback")
                 .header("TC-Timestamp", Long.toString(timestamp))
                 .header("TC-Signature", signature)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(JsonUtils.toJson(notification)));
+                .content(JsonUtils.toJson(notification)))
+                .andExpect(status().isOk()).andReturn();
+        JsonNode ack=JsonUtils.readTree(response.getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertThat(ack.path("requestId").asText())
+                .as("渠道ACK requestId必须回显本次HTTP trace，便于回调对账")
+                .isEqualTo(response.getResponse().getHeader("X-Trace-Id"));
+        return ack;
     }
 
     private static String aesEcbHex(String key, String value) throws Exception {

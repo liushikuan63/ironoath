@@ -3,11 +3,12 @@
 package com.ironoath.web.dto.generated;
 
 /**
- * Tencent MiniGame GameItem 支付回调应答；returnCode='0' 表示成功。
+ * Tencent MiniGame GameItem 支付回调应答；returnCode='0' 表示成功，requestId回显本次HTTP trace id。
  */
 public record MidasGameItemDeliveryAck(
         String returnCode,
         String returnMessage,
-        String data)
+        String data,
+        String requestId)   // Callback ACK correlation id, echoed from the server trace context.
 {
 }

@@ -21,6 +21,7 @@ import com.ironoath.web.dto.generated.FundClaimResp;
 import com.ironoath.web.dto.generated.FundStatusResp;
 import com.ironoath.web.dto.generated.OrderStatusResp;
 import com.ironoath.web.dto.generated.PayCallbackReq;
+import com.ironoath.web.dto.generated.MidasGameItemDeliveryAck;
 import com.ironoath.web.dto.generated.PayRetryReq;
 import com.ironoath.web.dto.generated.PricesResp;
 import com.ironoath.web.service.PayAppService;
@@ -79,14 +80,14 @@ public class PayController {
 
     /** Official MiniGame GameItem callback; verifies platform timestamp and PayEventSig before fulfillment. */
     @PostMapping("/midas/game-item-callback")
-    public java.util.Map<String, Object> gameItemCallback(
+    public MidasGameItemDeliveryAck gameItemCallback(
             @RequestHeader("TC-Timestamp") String timestamp,
             @RequestHeader("TC-Signature") String signature,
             @RequestBody com.fasterxml.jackson.databind.JsonNode event) {
         boolean accepted = gameItemWebhook.accept(event, timestamp, signature);
         return accepted
-                ? java.util.Map.of("returnCode", "0", "returnMessage", "OK", "data", "ok")
-                : java.util.Map.of("returnCode", "1", "returnMessage", "Rejected", "data", "fail");
+                ? new MidasGameItemDeliveryAck("0", "OK", "ok", com.ironoath.common.log.TraceContext.traceId())
+                : new MidasGameItemDeliveryAck("1", "Rejected", "fail", com.ironoath.common.log.TraceContext.traceId());
     }
 
     /** 订单状态。<b>客户端在支付返回后必须轮询它</b>，不能凭客户端回调直接显示已到账。 */

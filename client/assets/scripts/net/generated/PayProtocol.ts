@@ -141,12 +141,14 @@ export interface MidasGameItemPayInfo {
 }
 
 /**
- * Tencent MiniGame GameItem 支付回调应答；returnCode='0' 表示成功。
+ * Tencent MiniGame GameItem 支付回调应答；returnCode='0' 表示成功，requestId回显本次HTTP trace id。
  */
 export interface MidasGameItemDeliveryAck {
   returnCode: string
   returnMessage: string
   data: string
+  /** Callback ACK correlation id, echoed from the server trace context. */
+  requestId: string
 }
 
 /**

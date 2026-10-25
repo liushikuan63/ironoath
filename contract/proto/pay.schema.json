@@ -198,13 +198,14 @@
     },
     "MidasGameItemDeliveryAck": {
       "type": "object",
-      "description": "Tencent MiniGame GameItem 支付回调应答；returnCode='0' 表示成功。",
+      "description": "Tencent MiniGame GameItem 支付回调应答；returnCode='0' 表示成功，requestId回显本次HTTP trace id。",
       "additionalProperties": false,
-      "required": ["returnCode", "returnMessage", "data"],
+      "required": ["returnCode", "returnMessage", "data", "requestId"],
       "properties": {
         "returnCode": { "type": "string" },
         "returnMessage": { "type": "string" },
-        "data": { "type": "string" }
+        "data": { "type": "string" },
+        "requestId": { "type": "string", "description": "Callback ACK correlation id, echoed from the server trace context." }
       }
     },
     "PayRewardItem": {
