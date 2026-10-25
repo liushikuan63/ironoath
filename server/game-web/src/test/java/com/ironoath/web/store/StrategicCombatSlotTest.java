@@ -95,13 +95,19 @@ class StrategicCombatSlotTest {
 
     static CapturedStrategicBattle dynamicCapitalBattle(long seed,Coord destination,
             com.ironoath.web.service.WarCapitalTargetResolver directory) {
+        return dynamicCapitalBattle(seed,destination,directory,100L);
+    }
+
+    static CapturedStrategicBattle dynamicCapitalBattle(long seed,Coord destination,
+            com.ironoath.web.service.WarCapitalTargetResolver directory,long infantryCount) {
         var cfg=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));var social=mock(SocialStore.class);
         var heroes=new HeroBattleMapper(cfg,new HeroStatsService(cfg),new EquipLedgers(mock(InventoryRepository.class),cfg),mock(HeroRepository.class),social);
         var tech=new BattleTechBonuses(new AllianceTechBonuses(social,cfg),new TechEffects(cfg),mock(PlayerRepository.class));
         var policies=new NationPolicyBonuses(cfg,social,mock(NationStore.class),mock(NationLeaders.class),new BattleArmyFactory(cfg));
         var preparation=new CapturedBattlePreparation(cfg,heroes,tech,policies,directory);
         var scope=preparation.capture(200);
-        var troops=Map.of("unit_infantry_t4",100L);
+        if(infantryCount<1)throw new IllegalArgumentException("fixture infantry count must be positive");
+        var troops=Map.of("unit_infantry_t4",infantryCount);
         var rally=Rally.restore("owned-dynamic-capital-rally",Rally.Scope.NATION,"owned-N","owned-leader",2,1,100,110,
                 Map.of("owned-leader",new Rally.Participant("owned-leader",troops,List.of())),Rally.Status.PREPARING,null,
                 destination.x(),destination.y(),"STRATEGIC_TARGET",1);
