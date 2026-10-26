@@ -392,3 +392,12 @@ B13原目标赛季增量（#2384）：recordScopedIncrement在原season/board/pl
 B13原战事全成员事件（#2385）：WarScoreBoard.BattleEvent冻原source序号op/战事startedAt/时点/完整成员BattleImpact、原参战资格和本次3项记账系数，freeze口须使用同一捕获配置物化板；不从当前成员或规则重算旧效果，不替产品分配成员击杀。apply先全量校验/算术/复制再变更，晚成员溢出也不改早成员；原伤兵上限只限本次新增，不压低后续已提交高疲劳。recordBattleEvent/findByStartedAt显式原war、不走latest，全成员效果+每目标最近回执同快照CAS；原回执闭战仍可确认，缺war/闭战缺回执拒绝。保旧Snapshot14/12/11构造与BSON缺列不回写、March等所有普通写口/直接旧版本save冲突；未知确认独立精确读回、读回错保原异常。新二进制保字段，旧版降级须迁移。原目标全效果屏障与关战/赛季快照前排空待COMBAT尚待实际producer接线，本格不宣称真实攻占。
 
 B05稳定战报ID及完整读回（#2386）：`BattleReport.idForOperation(operationId,ownerId)`使用长度分帧UTF-8 SHA-256，拒绝无效Unicode，无时钟/随机数/配置；ID区分原操作和owner。新`BattleReportStore.saveExact`严格确认完整`BattleReport`，不覆盖分享字段/原报告，未知Mongo写必须独立读回完整同载荷；错载荷或无读回失败，读回也失败则原异常附加读错。内存路径使用完整equals的putIfAbsent。原`save`与其忽略不同载荷重复的旧契约不变，createdAt/expiresAt不续期；新口目前零生产调用，`BattleReportService.record`仍生成随机UUID并立即调累加side effect，不可声称可重放或接入COMBAT恢复。
+
+
+### 城建前置等级的生产公开提示（B03验收6）
+
+`POST /city/upgrade` 的主城等级不足仍返回既有错误码3000。该城市请求只使用同一次领域校验的所需/当前等级整数构造 `CityMainLevelRequirementException`，由异常处理器输出固定中文 `msg`；客户端沿现有失败分支显示此消息，失败不刷新成功状态。
+
+生产 `expose-detail=false` 继续剥离所有诊断 `detail`。普通 `BizException` 即使使用相同3000码也不公开其 `detail`，不按错误码将其他业务或内部配置ID加入白名单。没有公开核心记录/协议结构/奖励规则变化，原扣费、队列与请求占用释放顺序保持。
+
+回归入口：`CityUpgradePublicMessageTest` 用真实内存CityAppService/Controller和生产脱敏的MVC Advice检查公开等级、普通同码脱敏、无扣费/占队列及同requestId重试；`AppRoot.test.ts` 的“生产脱敏仍显示主城所需和当前等级”只验证消费方，不冒充真实微信/手机显示。整体目标矩阵/命令日志留本任务独立artifact，未写共享队列。

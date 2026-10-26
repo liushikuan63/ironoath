@@ -5,6 +5,7 @@ import com.ironoath.common.ErrorCode;
 import com.ironoath.common.Result;
 import com.ironoath.common.log.TraceContext;
 import com.ironoath.config.ConfigException;
+import com.ironoath.web.service.CityMainLevelRequirementException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -43,9 +44,14 @@ public class GlobalExceptionHandler {
     public Result<Void> handleBiz(BizException e) {
         LOG.warn("{} 业务失败 code={} msg={} detail={}",
                 TraceContext.prefix(), e.code(), e.errorCode().msg(), e.detail());
+        // Only this dedicated type can publish city levels; a generic exception with the same code
+        // still follows normal diagnostic redaction. The message contains no config/player identifiers.
+        if (e instanceof CityMainLevelRequirementException requirement) {
+            return new Result<>(e.code(), requirement.playerMessage(), null, null, 0L, null);
+        }
         // 15013 的“下次可玩”时刻是给玩家看的行动信息。若只放 detail，生产环境的
         // ResultBodyAdvice 会剥离它，客户端只能收到没有时刻的固定 msg。
-        // 仅这一种码允许将已格式化的提示送入公开 msg；其它异常仍保留原有脱敏边界。
+        // 该时段提示仍按既有规则送入公开 msg；其它普通异常保留原有脱敏边界。
         if (e.errorCode() == ErrorCode.MINOR_CURFEW && e.detail() != null && !e.detail().isBlank()) {
             return new Result<>(e.code(), e.detail(), null, null, 0L, null);
         }
