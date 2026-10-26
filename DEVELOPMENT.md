@@ -442,3 +442,10 @@ MailResourceRecovery 的新候选必须先被旧Gold/Item收据固定恢复路�
 验证入口：BattlePassLegacyRecoveryTest 及其随机 Mongo 派生类、BattlePassDeliveryStoreTest，连同 BattlePassEndpointTest、BattlePassSweepTest、BattlePassStoreEquivalenceTest、原任务/活动恢复测试。故障由保存真实成功后抛 Error 注入，须区分业务首红和 Spring 测试夹具错误；Mongo 不可达/跳过不能计入已验收。
 
 部署仍需停目标旧写入者并取得应用/配置/数据库一致备份；旧 JAR 的 Progress 写入不保留新 pending，旧通用金币/道具恢复也不认识战令计划所有权，不能混跑或直接回退。应用回退须保留新字段/来源的兼容修复版本；否则停写恢复一致备份并评估之后进度。本次未操作真实库/后端、未执行新索引生产迁移，也未验证旧写入者混跑或整机重启。
+
+
+## B09 离线量具的玩家准入边界
+
+`StageUnitRule.allows(UnitKind)` 是真实 StageAppService 与 `--f2p-stages` 的共用纯判据；配置/协议限制枚举及 UnitCfg.Type 的名称由 StageContractParityTest 校验，未知名称不得默认放行。准入只作用于玩家，不能筛掉守方单位。CLI 仍为显式纯步兵/历史参考诊断，非法编队不模拟、不计胜率，诊断完成不代表B09-4通过。
+
+验证入口：StageUnitRuleTest（16组合+缺类型拒绝）、F2pStagesAdmissionTest（真实打印/内核与私有临时配置）、原 F2pStagesProvenanceTest 和 StageEndpointTest/StageContractParityTest。完整合法七天画像、BOSS/阶级/累计三星和真实平台证据单列；不把旧45天keys或6833标签当作新画像。

@@ -143,4 +143,11 @@ class StageContractParityTest {
         assertThat(Arrays.stream(BossMechanic.values()).map(Enum::name).toList())
                 .containsExactly("NONE", "REINFORCEMENT", "SHIELD_PHASE", "COUNTER_STRIKE");
     }
+    @Test
+    void sharedEntryRuleAndUnitKindCoverExactlyTheGeneratedConfigurationEnums() {
+        assertThat(Arrays.stream(com.ironoath.core.stage.StageUnitRule.values()).map(Enum::name).toList())
+                .containsExactlyElementsOf(Arrays.stream(com.ironoath.config.cfg.StageCfg.UnitRestriction.values()).map(Enum::name).toList());
+        assertThat(Arrays.stream(com.ironoath.core.army.UnitKind.values()).map(Enum::name).toList())
+                .containsExactlyElementsOf(Arrays.stream(com.ironoath.config.cfg.UnitCfg.Type.values()).map(Enum::name).toList());
+    }
 }

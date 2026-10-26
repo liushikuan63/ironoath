@@ -1640,7 +1640,7 @@ public final class BalanceCli {
      * 原B09验收4旁的历史简化战斗诊断；本模式本身不证明当前七天画像或前三章全三星。
      * 默认6833沿用#564历史固定参考，调用方可用--troops显式提供纯步兵数量。
      * --f2p-days仅作展示标签：这里没有运行f2p7d，也不从当前资源结余换算军队。
-     * 旧装配的准入/BOSS/三星局限必须随输出公开，不能把诊断完成当验收通过。
+     * 已共享玩家准入；剩余BOSS/三星局限必须随输出公开，不能把诊断完成当验收通过。
      */
     private static boolean printF2pStages(ConfigRegistry configs, BattleParamsResolver resolver,
                                            BattleRules rules, Map<UnitType, UnitStats> stats,
@@ -1682,23 +1682,24 @@ public final class BalanceCli {
             int total = (int) (row.enemyInfantry() + row.enemyCavalry()
                     + row.enemyArcher() + row.enemySiege());
             int roundLimit = (int) row.roundLimit();
-            ArmySide attacker = resolver.bareArmy("攻方",
-                    Map.of(UnitType.INFANTRY, (long) troop[0]), Long.MAX_VALUE / 4);
+            if (total > worstTotal) worstTotal = total;
+            var playerUnits = Map.of(UnitType.INFANTRY, (long) troop[0]);
+            var entryRule = com.ironoath.core.stage.StageUnitRule.valueOf(row.unitRestriction().name());
+            boolean admissible = playerUnits.entrySet().stream().filter(e -> e.getValue() > 0)
+                    .allMatch(e -> entryRule.allows(com.ironoath.core.army.UnitKind.valueOf(e.getKey().name())));
+            if (!admissible) {
+                System.out.printf("%-14s%-8d%-10d%s%n", row.id(), total, roundLimit, "准入不满足：本关不接受该纯步兵输入；未模拟");
+                continue;
+            }
+            ArmySide attacker = resolver.bareArmy("攻方", playerUnits, Long.MAX_VALUE / 4);
             int wins = 0;
             for (int i = 0; i < runs; i++) {
-                // **守方按 stage 表的四兵种铺开**，并应用 unitRestriction ——
-                // 第一版是「uniform 的 T1 步兵 ×N」，那把 NO_SIEGE / CAVALRY_ONLY
-                // 两类编队限制整个抹掉了。限制在这三档规模下对胜率的影响测得出来。
+                // Player entry restrictions must never delete any configured defending units.
                 Map<UnitType, Long> enemy = new EnumMap<>(UnitType.class);
                 enemy.put(UnitType.INFANTRY, row.enemyInfantry());
                 enemy.put(UnitType.CAVALRY, row.enemyCavalry());
                 enemy.put(UnitType.ARCHER, row.enemyArcher());
                 enemy.put(UnitType.SIEGE, row.enemySiege());
-                if (row.unitRestriction() == StageCfg.UnitRestriction.NO_SIEGE) {
-                    enemy.put(UnitType.SIEGE, 0L);
-                } else if (row.unitRestriction() == StageCfg.UnitRestriction.CAVALRY_ONLY) {
-                    enemy.keySet().retainAll(List.of(UnitType.CAVALRY));
-                }
                 ArmySide defender = resolver.bareArmy("守方", enemy, Long.MAX_VALUE / 4);
                 BattleResult r = BattleSimulator.simulate(new BattleInput(attacker, defender,
                         TerrainType.PLAIN, seed + i * 7919L + s, BattleType.PVE,
@@ -1710,23 +1711,18 @@ public final class BalanceCli {
             double rate = wins / (double) runs;
             System.out.printf("%-14s%-8d%-10d%.1f%%%n",
                     row.id(), total, roundLimit, rate * 100);
-            if (total > worstTotal) {
-                worstTotal = total;
-            }
         }
         System.out.println();
-        System.out.println("边界：上表保留旧量具的简化路径；unitRestriction 筛选守方，"
-                + "不是生产对玩家的准入；bossMechanic 未装配，医院/武将/科技画像和三星亦未验证。"
+        System.out.println("边界：准入复用生产规则，非法显式编队未模拟，守方四兵种完整保留；"
+                + "bossMechanic 未装配，医院/武将/科技画像和三星亦未验证。"
                 + "不可解释为真实关卡胜率或 B09-4 验收通过。");
         System.out.printf("诊断状态（不判验收）：%s",
                 worstTotal > 0 ? "旧装配报告最大守方 " + worstTotal + " 人；不构成全三星结论。" : "");
         return true;
     }
 
-    // **没有「平均回合」这一列**：内核的 BattleResult 不返回回合数，
-    // 而一个用 log 拟合出来的回合数是装饰性数字 —— 它不会让任何断言变红，
-    // 却会让人以为「6 回合打 10 个敌人要 32 回合」这种矛盾数字是量出来的。
-    // 真要这一列，得让 BattleResult 暴露 rounds（属内核改动，另开一格）。
+    // BattleResult exposes totalRounds, but this bounded diagnostic still does not calculate or
+    // accumulate real production stars. A later step must reuse StageProgress with a lawful profile.
 
     // ---------- 跨 JVM 确定性（B05 验收 3 缺的那一半） ----------
 
