@@ -32,6 +32,11 @@ public interface RewardService {
      */
     GrantResult grant(String playerId, List<RewardItem> rewards, RewardContext ctx);
 
+    /** Caller owns the player lock. Ordinary frozen plans must never fall back to non-idempotent grant. */
+    default GrantResult grantQuest(String playerId, List<FrozenQuestReward> rewards, RewardContext ctx) {
+        throw new UnsupportedOperationException("发放器未实现普通任务持久计划");
+    }
+
     /** 调用方持有玩家锁时，惰性恢复已接受的新金币奖励溢出；不重发已入余额部分。 */
     default void recoverGoldClaims(String playerId) {}
 

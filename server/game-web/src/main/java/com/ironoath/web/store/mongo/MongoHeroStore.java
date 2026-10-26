@@ -65,6 +65,7 @@ public final class MongoHeroStore implements HeroRepository {
         Update update = new Update()
                 .set("heroes", doc.heroes())
                 .set("lineups", doc.lineups())
+                .set("rewardClaims", doc.rewardClaims())
                 .inc("version", 1L);
         UpdateResult result = mongo.updateFirst(query, update, HeroDocument.class, HeroDocument.COLLECTION);
         if (result.getMatchedCount() == 0L) {

@@ -33,6 +33,12 @@ public interface QuestProgressStore {
     /** 覆盖保存。调用方持同玩家任务账本锁保证整档读改写串行（见类注释）。 */
     void save(String playerId, State state);
 
+    /** Projection-only writers preserve accepted claims. Caller already owns the terminal quest lock. */
+    default void saveProjection(String playerId, State projection) {
+        var pending = load(playerId).map(State::pendingClaims).orElse(List.of());
+        save(playerId, new State(playerId, projection.entries(), projection.dayKey(), projection.weekKey(), pending));
+    }
+
     /** 测试辅助：清空。 */
     void clear();
 
@@ -42,7 +48,11 @@ public interface QuestProgressStore {
      * <p><b>两个键必须与条目一起存</b>：只存条目的话，重启后无法判断「这些每日进度是不是今天的」——
      * 昨天的 3/3 会被当成今天的，玩家一上线就看到一个白送的完成态。
      */
-    record State(String playerId, List<QuestProgress.Entry> entries, String dayKey, String weekKey) {
+    record State(String playerId, List<QuestProgress.Entry> entries, String dayKey, String weekKey,
+                 List<QuestClaimPlan> pendingClaims) {
+        public State(String playerId, List<QuestProgress.Entry> entries, String dayKey, String weekKey) {
+            this(playerId, entries, dayKey, weekKey, List.of());
+        }
         public State {
             if (playerId == null || playerId.isBlank()) {
                 throw new IllegalArgumentException("playerId 不得为空");
@@ -51,6 +61,10 @@ public interface QuestProgressStore {
                 throw new IllegalArgumentException("dayKey 与 weekKey 都不得为空：跨期清零靠它们");
             }
             entries = entries == null ? List.of() : List.copyOf(entries);
+            pendingClaims = pendingClaims == null ? List.of() : List.copyOf(pendingClaims);
+            var keys = new java.util.HashSet<String>();
+            for (var plan : pendingClaims) if (!keys.add(plan.businessKey()))
+                throw new IllegalArgumentException("任务待领取计划业务键重复");
         }
     }
 

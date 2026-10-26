@@ -101,6 +101,38 @@ public final class PlayerWallet implements RewardPorts.Wallet {
     }
 
     @Override
+    public ResourceGrant grantQuestResourceOnce(String playerId, com.ironoath.core.reward.RewardItem reward,
+            com.ironoath.core.reward.RewardContext ctx, long now) {
+        if (ctx == null || !ctx.durableQuest() || !ctx.overflowToMail())
+            throw new IllegalArgumentException("任务资源需要稳定领取上下文");
+        PlayerSave save = require(playerId);
+        var previous = save.resourceClaims().get(ctx.traceId());
+        if (previous != null) {
+            if (!previous.reward().equals(reward)) throw new IllegalStateException("任务资源业务键不能改变奖励");
+            return new ResourceGrant(previous, 0);
+        }
+        var state = save.resource(reward.id());
+        var settled = ResourceSettlement.settle(state.current(), state.cap(), state.perHour(), state.lastSettle(), now);
+        long credited = Math.min(reward.count(), state.cap() - settled.current());
+        var receipt = new com.ironoath.core.reward.ResourceClaimReceipt(ctx.traceId(), reward, credited, now, null);
+        save.putResource(reward.id(), new PlayerResourceState(Math.addExact(settled.current(), credited),
+                state.cap(), state.protectedAmount(), state.perHour(), settled.lastSettle()));
+        save.putResourceClaim(receipt);
+        players.save(save);
+        return new ResourceGrant(receipt, credited);
+    }
+
+    @Override
+    public void completeResourceOverflow(String playerId, String key, String mailId) {
+        var save = require(playerId);
+        var receipt = save.resourceClaims().get(key);
+        if (receipt == null) throw new IllegalStateException("任务资源收据不存在");
+        if (mailId.equals(receipt.overflowMailId())) return;
+        save.putResourceClaim(receipt.withOverflowMail(mailId));
+        players.save(save);
+    }
+
+    @Override
     public long grant(String playerId, String resourceType, long amount, long now) {
         if (amount < 0L) {
             throw new IllegalArgumentException("发放量不得为负：" + amount);

@@ -99,6 +99,59 @@ public final class RewardGrantor implements RewardService {
         return new GrantResult(granted, overflow, mailId, compensationId);
     }
 
+    /** Frozen ordinary claims use per-owner receipts, then one stable overflow mail. No catch-and-compensate replay. */
+    @Override
+    public GrantResult grantQuest(String playerId, List<FrozenQuestReward> rewards, RewardContext ctx) {
+        if (playerId == null || playerId.isBlank() || ctx == null || !ctx.durableQuest() || !ctx.overflowToMail())
+            throw new IllegalArgumentException("普通任务需要稳定计划上下文");
+        long now = clock.getAsLong();
+        var granted = new ArrayList<RewardItem>();
+        var overflow = new ArrayList<RewardItem>();
+        var resourcePending = new ArrayList<String>();
+        var itemPending = new ArrayList<String>();
+        for (int index = 0; index < rewards.size(); index++) {
+            var frozen = rewards.get(index);
+            var reward = frozen.reward();
+            String key = ctx.traceId() + ":part:" + index;
+            var part = new RewardContext(ctx.source(), ctx.sourceRef(), key, true, ctx.claimFacts());
+            if (reward.type() == RewardType.RESOURCE || reward.type() == RewardType.STAMINA) {
+                var accepted = wallet.grantQuestResourceOnce(playerId, reward, part, now);
+                if (accepted.creditedNow() > 0) granted.add(reward.withCount(accepted.creditedNow()));
+                var receipt = accepted.receipt();
+                if (receipt.overflow() > 0) overflow.add(reward.withCount(receipt.overflow()));
+                if (receipt.pendingOverflow()) resourcePending.add(key);
+                continue;
+            }
+            var conversion = frozen.itemConversion();
+            if (reward.type() == RewardType.HERO) {
+                var accepted = extras.grantQuestHeroOnce(playerId, frozen, part, now);
+                if (accepted.receipt().obtained()) {
+                    if (accepted.acceptedNow()) granted.add(reward);
+                    continue;
+                }
+                // A duplicate decision is durable with the roster, while its fragments belong to Inventory.
+                conversion = accepted.receipt().reward().itemConversion();
+                if (conversion == null) continue;
+            }
+            if (conversion == null) throw new IllegalArgumentException("任务道具缺少冻结转换");
+            var itemContext = new RewardContext("quest_item", ctx.sourceRef(), key, true, ctx.claimFacts());
+            var accepted = bag.grantQuestItemsOnce(playerId, java.util.Map.of(conversion.itemId(), conversion.count()),
+                    java.util.Map.of(conversion.itemId(), conversion.stackMax()), itemContext, now);
+            long credited = accepted.creditedNow().getOrDefault(conversion.itemId(), 0L);
+            if (credited > 0) granted.add(reward.type() == RewardType.HERO
+                    ? conversion.reward().withCount(credited) : reward.withCount(credited));
+            accepted.receipt().overflow().forEach((id, count) -> overflow.add(new RewardItem(RewardType.ITEM, id, count)));
+            if (accepted.receipt().pendingOverflow()) itemPending.add(key);
+        }
+        String mailId = null;
+        if (!resourcePending.isEmpty() || !itemPending.isEmpty()) {
+            mailId = mailbox.sendOverflow(playerId, List.copyOf(overflow), ctx);
+            for (String key : resourcePending) wallet.completeResourceOverflow(playerId, key, mailId);
+            for (String key : itemPending) bag.completeItemOverflow(playerId, key, mailId);
+        }
+        return new GrantResult(granted, overflow, mailId, null);
+    }
+
     @Override
     public boolean hasMailAttachmentClaim(String playerId, String mailId) {
         return wallet.hasGoldClaim(playerId, "mail_gold:" + mailId)
@@ -123,8 +176,13 @@ public final class RewardGrantor implements RewardService {
         return new GrantResult(granted,overflow,mailId,null);
     }
     @Override public void recoverItemClaims(String playerId) {
-        for(var receipt:bag.pendingItemClaims(playerId))grantItemsOnce(playerId,receipt.requested().entrySet().stream().map(e->new RewardItem(RewardType.ITEM,e.getKey(),e.getValue())).toList(),
-            new RewardContext(receipt.source(),receipt.sourceRef(),receipt.businessKey(),true,receipt.facts()));
+        for (var receipt : bag.pendingItemClaims(playerId)) {
+            // Quest's frozen plan owns the combined resource/item mail and its original expiry.
+            if ("quest_item".equals(receipt.source())) continue;
+            grantItemsOnce(playerId, receipt.requested().entrySet().stream()
+                    .map(e -> new RewardItem(RewardType.ITEM, e.getKey(), e.getValue())).toList(),
+                    new RewardContext(receipt.source(), receipt.sourceRef(), receipt.businessKey(), true, receipt.facts()));
+        }
     }
 
     private GrantResult grantGoldOnce(String playerId, List<RewardItem> rewards, RewardContext ctx) {

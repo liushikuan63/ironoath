@@ -25,6 +25,16 @@ public final class HeroRoster {
 
     private final Map<String, HeroInstance> heroes = new LinkedHashMap<>();
     private final List<Lineup> lineups = new ArrayList<>();
+    private final Map<String, com.ironoath.core.reward.HeroClaimReceipt> rewardClaims = new LinkedHashMap<>();
+    public Map<String, com.ironoath.core.reward.HeroClaimReceipt> rewardClaims() { return Map.copyOf(rewardClaims); }
+    public void putRewardClaim(com.ironoath.core.reward.HeroClaimReceipt receipt) { rewardClaims.put(receipt.businessKey(), receipt); }
+    public void restoreRewardClaims(Map<String, com.ironoath.core.reward.HeroClaimReceipt> stored) {
+        rewardClaims.clear();
+        if (stored != null) stored.forEach((key, receipt) -> {
+            if (!key.equals(receipt.businessKey())) throw new IllegalArgumentException("武将收据键不匹配");
+            rewardClaims.put(key, receipt);
+        });
+    }
 
     public HeroRoster() {
     }
@@ -191,7 +201,10 @@ public final class HeroRoster {
     }
 
     /** 整个武将存档的快照（含编队预设）。 */
-    public record Snapshot(List<HeroSnapshot> heroes, List<Lineup> lineups) {
+    public record Snapshot(List<HeroSnapshot> heroes, List<Lineup> lineups,
+                           Map<String, com.ironoath.core.reward.HeroClaimReceipt> rewardClaims) {
+        public Snapshot(List<HeroSnapshot> heroes, List<Lineup> lineups) { this(heroes, lineups, Map.of()); }
+        public Snapshot { rewardClaims = rewardClaims == null ? Map.of() : Map.copyOf(rewardClaims); }
     }
 
     /** 取出完整快照（不可变）。 */
@@ -201,7 +214,7 @@ public final class HeroRoster {
             copies.add(new HeroSnapshot(source.heroId(), source.level(), source.exp(), source.star(),
                     source.awaken(), source.mainSkillLevel(), source.subSkillLevel(), source.equips()));
         }
-        return new Snapshot(List.copyOf(copies), List.copyOf(lineups));
+        return new Snapshot(List.copyOf(copies), List.copyOf(lineups), rewardClaims());
     }
 
     /** 由快照重建。顺序（武将拥有关系先于编队）不影响正确性：编队校验只在应用层做。 */
@@ -217,6 +230,7 @@ public final class HeroRoster {
             clone.restoreHero(target);
         }
         clone.restoreLineups(snapshot.lineups());
+        clone.restoreRewardClaims(snapshot.rewardClaims());
         return clone;
     }
 

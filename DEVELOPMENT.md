@@ -408,3 +408,12 @@ B05稳定战报ID及完整读回（#2386）：`BattleReport.idForOperation(opera
 `contract/config/tech.json` 的可空 `timeBaseSec`：缺失/null/0 回退 TECH_TIME，正值为本行一级秒数；所有生产行目前仍为 0。修改契约后运行 `npm run gen`，禁止手改生成类型。真实服务计算在扣款前拒绝定点溢出；热更不回改已开始的队列。
 
 验证入口：`TechTimeBaseTest`（私有 registry、内存存储与固定时钟）、既有 `TechEndpointTest`、`TechTimeCalibrationTest`；`node --test tools/lib/calibrate-tech-time.test.mjs` 已接入 `scripts/check.sh`。统一基数校准命令遇正值覆盖明确拒绝，不能用它证明混合基数整树达标。详见 [B20 行级兼容说明](B20_科技与装备强化.md#行级研究时长兼容能力2026-10-26本地实施)。
+
+
+### 普通任务领奖恢复（2026-10-26）
+
+`QuestClaimRecovery` 使用任务同文档冻结计划；资源/英雄收据与各自资产同次持久化，Inventory 复用 `quest_item` 稳定收据。投影写必须保留 pending，实际恢复只放在 owner→quest 的公开列表/计数/领取入口，不能放进 Guide 的 `entryOf` 或事件回调。异常保留原计划重试，不另开可能重复发放的普通补偿。
+
+验证类：`QuestOrdinaryRecoveryTest`、`QuestOrdinaryMongoRecoveryTest`，连同 `QuestEndpointTest`、`QuestPermanentRewardTest`、`QuestProgressLockReadTest` 回归。Mongo 测试复用 `TestMongo` 的随机 `ironoath_contract_` 库及本机 URI；不是玩家库。通用 `recoverItemClaims` 必须跳过任务计划所有的 `quest_item`，否则部分溢出会被两个恢复入口重复投递。详见 [B12 恢复记录](B12_外围系统.md#普通任务领奖的持久恢复2026-10-26本地交付记录)。旧档缺字段可读不等于任意旧二进制回退写入安全。
+
+本轮补充边界：无奖励且零积分的任务只保存领取投影。稳定原季档位邮件遇已移除的旧道具显示行，保留冻结ID/数量及原共享邮件键，名称回退“未知道具”；不把这种邮件送达称为该旧道具附件已验证可领取。

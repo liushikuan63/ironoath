@@ -27,6 +27,14 @@ public final class RewardPorts {
      * 在发放器里再实现一遍就会出现两套规则，迟早分叉。
      */
     public interface Wallet {
+        record ResourceGrant(ResourceClaimReceipt receipt, long creditedNow) {}
+        default ResourceGrant grantQuestResourceOnce(String playerId, RewardItem reward, RewardContext ctx, long now) {
+            throw new UnsupportedOperationException("钱包未实现任务资源收据");
+        }
+        default void completeResourceOverflow(String playerId, String key, String mailId) {
+            throw new UnsupportedOperationException("钱包未实现任务溢出确认");
+        }
+
 
         record GoldGrant(GoldClaimReceipt receipt, long creditedNow) {}
         record GoldRequest(long amount, RewardContext context) {}
@@ -77,6 +85,11 @@ public final class RewardPorts {
 
     /** 背包。实现必须做堆叠上限与容量上限校验。 */
     public interface Bag {
+        default ItemGrant grantQuestItemsOnce(String playerId, java.util.Map<String,Long> items,
+                java.util.Map<String,Long> stackMax, RewardContext ctx, long now) {
+            throw new UnsupportedOperationException("背包未实现冻结任务道具收据");
+        }
+
 
         record ItemGrant(com.ironoath.core.bag.ItemClaimReceipt receipt, java.util.Map<String,Long> creditedNow) {}
         default ItemGrant grantItemsOnce(String playerId,java.util.Map<String,Long> items,RewardContext ctx,long now) {throw new UnsupportedOperationException("背包未实现稳定材料领取");}
@@ -133,6 +146,11 @@ public final class RewardPorts {
 
     /** 特权与碎片等非资源非道具的奖励落地口。 */
     public interface Extras {
+        record HeroGrant(HeroClaimReceipt receipt, boolean acceptedNow) {}
+        default HeroGrant grantQuestHeroOnce(String playerId, FrozenQuestReward reward, RewardContext ctx, long now) {
+            throw new UnsupportedOperationException("武将未实现任务收据");
+        }
+
 
         /**
          * 发放一条非资源非道具的奖励。

@@ -105,6 +105,12 @@ public class BattlePassService {
 
     /** 迟恢复的原季积分必须兑现原档位；一名玩家、一档一封稳定邮件后再标已领。 */
     public void recoverActivityTierRewards(String playerId,String seasonId,List<BattlePassCfg> frozenTiers) {
+        recoverLateTierRewards(playerId, seasonId, frozenTiers, "活动");
+    }
+    public void recoverQuestTierRewards(String playerId,String seasonId,List<BattlePassCfg> frozenTiers) {
+        recoverLateTierRewards(playerId, seasonId, frozenTiers, "任务");
+    }
+    private void recoverLateTierRewards(String playerId,String seasonId,List<BattlePassCfg> frozenTiers,String sourceName) {
         if(seasonId.equals(activitySeasonId()))return;
         if(frozenTiers==null||frozenTiers.isEmpty())throw new IllegalStateException("活动缺少原季战令档位快照，拒绝按当前表猜测补发");
         var progress=store.load(seasonId,playerId);
@@ -113,7 +119,7 @@ public class BattlePassService {
                     ||progress.claimed((int)tier.tier(),track))continue;
             String key="activity-battle-pass:"+seasonId+":"+tier.tier()+":"+track.name();
             var mail=mailbox.sendGrantOnce(playerId,"BATTLE_PASS","赛季战令奖励补发",List.of(rewardItemOf(tier,track)),
-                    "活动奖励恢复后补齐了原赛季积分，这档"+(track==BattlePassTrack.PAID?"付费":"免费")+"奖励已补发：",
+                    sourceName+"奖励恢复后补齐了原赛季积分，这档"+(track==BattlePassTrack.PAID?"付费":"免费")+"奖励已补发：",
                     new RewardContext("battlePassRecovery",seasonId+":"+track.name(),key,false));
             progress=store.update(seasonId,playerId,p->p.withTierMailWindow(key,mail.createdAt(),mail.expireAt())
                     .withClaimed((int)tier.tier(),track));
@@ -127,6 +133,14 @@ public class BattlePassService {
         var accepted=store.update(seasonId,playerId,p -> p.withPointsOnce(businessKey,points));
         LOG.info("活动战令积分已接受 playerId={} season={} key={} 当前={}",playerId,seasonId,businessKey,accepted.points());
         return accepted.points();
+    }
+
+    /** Ordinary task plans pin original season and use the same atomic per-season point receipts. */
+    public long addQuestPointsOnce(String playerId, String seasonId, String businessKey, long points) {
+        if (seasonId == null || seasonId.isBlank() || businessKey == null || !businessKey.startsWith("quest_claim:"))
+            throw new IllegalArgumentException("任务积分需要原赛季与周期业务键");
+        if (points <= 0) return 0;
+        return store.update(seasonId, playerId, p -> p.withPointsOnce(businessKey, points)).points();
     }
 
     /** 领一档的某一条线。 */

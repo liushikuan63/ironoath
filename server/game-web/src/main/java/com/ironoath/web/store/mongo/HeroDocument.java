@@ -23,18 +23,22 @@ public record HeroDocument(
         @Id String playerId,
         long version,
         List<HeroRoster.HeroSnapshot> heroes,
-        List<Lineup> lineups) {
+        List<Lineup> lineups,
+        java.util.Map<String, com.ironoath.core.reward.HeroClaimReceipt> rewardClaims) {
+    public HeroDocument(String playerId, long version, List<HeroRoster.HeroSnapshot> heroes, List<Lineup> lineups) {
+        this(playerId, version, heroes, lineups, java.util.Map.of());
+    }
 
     /** 集合名。集中定义避免各处散落字符串。 */
     public static final String COLLECTION = "hero";
 
     static HeroDocument fromDomain(String playerId, long version, HeroRoster roster) {
         HeroRoster.Snapshot snapshot = roster.snapshot();
-        return new HeroDocument(playerId, version, snapshot.heroes(), snapshot.lineups());
+        return new HeroDocument(playerId, version, snapshot.heroes(), snapshot.lineups(), snapshot.rewardClaims());
     }
 
     /** 每次调用都新建一份，所以读出去的不是库里的活对象。 */
     HeroRoster toDomain() {
-        return HeroRoster.fromSnapshot(new HeroRoster.Snapshot(heroes, lineups));
+        return HeroRoster.fromSnapshot(new HeroRoster.Snapshot(heroes, lineups, rewardClaims));
     }
 }

@@ -47,6 +47,19 @@ public final class PlayerBag implements RewardPorts.Bag {
         inventories.save(playerId,inventory,version);
         return new ItemGrant(receipt,receipt.credited());
     }
+    @Override public ItemGrant grantQuestItemsOnce(String playerId, java.util.Map<String,Long> items,
+            java.util.Map<String,Long> stackMax, com.ironoath.core.reward.RewardContext ctx, long now) {
+        if (ctx == null || !"quest_item".equals(ctx.source()) || !ctx.overflowToMail()
+                || ctx.sourceRef().isBlank() || !stackMax.keySet().equals(items.keySet()))
+            throw new IllegalArgumentException("任务材料必须有冻结限制和稳定业务键");
+        var inventory = loadOrCreate(playerId);
+        long version = inventories.versionOf(playerId);
+        boolean existed = inventory.itemClaims().containsKey(ctx.traceId());
+        var receipt = inventory.claimItemsOnce(items, stackMax, ctx, now);
+        if (!existed) inventories.save(playerId, inventory, version);
+        return new ItemGrant(receipt, existed ? java.util.Map.of() : receipt.credited());
+    }
+
     @Override public void completeItemOverflow(String playerId,String key,String mailId) {
         var inventory=loadOrCreate(playerId);var receipt=inventory.itemClaims().get(key);
         if(receipt==null)throw new IllegalStateException("材料回执不存在");
