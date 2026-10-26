@@ -1,5 +1,5 @@
 // 职责：把「研究一级要多少秒」（curve.TECH_TIME.base）从感觉值变成**量出来的值**。
-// 用法：node tools/calibrate-tech-time.mjs [--json]
+// 用法：node tools/calibrate-tech-time.mjs [--json] [--config-dir=隔离配置目录]
 //
 // 判据来自 `B20_科技与装备强化.md` §五① 的裁决原文：
 //   「11 行全部点满 ≈ 赛季（45 天）的 50%~70%（约 22~32 天）」——
@@ -18,10 +18,23 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
-const table = (name) => JSON.parse(readFileSync(path.join(ROOT, 'contract/config', name), 'utf8'))
+// 可指定隔离输入供校准/负控使用；默认仍只读本仓配置，不修改任何表。
+const configArg = process.argv.slice(2).find(arg => arg.startsWith('--config-dir='))
+const configDir = configArg ? path.resolve(configArg.slice('--config-dir='.length)) : path.join(ROOT, 'contract/config')
+const table = (name) => JSON.parse(readFileSync(path.join(configDir, name), 'utf8'))
 const num = (v) => (v === null || v === undefined ? 0 : Number(v))
 
 const tech = table('tech.json')
+// 该量具解的是统一基数，不支持混合行基数。遇到覆盖值必须停下，不能忽略后声称全树达标。
+for (const row of tech.rows) {
+  const base = row.timeBaseSec
+  if (base == null || base === 0) continue
+  const reason = typeof base === 'number' && Number.isSafeInteger(base) && base > 0
+    ? '存在行级覆盖，统一基数校准不适用；需按各行时长重新核算'
+    : '必须是非负安全整数、null 或缺失'
+  console.error(`[calibrate-tech-time][FAIL] timeBaseSec ${row.id}: ${reason}`)
+  process.exit(1)
+}
 const curve = table('curve.json')
 const season = table('season.json')
 

@@ -401,3 +401,10 @@ B05稳定战报ID及完整读回（#2386）：`BattleReport.idForOperation(opera
 生产 `expose-detail=false` 继续剥离所有诊断 `detail`。普通 `BizException` 即使使用相同3000码也不公开其 `detail`，不按错误码将其他业务或内部配置ID加入白名单。没有公开核心记录/协议结构/奖励规则变化，原扣费、队列与请求占用释放顺序保持。
 
 回归入口：`CityUpgradePublicMessageTest` 用真实内存CityAppService/Controller和生产脱敏的MVC Advice检查公开等级、普通同码脱敏、无扣费/占队列及同requestId重试；`AppRoot.test.ts` 的“生产脱敏仍显示主城所需和当前等级”只验证消费方，不冒充真实微信/手机显示。整体目标矩阵/命令日志留本任务独立artifact，未写共享队列。
+
+
+### B20 行级研究时长（2026-10-26）
+
+`contract/config/tech.json` 的可空 `timeBaseSec`：缺失/null/0 回退 TECH_TIME，正值为本行一级秒数；所有生产行目前仍为 0。修改契约后运行 `npm run gen`，禁止手改生成类型。真实服务计算在扣款前拒绝定点溢出；热更不回改已开始的队列。
+
+验证入口：`TechTimeBaseTest`（私有 registry、内存存储与固定时钟）、既有 `TechEndpointTest`、`TechTimeCalibrationTest`；`node --test tools/lib/calibrate-tech-time.test.mjs` 已接入 `scripts/check.sh`。统一基数校准命令遇正值覆盖明确拒绝，不能用它证明混合基数整树达标。详见 [B20 行级兼容说明](B20_科技与装备强化.md#行级研究时长兼容能力2026-10-26本地实施)。

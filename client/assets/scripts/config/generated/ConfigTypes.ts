@@ -1307,9 +1307,9 @@ export type TechEffectAttr =
 
 /**
  * 配置表 tech 的一行。
- * 科技表。B02 字段：id/名称/所属学派/等级上限/消耗/效果。四学派对应 B00 的四种资源与三条玩法线（内政/军事/经济/工事）。两条曲线分家：每行消耗按 costCurve 指向的消耗曲线递增（首版全表 BUILDING_COST，比率 1.22），每级时长走 curve 表的 TECH_TIME（比率 1.28 全项目最陡，基数 13 秒由 `tools/calibrate-tech-time.mjs` 量出）；两者不可互换 —— TECH_TIME 量纲是 SECOND。effectValue 是每级增益（定点小数）。
+ * 科技表。B02 字段：id/名称/所属学派/等级上限/消耗/效果。四学派对应 B00 的四种资源与三条玩法线（内政/军事/经济/工事）。两条曲线分家：每行消耗按 costCurve 指向的消耗曲线递增（首版全表 BUILDING_COST，比率 1.22），每级时长走 curve 表的 TECH_TIME（比率 1.28 全项目最陡，基数 13 秒由 `tools/calibrate-tech-time.mjs` 量出）；两者不可互换 —— TECH_TIME 量纲是 SECOND。effectValue 是每级增益（定点小数）。 timeBaseSec 为本行1级秒数；缺失/null/0回退到 TECH_TIME.base，正值复用同一曲线比率与舍入。当前11行全部0，保持已校准经济数值不变。
  *
- * 源表 version=1
+ * 源表 version=2
  */
 export interface TechCfg {
   /** 主键 */
@@ -1329,6 +1329,7 @@ export interface TechCfg {
   /** 外键，指向 curve 表的 id */
   costCurve: string
   requireAcademyLevel: number
+  timeBaseSec?: number | null
 }
 
 /** unit.unitType 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */

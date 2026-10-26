@@ -145,7 +145,7 @@ public class TechAppService {
             int target = current + 1;
             Map<String, Long> cost = researchCost(cfg, target);
             requireResources(player, cost);
-            long seconds = researchSeconds(target);
+            long seconds = researchSeconds(cfg, target);
             long finishAt = snap.now() + seconds * 1000L;
             deductResources(player, cost);
             player.setTech(tech.started(cfg.id(), finishAt, snap.now(), seconds));
@@ -333,8 +333,22 @@ public class TechAppService {
      * 少这一档会让「升到 1 级」和「升到 2 级」都取 TR(1)=13 秒，而 #152 那次校准算的
      * 就是 {@code Σ_{L=1..maxLevel} TR(L)}（全树 340 级 = 27.58 天）—— 照抄会把量出来的区间弄假。
      */
-    private long researchSeconds(int targetLevel) {
-        return formula.evaluateSeconds("TECH_TIME", targetLevel);
+    private long researchSeconds(TechCfg cfg, int targetLevel) {
+        // 可空字段兼容旧表；0 是显式回退，不把已校准的统一基数抄成第二份。
+        Long base = cfg.timeBaseSec();
+        if (base == null || base == 0L) {
+            return formula.evaluateSeconds("TECH_TIME", targetLevel);
+        }
+        if (base < 0L) {
+            throw new ConfigException("科技[" + cfg.id() + "] timeBaseSec 不得为负数");
+        }
+        try {
+            return formula.evaluateSeconds("TECH_TIME", FixedPoint.of(base), targetLevel);
+        } catch (ArithmeticException ex) {
+            // LONG_NONNEG 并不保证乘定点倍率/几何增长后仍可表示。计算在扣款及入队之前完成。
+            throw new ConfigException("科技[" + cfg.id() + "] timeBaseSec 在等级 "
+                    + targetLevel + " 超出定点运算范围", ex);
+        }
     }
 
     /** 研究到第 {@code targetLevel} 级的消耗：四种资源各自基数 × 该行的 {@code costCurve}（比率 1.22 一族）。 */
@@ -393,7 +407,7 @@ public class TechAppService {
         int level = tech.levelOf(cfg.id());
         boolean researching = cfg.id().equals(tech.researchingId());
         boolean maxed = level >= cfg.maxLevel();
-        long nextTime = maxed ? 0L : researchSeconds(level + 1);
+        long nextTime = maxed ? 0L : researchSeconds(cfg, level + 1);
         Map<String, Long> cost = maxed ? Map.of() : researchCost(cfg, level + 1);
         TechBlockReason reason = blockReasonOf(cfg, player, tech, maxed, researching, academy, cost);
         return new TechView(cfg.id(), cfg.name(), TechSchool.valueOf(cfg.school().name()),
