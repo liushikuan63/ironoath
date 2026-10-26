@@ -31,6 +31,9 @@ public final class RewardPorts {
         default ResourceGrant grantQuestResourceOnce(String playerId, RewardItem reward, RewardContext ctx, long now) {
             throw new UnsupportedOperationException("钱包未实现任务资源收据");
         }
+        default ResourceGrant grantMailResourceOnce(String playerId, RewardItem reward, RewardContext ctx, long now) {
+            throw new UnsupportedOperationException("钱包未实现普通资源邮件收据");
+        }
         default void completeResourceOverflow(String playerId, String key, String mailId) {
             throw new UnsupportedOperationException("钱包未实现任务溢出确认");
         }

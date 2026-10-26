@@ -153,6 +153,30 @@ public final class RewardGrantor implements RewardService {
     }
 
     @Override
+    public GrantResult grantMailResources(String playerId, List<RewardItem> rewards, RewardContext ctx) {
+        if (playerId == null || playerId.isBlank() || ctx == null || !ctx.durableMailResources() || !ctx.overflowToMail()
+                || rewards == null || rewards.isEmpty() || rewards.stream().anyMatch(r -> r == null || "GOLD".equals(r.id())
+                    || r.type() != RewardType.RESOURCE && r.type() != RewardType.STAMINA))
+            throw new IllegalArgumentException("仅支持已冻结的普通非金币资源邮件");
+        var granted = new ArrayList<RewardItem>(); var overflow = new ArrayList<RewardItem>();
+        var pending = new ArrayList<String>(); long now = clock.getAsLong();
+        for (int index = 0; index < rewards.size(); index++) {
+            var reward = rewards.get(index); String key = ctx.traceId() + ":part:" + index;
+            var part = new RewardContext(ctx.source(), ctx.sourceRef(), key, true, ctx.claimFacts());
+            var accepted = wallet.grantMailResourceOnce(playerId, reward, part, now);
+            if (accepted.creditedNow() > 0) granted.add(reward.withCount(accepted.creditedNow()));
+            if (accepted.receipt().overflow() > 0) overflow.add(reward.withCount(accepted.receipt().overflow()));
+            if (accepted.receipt().pendingOverflow()) pending.add(key);
+        }
+        String mailId = null;
+        if (!pending.isEmpty()) {
+            mailId = mailbox.sendOverflow(playerId, List.copyOf(overflow), ctx);
+            for (String key : pending) wallet.completeResourceOverflow(playerId, key, mailId);
+        }
+        return new GrantResult(granted, overflow, mailId, null);
+    }
+
+    @Override
     public boolean hasMailAttachmentClaim(String playerId, String mailId) {
         return wallet.hasGoldClaim(playerId, "mail_gold:" + mailId)
                 || bag.hasItemClaim(playerId, "mail_item:" + mailId)

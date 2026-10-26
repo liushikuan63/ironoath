@@ -101,13 +101,39 @@ public final class MongoMailStore implements MailStore {
     }
 
     @Override
+    public boolean acceptClaim(String playerId, String mailId, long eligibleAt, com.ironoath.web.mail.MailClaimPlan plan) {
+        var prior = findById(playerId, mailId).orElse(null);
+        // Attachments are immutable after insert by MailStore contract. Read/claim/expiry state is fenced by CAS below.
+        if (prior == null || !MailStore.planMatches(prior, plan, eligibleAt)) return false;
+        return mongo.updateFirst(Query.query(Criteria.where("_id").is(mailId)
+                .and(MailDocument.FIELD_PLAYER_ID).is(playerId)
+                .and(MailDocument.FIELD_CLAIMED_AT).is(null).and("mail.acceptedPlan").is(null)
+                .and("mail.rewards.0").exists(true).and(MailDocument.FIELD_MAIL_EXPIRE_AT).gt(eligibleAt)),
+                new Update().set(MailDocument.FIELD_CLAIMED_AT, eligibleAt).set("mail.acceptedPlan", plan),
+                MailDocument.COLLECTION).getModifiedCount() == 1;
+    }
+    @Override public List<MailRecord> pendingOf(String playerId) {
+        return mongo.find(Query.query(Criteria.where(MailDocument.FIELD_PLAYER_ID).is(playerId)
+                .and("mail.acceptedPlan").ne(null)), MailDocument.class, MailDocument.COLLECTION)
+                .stream().map(MailDocument::toRecord).toList();
+    }
+    @Override public boolean completeAccepted(String playerId, String mailId, String key) {
+        long modified = mongo.updateFirst(Query.query(Criteria.where("_id").is(mailId)
+                .and(MailDocument.FIELD_PLAYER_ID).is(playerId).and("mail.acceptedPlan.businessKey").is(key)),
+                new Update().set("mail.acceptedPlan", null), MailDocument.COLLECTION).getModifiedCount();
+        if (modified == 1) return true;
+        return findById(playerId, mailId).filter(m -> m.acceptedPlan() == null && m.claimedAt() != null
+                && com.ironoath.web.mail.MailClaimPlan.keyOf(mailId).equals(key)).isPresent();
+    }
+
+    @Override
     public boolean releaseClaim(String playerId, String mailId) {
         if (playerId == null || mailId == null) {
             return false;
         }
         return mongo.updateFirst(Query.query(Criteria.where("_id").is(mailId)
                         .and(MailDocument.FIELD_PLAYER_ID).is(playerId)
-                        .and(MailDocument.FIELD_CLAIMED_AT).ne(null)),
+                        .and(MailDocument.FIELD_CLAIMED_AT).ne(null).and("mail.acceptedPlan").is(null)),
                 new Update().set(MailDocument.FIELD_CLAIMED_AT, null),
                 MailDocument.COLLECTION).getModifiedCount() == 1L;
     }
@@ -136,7 +162,7 @@ public final class MongoMailStore implements MailStore {
         // 边界与内存版同一条：expireAt <= now 算过期
         return (int) mongo.remove(Query.query(
                         Criteria.where(MailDocument.FIELD_EXPIRE_AT).lte(nowMillis)
-                                .norOperator(new Criteria().andOperator(Criteria.where("mail.kind").is("BATTLE_PASS"),
+                                .and("mail.acceptedPlan").is(null).norOperator(new Criteria().andOperator(Criteria.where("mail.kind").is("BATTLE_PASS"),
                                         Criteria.where("mail.sourceRef").regex("^battlePassRecovery:")))),
                 MailDocument.COLLECTION).getDeletedCount();
     }

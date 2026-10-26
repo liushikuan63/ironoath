@@ -417,3 +417,10 @@ B05稳定战报ID及完整读回（#2386）：`BattleReport.idForOperation(opera
 验证类：`QuestOrdinaryRecoveryTest`、`QuestOrdinaryMongoRecoveryTest`，连同 `QuestEndpointTest`、`QuestPermanentRewardTest`、`QuestProgressLockReadTest` 回归。Mongo 测试复用 `TestMongo` 的随机 `ironoath_contract_` 库及本机 URI；不是玩家库。通用 `recoverItemClaims` 必须跳过任务计划所有的 `quest_item`，否则部分溢出会被两个恢复入口重复投递。详见 [B12 恢复记录](B12_外围系统.md#普通任务领奖的持久恢复2026-10-26本地交付记录)。旧档缺字段可读不等于任意旧二进制回退写入安全。
 
 本轮补充边界：无奖励且零积分的任务只保存领取投影。稳定原季档位邮件遇已移除的旧道具显示行，保留冻结ID/数量及原共享邮件键，名称回退“未知道具”；不把这种邮件送达称为该旧道具附件已验证可领取。
+
+
+### 普通资源邮件接受计划（2026-10-26）
+
+MailResourceRecovery 仅接入纯非金币资源/体力邮件，保持既有 GOLD、普通 ITEM 和 paid 来源分支；装备/混合附件尚未迁入。MailRecord.acceptedPlan 与 claimedAt 原子接受，Mailbox 期限取已冻结事实，资源收据与 PlayerSave 同次保存。恢复入口为 owner 锁内 list/claimAll，不能让全局过期清理删除 pending，也不能 release 已接受承诺。
+
+验证：MailResourceRecoveryTest、MailResourceRecoveryMongoTest、MailAcceptedPlanStoreTest，并回归 MailGrantRecoveryTest/Mongo、MailEndpointTest、MailStoreEquivalenceTest。随机测试库为 ironoath_mail_resource_<UUID> 或 TestMongo 自有 ironoath_contract_<随机>，不使用玩家库。旧 BSON 缺字段可以读；旧服务会丢失新计划的写入/清理行为不可混部或直接回退。详情见 [B12 普通资源邮件恢复记录](B12_外围系统.md#普通非金币资源邮件的恢复切片2026-10-26)。

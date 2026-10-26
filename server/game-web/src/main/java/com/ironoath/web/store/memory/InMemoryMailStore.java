@@ -73,9 +73,32 @@ public final class InMemoryMailStore implements MailStore {
     }
 
     @Override
+    public synchronized boolean acceptClaim(String playerId, String mailId, long eligibleAt,
+            com.ironoath.web.mail.MailClaimPlan plan) {
+        var mail = mails.get(mailId);
+        if (mail == null || !mail.playerId().equals(playerId) || !mail.claimable(eligibleAt)
+                || mail.acceptedPlan() != null || !MailStore.planMatches(mail, plan, eligibleAt)) return false;
+        mails.put(mailId, new MailRecord(mail.mailId(), mail.playerId(), mail.kind(), mail.title(), mail.text(),
+                mail.rewards(), mail.sourceRef(), mail.createdAt(), mail.expireAt(), mail.readAt(), eligibleAt, plan));
+        return true;
+    }
+    @Override public synchronized List<MailRecord> pendingOf(String playerId) {
+        return mails.values().stream().filter(m -> m.playerId().equals(playerId) && m.acceptedPlan() != null).toList();
+    }
+    @Override public synchronized boolean completeAccepted(String playerId, String mailId, String key) {
+        var mail = mails.get(mailId);
+        if (mail == null || !mail.playerId().equals(playerId)) return false;
+        if (mail.acceptedPlan() == null) return mail.claimedAt() != null && com.ironoath.web.mail.MailClaimPlan.keyOf(mailId).equals(key);
+        if (!mail.acceptedPlan().businessKey().equals(key)) return false;
+        mails.put(mailId, new MailRecord(mail.mailId(), mail.playerId(), mail.kind(), mail.title(), mail.text(),
+                mail.rewards(), mail.sourceRef(), mail.createdAt(), mail.expireAt(), mail.readAt(), mail.claimedAt(), null));
+        return true;
+    }
+
+    @Override
     public synchronized boolean releaseClaim(String playerId, String mailId) {
         MailRecord mail = mails.get(mailId);
-        if (mail == null || !mail.playerId().equals(playerId) || mail.claimedAt() == null) {
+        if (mail == null || !mail.playerId().equals(playerId) || mail.claimedAt() == null || mail.acceptedPlan() != null) {
             return false;
         }
         mails.put(mailId, withClaimedAt(mail, null));
@@ -93,7 +116,7 @@ public final class InMemoryMailStore implements MailStore {
         }
         mails.put(mailId, new MailRecord(mail.mailId(), mail.playerId(), mail.kind(), mail.title(),
                 mail.text(), mail.rewards(), mail.sourceRef(), mail.createdAt(), mail.expireAt(),
-                nowMillis, mail.claimedAt()));
+                nowMillis, mail.claimedAt(), mail.acceptedPlan()));
         return true;
     }
 
@@ -101,7 +124,7 @@ public final class InMemoryMailStore implements MailStore {
     public synchronized int purgeExpired(long nowMillis) {
         List<String> doomed = new ArrayList<>();
         for (MailRecord mail : mails.values()) {
-            if (mail.expireAt() <= nowMillis && !mail.durableGrantReceipt()) {
+            if (mail.expireAt() <= nowMillis && !mail.durableGrantReceipt() && mail.acceptedPlan() == null) {
                 doomed.add(mail.mailId());
             }
         }
@@ -153,6 +176,6 @@ public final class InMemoryMailStore implements MailStore {
 
     private static MailRecord withClaimedAt(MailRecord mail, Long claimedAt) {
         return new MailRecord(mail.mailId(), mail.playerId(), mail.kind(), mail.title(), mail.text(),
-                mail.rewards(), mail.sourceRef(), mail.createdAt(), mail.expireAt(), mail.readAt(), claimedAt);
+                mail.rewards(), mail.sourceRef(), mail.createdAt(), mail.expireAt(), mail.readAt(), claimedAt, mail.acceptedPlan());
     }
 }

@@ -37,6 +37,11 @@ public interface RewardService {
         throw new UnsupportedOperationException("发放器未实现普通任务持久计划");
     }
 
+    /** Pure non-gold resource mail plans; existing gold and stack-item mail identities remain separate. */
+    default GrantResult grantMailResources(String playerId, List<RewardItem> rewards, RewardContext ctx) {
+        throw new UnsupportedOperationException("发放器未实现普通资源邮件计划");
+    }
+
     /** 调用方持有玩家锁时，惰性恢复已接受的新金币奖励溢出；不重发已入余额部分。 */
     default void recoverGoldClaims(String playerId) {}
 

@@ -55,32 +55,33 @@ public final class StoreMailbox implements RewardPorts.Mailbox {
     public String sendOverflow(String playerId, List<RewardItem> overflow, RewardContext ctx) {
         long now = timeService.serverNow();
         int days = retentionDays();
-        if (ctx.durableQuest()) {
-            now = questMailTime(ctx, "quest-mail-created:");
-            long expires = questMailTime(ctx, "quest-mail-expires:");
+        if (ctx.durableQuest() || ctx.durableMailResources()) {
+            String prefix = ctx.durableQuest() ? "quest-mail-" : "mail-overflow-";
+            now = questMailTime(ctx, prefix + "created:");
+            long expires = questMailTime(ctx, prefix + "expires:");
             long span = Math.subtractExact(expires, now);
             if (span <= 0 || span % 86_400_000L != 0) throw new IllegalArgumentException("任务邮件期限快照无效");
             days = Math.toIntExact(span / 86_400_000L);
         }
-        String mailId = (ctx.durableGold() || ctx.durableItems() || ctx.durableQuest())
+        String mailId = (ctx.durableGold() || ctx.durableItems() || ctx.durableQuest() || ctx.durableMailResources())
                 ? "mail_" + UUID.nameUUIDFromBytes((playerId + "\u0000" + ctx.source() + "\u0000" + ctx.traceId())
                         .getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString().replace("-", "")
                 : "mail_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         // Delivery evidence survives config reload and must retain its first expiry/read/claim state.
-        if ((ctx.durableGold() || ctx.durableItems() || ctx.durableQuest()) && store.findById(playerId, mailId).isPresent()) return mailId;
+        if ((ctx.durableGold() || ctx.durableItems() || ctx.durableQuest() || ctx.durableMailResources()) && store.findById(playerId, mailId).isPresent()) return mailId;
         List<RewardLine> lines = new ArrayList<>(overflow.size());
         for (RewardItem item : overflow) {
             String name;
             try { name = names.nameOf(item); }
             catch (com.ironoath.config.ConfigException e) {
-                if (!ctx.durableQuest() && (!ctx.durableItems() || item.type() != com.ironoath.core.reward.RewardType.ITEM)) throw e;
+                if (!ctx.durableQuest() && !ctx.durableMailResources() && (!ctx.durableItems() || item.type() != com.ironoath.core.reward.RewardType.ITEM)) throw e;
                 // This item was already accepted with its receipt; removing a row cannot erase delivery.
-                name = item.type() == com.ironoath.core.reward.RewardType.HERO ? "未知武将" : "未知道具";
+                name = ctx.durableMailResources() ? "资源奖励" : item.type() == com.ironoath.core.reward.RewardType.HERO ? "未知武将" : "未知道具";
             }
             lines.add(new RewardLine(item.type().name(), item.id(), item.count(), name));
         }
         store.save(new MailRecord(mailId, playerId, "OVERFLOW", "奖励放不下，先存进邮箱",
-                bodyOf(lines, ctx, days), lines, ctx.source() + ':' + ctx.sourceRef(), now,
+                bodyOf(lines, ctx, days), lines, ctx.durableMailResources() ? ctx.sourceRef() : ctx.source() + ':' + ctx.sourceRef(), now,
                 now + days * 86_400_000L, null, null));
         // INFO 而不是旧的 ERROR：溢出转邮件是设计好的路径，不是故障。
         // 真正的故障是「这批东西无处安放」，那会在领取时以 failed 的形式回到玩家面前
@@ -156,10 +157,10 @@ public final class StoreMailbox implements RewardPorts.Mailbox {
                 || ctx.traceId().startsWith("mail_items:");
         boolean battle="battle".equals(ctx.source());
         boolean ordinaryMail="mail".equals(ctx.source());
-        text.append("来源：").append(ctx.durableQuest() || "quest_item".equals(ctx.source()) ? "任务奖励" : battle ? "战斗掠夺奖励" : ordinaryMail || mailAttachment && (ctx.durableGold() || ctx.durableItems() || ctx.durableQuest()) ? "邮件附件奖励"
+        text.append("来源：").append(ctx.durableMailResources() ? "邮件附件奖励" : ctx.durableQuest() || "quest_item".equals(ctx.source()) ? "任务奖励" : battle ? "战斗掠夺奖励" : ordinaryMail || mailAttachment && (ctx.durableGold() || ctx.durableItems() || ctx.durableQuest() || ctx.durableMailResources()) ? "邮件附件奖励"
                 : ctx.durableItems() ? ("free_item".equals(ctx.source())?"活动材料奖励":"月卡材料奖励") : ctx.durableGold()
                 ? ("paid_gold".equals(ctx.source()) ? "月卡金币奖励" : "签到与成长奖励") : ctx.source());
-        if (!battle && !ordinaryMail && !ctx.durableGold() && !ctx.durableItems() && !ctx.durableQuest() && !ctx.sourceRef().isBlank()) {
+        if (!battle && !ordinaryMail && !ctx.durableGold() && !ctx.durableItems() && !ctx.durableQuest() && !ctx.durableMailResources() && !ctx.sourceRef().isBlank()) {
             text.append('（').append(ctx.sourceRef()).append('）');
         }
         return text.toString().stripTrailing();
