@@ -38,8 +38,8 @@ import java.util.List;
  *       战令没有自己的任务体系 —— 这是裁决② 的原话；</li>
  *   <li><b>两条线各领各的</b>：付费线未解锁只拦付费那一次，免费线照领（「买了战令」解锁的是第二行，
  *       不是把第一行锁起来）；</li>
- *   <li><b>先标记后发奖</b>（与任务/结算同一条取舍）：失败方向选"标记了但没发出去"
- *       —— 那笔有补偿队列与客服，反过来会让玩家重领。</li>
+ *   <li><b>资格与冻结投递计划同次保存</b>：外部资产或邮件确认前保留 pending，
+ *       重建服务按原计划和稳定收据继续，资格标记不能单独成为漏发终态。</li>
  * </ol>
  */
 @Service
@@ -61,6 +61,7 @@ public class BattlePassService {
     private final ConfigRegistry configs;
     /** 赛季结束时把没领的档位奖励发进邮箱（B24 验收 2 的后半句：不静默作废）。 */
     private final StoreMailbox mailbox;
+    private final BattlePassClaimRecovery delivery;
 
     public BattlePassService(BattlePassStore store, BattlePassRules rules, RewardService rewardService,
                              RewardNames rewardNames, PlayerLock playerLock, TimeService timeService,
@@ -73,12 +74,15 @@ public class BattlePassService {
         this.timeService = timeService;
         this.configs = configs;
         this.mailbox = mailbox;
+        this.delivery = new BattlePassClaimRecovery(store,configs,rewardService,rewardNames,mailbox);
     }
 
     /** 本赛季战令全貌（20 档 + 三个结论位）。 */
     public BattlePassStatusResp status(String playerId) {
-        String seasonId = rules.seasonId();
-        return statusOf(seasonId, store.load(seasonId, playerId), timeService.serverNow());
+        return playerLock.runLocked(playerId,LOCK_TIMEOUT_MS,()->{
+            String seasonId=rules.seasonId();delivery.recoverAll(playerId,seasonId);
+            return statusOf(seasonId,store.load(seasonId,playerId),timeService.serverNow());
+        });
     }
 
     /**
@@ -103,7 +107,7 @@ public class BattlePassService {
 
     public List<BattlePassCfg> activityTierSnapshot() { return List.copyOf(rules.tiers()); }
 
-    /** 迟恢复的原季积分必须兑现原档位；一名玩家、一档一封稳定邮件后再标已领。 */
+    /** 迟恢复的原季积分必须兑现原档位；资格和计划先同次保存，再投递既有稳定邮件。 */
     public void recoverActivityTierRewards(String playerId,String seasonId,List<BattlePassCfg> frozenTiers) {
         recoverLateTierRewards(playerId, seasonId, frozenTiers, "活动");
     }
@@ -113,17 +117,23 @@ public class BattlePassService {
     private void recoverLateTierRewards(String playerId,String seasonId,List<BattlePassCfg> frozenTiers,String sourceName) {
         if(seasonId.equals(activitySeasonId()))return;
         if(frozenTiers==null||frozenTiers.isEmpty())throw new IllegalStateException("活动缺少原季战令档位快照，拒绝按当前表猜测补发");
-        var progress=store.load(seasonId,playerId);
-        for(var tier:frozenTiers)for(var track:BattlePassTrack.values()) {
-            if(progress.points()<tier.requiredPoints()||track==BattlePassTrack.PAID&&!progress.paidUnlocked()
-                    ||progress.claimed((int)tier.tier(),track))continue;
-            String key="activity-battle-pass:"+seasonId+":"+tier.tier()+":"+track.name();
-            var mail=mailbox.sendGrantOnce(playerId,"BATTLE_PASS","赛季战令奖励补发",List.of(rewardItemOf(tier,track)),
-                    sourceName+"奖励恢复后补齐了原赛季积分，这档"+(track==BattlePassTrack.PAID?"付费":"免费")+"奖励已补发：",
-                    new RewardContext("battlePassRecovery",seasonId+":"+track.name(),key,false));
-            progress=store.update(seasonId,playerId,p->p.withTierMailWindow(key,mail.createdAt(),mail.expireAt())
-                    .withClaimed((int)tier.tier(),track));
-        }
+        playerLock.runLocked(playerId,LOCK_TIMEOUT_MS,()->{
+            delivery.recoverSeason(playerId,seasonId);delivery.reconcileLegacy(playerId,seasonId,frozenTiers);
+            for(var row:frozenTiers)for(var track:BattlePassTrack.values()) {
+                var before=store.load(seasonId,playerId);
+                if(before.points()<row.requiredPoints()||track==BattlePassTrack.PAID&&!before.paidUnlocked()||before.claimed((int)row.tier(),track))continue;
+                var tier=delivery.freeze(row,track,false);long now=timeService.serverNow(),expires=delivery.expireAt(now);
+                String key=BattlePassDeliveryPlan.keyOf(seasonId,track,BattlePassDeliveryPlan.Kind.LATE_MAIL,List.of(tier));
+                var oldWindow=before.tierMailWindows().get(key);if(oldWindow!=null){now=oldWindow.createdAt();expires=oldWindow.expireAt();}
+                var plan=BattlePassClaimRecovery.plan(seasonId,track,BattlePassDeliveryPlan.Kind.LATE_MAIL,List.of(tier),now,expires,sourceName);
+                store.update(seasonId,playerId,p->{
+                    if(p.claimed(tier.tier(),track)||p.points()<tier.requiredPoints()||track==BattlePassTrack.PAID&&!p.paidUnlocked())return p;
+                    return p.withDeliveryPlan(plan);
+                });
+                delivery.recoverSeason(playerId,seasonId);
+            }
+            return null;
+        });
     }
 
     public long addActivityPointsOnce(String playerId,String seasonId,String businessKey,long points) {
@@ -144,41 +154,24 @@ public class BattlePassService {
     }
 
     /** 领一档的某一条线。 */
-    public BattlePassClaimResp claim(String playerId, BattlePassClaimReq req) {
-        if (req == null || req.track() == null || req.tier() == 0L) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "tier 与 track 都不得为空");
-        }
-        long tier = req.tier();
-        BattlePassTrack track = req.track();
-        BattlePassCfg row = rules.requireTier(tier);
-        long now = timeService.serverNow();
-        String seasonId = rules.seasonId();
-        return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
-            BattlePassStore.Progress before = store.load(seasonId, playerId);
-            if (before.points() < row.requiredPoints()) {
-                throw new BizException(ErrorCode.BATTLE_PASS_TIER_LOCKED,
-                        "第 " + tier + " 档需要 " + row.requiredPoints() + " 分，当前 " + before.points() + " 分");
-            }
-            if (track == BattlePassTrack.PAID && !before.paidUnlocked()) {
-                throw new BizException(ErrorCode.BATTLE_PASS_PAID_LOCKED, "第 " + tier + " 档的付费线还没解锁");
-            }
-            if (before.claimed((int) tier, track)) {
-                throw new BizException(ErrorCode.BATTLE_PASS_ALREADY_CLAIMED,
-                        "第 " + tier + " 档的" + (track == BattlePassTrack.PAID ? "付费" : "免费") + "线已经领过");
-            }
-            // 先标记再发奖：两个并发请求串在同一把玩家锁上，第二个看到的已经是标记过的进度
-            BattlePassStore.Progress after = store.update(seasonId, playerId,
-                    cur -> cur.withClaimed((int) tier, track));
-            RewardItem reward = rewardItemOf(row, track);
-            var result = rewardService.grant(playerId, List.of(reward),
-                    RewardContext.toMail("battlePass", row.id(),
-                            row.id() + ":" + track.name() + ":" + req.requestId()));
-            if (result.hasCompensation()) {
-                LOG.error("【战令奖励未入账已进补偿队列】playerId={} 档位={} 线={} compensationId={}",
-                        playerId, tier, track, result.compensationId());
-            }
-            return new BattlePassClaimResp(track, tier, rewardViewOf(row, track),
-                    statusOf(seasonId, after, now));
+    public BattlePassClaimResp claim(String playerId,BattlePassClaimReq req) {
+        if(req==null||req.track()==null||req.tier()==0L)throw new BizException(ErrorCode.PARAM_INVALID,"tier 与 track 都不得为空");
+        var row=rules.requireTier(req.tier());var track=req.track();String seasonId=rules.seasonId();
+        return playerLock.runLocked(playerId,LOCK_TIMEOUT_MS,()->{
+            delivery.recoverAll(playerId,seasonId);delivery.reconcileLegacy(playerId,seasonId,List.of(row));
+            var tier=delivery.freeze(row,track,true);long now=timeService.serverNow();
+            var plan=BattlePassClaimRecovery.plan(seasonId,track,BattlePassDeliveryPlan.Kind.DIRECT,List.of(tier),now,delivery.expireAt(now),"");
+            var accepted=store.update(seasonId,playerId,p->{
+                if(p.pendingPlans().containsKey(plan.key()))return p;
+                if(p.points()<row.requiredPoints())throw new BizException(ErrorCode.BATTLE_PASS_TIER_LOCKED,"第 "+req.tier()+" 档需要 "+row.requiredPoints()+" 分，当前 "+p.points()+" 分");
+                if(track==BattlePassTrack.PAID&&!p.paidUnlocked())throw new BizException(ErrorCode.BATTLE_PASS_PAID_LOCKED,"第 "+req.tier()+" 档的付费线还没解锁");
+                if(p.claimed(tier.tier(),track))throw new BizException(ErrorCode.BATTLE_PASS_ALREADY_CLAIMED,"第 "+req.tier()+" 档的"+(track==BattlePassTrack.PAID?"付费":"免费")+"线已经领过");
+                return p.withDeliveryPlan(plan);
+            });
+            var actual=accepted.pendingPlans().get(plan.key());delivery.recoverSeason(playerId,seasonId);
+            var promised=actual.tiers().get(0);
+            var view=new com.ironoath.web.dto.generated.BattlePassRewardView(com.ironoath.web.dto.generated.BattlePassRewardType.valueOf(promised.reward().type().name()),promised.reward().id(),promised.name(),promised.reward().count());
+            return new BattlePassClaimResp(track,req.tier(),view,statusOf(seasonId,store.load(seasonId,playerId),now));
         });
     }
 
@@ -200,57 +193,24 @@ public class BattlePassService {
      * "背包满而静默丢失"的风险，而邮件有保留期与领取记录，符合裁决② 的「不静默作废」。
      */
     public int sweepSeasonToMail(String seasonId) {
-        if (seasonId == null || seasonId.isBlank()) {
-            return 0;
-        }
-        List<BattlePassCfg> tiers = rules.tiers();
-        int sent = 0;
-        for (String playerId : store.playerIdsOf(seasonId)) {
-            BattlePassStore.Progress progress = store.load(seasonId, playerId);
-            for (BattlePassTrack track : BattlePassTrack.values()) {
-                List<RewardItem> pending = new ArrayList<>();
-                List<Integer> pendingTiers = new ArrayList<>();
-                for (BattlePassCfg row : tiers) {
-                    if (progress.points() < row.requiredPoints()) {
-                        continue;   // 没达成的不补发：不能靠"补发"绕过积分
-                    }
-                    if (track == BattlePassTrack.PAID && !progress.paidUnlocked()) {
-                        continue;   // 没买的不补发：那是没买过的东西
-                    }
-                    if (progress.claimed((int) row.tier(), track)) {
-                        continue;   // 已经领过的不再发
-                    }
-                    pending.add(rewardItemOf(row, track));
-                    pendingTiers.add((int) row.tier());
-                }
-                if (pending.isEmpty()) {
-                    continue;
-                }
-                BattlePassStore.Progress after = store.update(seasonId, playerId, cur -> {
-                    BattlePassStore.Progress next = cur;
-                    for (Integer tier : pendingTiers) {
-                        next = next.withClaimed(tier, track);
-                    }
-                    return next;
+        if(seasonId==null||seasonId.isBlank())return 0;
+        List<BattlePassCfg> tiers=rules.tiers();int sent=0;
+        for(String playerId:store.playerIdsOf(seasonId))sent+=playerLock.runLocked(playerId,LOCK_TIMEOUT_MS,()->{
+            int delivered=delivery.recoverSeason(playerId,seasonId);delivery.reconcileLegacy(playerId,seasonId,tiers);
+            for(var track:BattlePassTrack.values()) {
+                var before=store.load(seasonId,playerId);var candidates=new ArrayList<BattlePassDeliveryPlan.Tier>();
+                for(var row:tiers)if(before.points()>=row.requiredPoints()&&!before.claimed((int)row.tier(),track)&&(track!=BattlePassTrack.PAID||before.paidUnlocked()))
+                    candidates.add(delivery.freeze(row,track,false));
+                if(candidates.isEmpty())continue;
+                long now=timeService.serverNow(),expires=delivery.expireAt(now);
+                store.update(seasonId,playerId,p->{
+                    var won=candidates.stream().filter(t->p.points()>=t.requiredPoints()&&!p.claimed(t.tier(),track)&&(track!=BattlePassTrack.PAID||p.paidUnlocked())).toList();
+                    return won.isEmpty()?p:p.withDeliveryPlan(BattlePassClaimRecovery.plan(seasonId,track,BattlePassDeliveryPlan.Kind.SEASON_MAIL,won,now,expires,""));
                 });
-                boolean marked = pendingTiers.stream()
-                        .allMatch(tier -> after.claimed(tier, track));
-                if (!marked) {
-                    LOG.error("补发标记没落库，本档跳过（宁可这一档不发，也不能发两次）playerId={} 赛季={} 轨道={}",
-                            playerId, seasonId, track);
-                    continue;
-                }
-                mailbox.sendGrant(playerId, "BATTLE_PASS", "赛季战令奖励补发", pending,
-                        "赛季结束时有 " + pending.size() + " 档"
-                                + (track == BattlePassTrack.PAID ? "付费" : "免费") + "奖励还没领，已按档补发：",
-                        // overflowToMail=false：这批东西**已经**在邮件里了，没有第二处可落
-                        new RewardContext("battlePass", seasonId + ":" + track.name(),
-                                "seasonEnd:" + seasonId + ":" + playerId, false));
-                sent++;
+                delivered+=delivery.recoverSeason(playerId,seasonId);
             }
-        }
-        LOG.info("战令赛季末补发完成 赛季={} 发出邮件={} 封（覆盖 {} 名参与者）",
-                seasonId, sent, store.playerIdsOf(seasonId).size());
+            return delivered;
+        });
         return sent;
     }
 

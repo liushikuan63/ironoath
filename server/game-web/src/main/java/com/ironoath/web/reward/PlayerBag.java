@@ -35,19 +35,28 @@ public final class PlayerBag implements RewardPorts.Bag {
 
     @Override public Inventory.MailBagClaim grantMailBagOnce(String playerId,java.util.List<com.ironoath.core.reward.FrozenMailReward> items,
             com.ironoath.core.reward.RewardContext ctx,long now) {
+        if(ctx==null||!ctx.durableMailAttachments())throw new IllegalArgumentException("邮件计划身份无效");
+        return grantFrozenBagOnce(playerId,items,ctx,now);
+    }
+    @Override public Inventory.MailBagClaim grantBattlePassBagOnce(String playerId,java.util.List<com.ironoath.core.reward.FrozenMailReward> items,
+            com.ironoath.core.reward.RewardContext ctx,long now) {
+        if(ctx==null||!ctx.durableBattlePass())throw new IllegalArgumentException("战令计划身份无效");
+        return grantFrozenBagOnce(playerId,items,ctx,now);
+    }
+    private Inventory.MailBagClaim grantFrozenBagOnce(String playerId,java.util.List<com.ironoath.core.reward.FrozenMailReward> items,
+            com.ironoath.core.reward.RewardContext ctx,long now) {
         var classification=new java.util.LinkedHashMap<String,Boolean>();
         for(var item:items) {
             Boolean prior=classification.putIfAbsent(item.reward().id(),item.equipment());
             if(prior!=null&&prior!=item.equipment())throw new IllegalArgumentException("同一附件ID的冻结分类冲突");
         }
         // The first read is hinted too: unpersisted legacy migration must not reinterpret an accepted promise.
-        if(inventories.findByPlayerIdForFrozenMail(playerId,classification).isEmpty())
+        if(inventories.findByPlayerIdForFrozenReward(playerId,classification).isEmpty())
             inventories.insertIfAbsent(playerId,Inventory.empty((int)configs.longParam("BAG_INITIAL_CAPACITY")));
         long version=inventories.versionOf(playerId);
-        var inventory=inventories.findByPlayerIdForFrozenMail(playerId,classification).orElseThrow();
-        String id=ctx.sourceRef().substring(5);
-        boolean existed=inventory.itemClaims().containsKey("mail_item:"+id)||inventory.equipmentClaims().containsKey("mail_equipment:"+id);
-        var accepted=inventory.claimMailBagOnce(items,ctx,now);
+        var inventory=inventories.findByPlayerIdForFrozenReward(playerId,classification).orElseThrow();
+        boolean existed=inventory.itemClaims().containsKey(ctx.frozenItemKey())||inventory.equipmentClaims().containsKey(ctx.frozenEquipmentKey());
+        var accepted=ctx.durableBattlePass()?inventory.claimBattlePassBagOnce(items,ctx,now):inventory.claimMailBagOnce(items,ctx,now);
         if(!existed)inventories.save(playerId,inventory,version);return accepted;
     }
     @Override public void completeEquipmentOverflow(String playerId,String key,String mailId) {

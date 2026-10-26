@@ -38,6 +38,9 @@ public interface RewardService {
     }
 
     /** Pure non-gold resource mail plans; existing gold and stack-item mail identities remain separate. */
+    default GrantResult grantBattlePass(String playerId,List<FrozenMailReward> rewards,RewardContext ctx) {
+        throw new UnsupportedOperationException("发奖器未实现战令冻结计划");
+    }
     default GrantResult grantMailAttachments(String playerId,List<FrozenMailReward> rewards,RewardContext ctx) {
         throw new UnsupportedOperationException("发奖器未实现冻结混合邮件计划");
     }

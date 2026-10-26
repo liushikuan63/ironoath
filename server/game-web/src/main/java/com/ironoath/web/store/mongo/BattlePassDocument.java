@@ -30,7 +30,12 @@ public record BattlePassDocument(
         List<String> claimed,
         java.util.Map<String,Long> pointClaims,
         java.util.Map<String,BattlePassStore.TierMailWindow> tierMailWindows,
+        java.util.List<com.ironoath.web.battlepass.BattlePassDeliveryPlan> pendingPlans,
         long version) {
+    public BattlePassDocument(String id,String seasonId,String playerId,long points,boolean paidUnlocked,List<String> claimed,
+            java.util.Map<String,Long> pointClaims,java.util.Map<String,BattlePassStore.TierMailWindow> windows,long version) {
+        this(id,seasonId,playerId,points,paidUnlocked,claimed,pointClaims,windows,null,version);
+    }
 
     /** 集合名。集中定义避免各处散落字符串。 */
     public static final String COLLECTION = "battle_pass";
@@ -41,10 +46,14 @@ public record BattlePassDocument(
 
     static BattlePassDocument of(String seasonId, String playerId, BattlePassStore.Progress progress) {
         return new BattlePassDocument(keyOf(seasonId, playerId), seasonId, playerId,
-                progress.points(), progress.paidUnlocked(), List.copyOf(progress.claimed()), progress.pointClaims(),progress.tierMailWindows(),0L);
+                progress.points(), progress.paidUnlocked(), List.copyOf(progress.claimed()), progress.pointClaims(),progress.tierMailWindows(),List.copyOf(progress.pendingPlans().values()),0L);
     }
 
     BattlePassStore.Progress progress() {
-        return new BattlePassStore.Progress(points, paidUnlocked, java.util.Set.copyOf(claimed),pointClaims,tierMailWindows);
+        var plans=new java.util.LinkedHashMap<String,com.ironoath.web.battlepass.BattlePassDeliveryPlan>();
+        if(pendingPlans!=null)for(var plan:pendingPlans){
+            if(!plan.seasonId().equals(seasonId)||plans.putIfAbsent(plan.key(),plan)!=null)throw new IllegalStateException("战令原季计划重复或跨账本");
+        }
+        return new BattlePassStore.Progress(points, paidUnlocked, java.util.Set.copyOf(claimed),pointClaims,tierMailWindows,plans);
     }
 }

@@ -59,6 +59,11 @@ public final class MongoBattlePassStore implements BattlePassStore {
         return out;
     }
 
+    @Override public List<String> pendingSeasonsOf(String playerId) {
+        Query q=Query.query(Criteria.where("playerId").is(playerId).and("pendingPlans.0").exists(true));q.fields().include("seasonId");
+        return mongo.find(q,org.bson.Document.class,BattlePassDocument.COLLECTION).stream().map(d->d.getString("seasonId")).distinct().sorted().toList();
+    }
+
     @Override
     public Progress load(String seasonId, String playerId) {
         if (seasonId == null || playerId == null) {
@@ -79,6 +84,7 @@ public final class MongoBattlePassStore implements BattlePassStore {
                     BattlePassDocument.class, BattlePassDocument.COLLECTION);
             Progress base = current == null ? Progress.empty() : current.progress();
             Progress next = change.apply(base);
+            if(next!=null&&next.pendingPlans().values().stream().anyMatch(plan->!plan.seasonId().equals(seasonId)))throw new IllegalArgumentException("战令计划不能跨赛季账本");
             if (next == null || next.equals(base)) {
                 return base;
             }
@@ -99,6 +105,7 @@ public final class MongoBattlePassStore implements BattlePassStore {
                     .set("claimed", List.copyOf(next.claimed()))
                     .set("pointClaims", next.pointClaims())
                     .set("tierMailWindows", next.tierMailWindows())
+                    .set("pendingPlans", List.copyOf(next.pendingPlans().values()))
                     .set("version", current.version() + 1L);
             if (mongo.updateFirst(guard, update, BattlePassDocument.COLLECTION).getModifiedCount() == 1L) {
                 return next;

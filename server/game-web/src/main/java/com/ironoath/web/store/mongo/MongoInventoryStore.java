@@ -128,7 +128,7 @@ public final class MongoInventoryStore implements InventoryRepository {
     private Inventory toDomain(InventoryDocument doc,java.util.Map<String,com.ironoath.core.bag.ItemClaimReceipt> receipts,java.util.Map<String,Boolean> equipmentById) {
         // Frozen ordinary mail classification survives later ItemCfg changes. Genuine legacy equipment still migrates.
         var frozenStackIds=new java.util.HashSet<String>();
-        receipts.values().stream().filter(receipt->receipt.facts().contains("mail-plan-owned"))
+        receipts.values().stream().filter(receipt->(receipt.facts().contains("mail-plan-owned")||receipt.facts().contains("battlepass-plan-owned")))
                 .forEach(receipt->frozenStackIds.addAll(receipt.requested().keySet()));
         var acceptedEquipmentIds=new java.util.HashSet<String>();
         if(doc.equipmentClaims()!=null)doc.equipmentClaims().forEach(receipt->acceptedEquipmentIds.addAll(receipt.requested().keySet()));

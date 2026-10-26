@@ -57,6 +57,13 @@ public class InMemoryBattlePassStore implements BattlePassStore {
         return out;
     }
 
+    @Override public java.util.List<String> pendingSeasonsOf(String playerId) {
+        if(playerId==null)return java.util.List.of();
+        var seasons=new java.util.TreeSet<String>();
+        byKey.forEach((key,progress)->progress.pendingPlans().values().forEach(plan->{if(key.equals(keyOf(plan.seasonId(),playerId)))seasons.add(plan.seasonId());}));
+        return java.util.List.copyOf(seasons);
+    }
+
     @Override
     public Progress update(String seasonId, String playerId, UnaryOperator<Progress> change) {
         if (seasonId == null || seasonId.isBlank() || playerId == null || playerId.isBlank()) {
@@ -65,6 +72,7 @@ public class InMemoryBattlePassStore implements BattlePassStore {
         return byKey.compute(keyOf(seasonId, playerId), (key, current) -> {
             Progress base = current == null ? Progress.empty() : current;
             Progress next = change.apply(base);
+            if(next!=null&&next.pendingPlans().values().stream().anyMatch(plan->!plan.seasonId().equals(seasonId)))throw new IllegalArgumentException("战令计划不能跨赛季账本");
             return next == null ? base : next;
         });
     }

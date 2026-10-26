@@ -431,3 +431,14 @@ MailResourceRecovery 仅接入纯非金币资源/体力邮件，保持既有 GOL
 MailClaimPlan.frozenAttachments 保存接受时的附件分类/普通道具堆叠限制；null 继续走旧纯资源计划。Inventory.claimMailBagOnce 在同次版本CAS内按附件原序分配背包格子并写材料/实际装备UID收据。重放不能为已消耗的旧UID再铸造，也不能重置强化/穿戴。新增BSON装备收据使用列表，业务键不是Mongo字段名；Mongo旧装备迁移须避开 mail-plan-owned 收据已冻结的普通道具，其他真正旧装备计数仍按原规则迁移；旧字段缺失可读不等于旧二进制安全回退写入。 首次恢复通过 InventoryRepository.findByPlayerIdForFrozenMail 传入原计划分类；已有实例/收据冲突则保留计划明确失败，不能将新增普通 counts 隐藏在同 ID 实例后。
 
 MailResourceRecovery 的新候选必须先被旧Gold/Item收据固定恢复路径；RewardGrantor 的通用Gold/Item恢复跳过 mail-plan-owned，整封计划负责组合溢出。取得 Inventory 版本必须早于对应快照；不能先读旧库存再拿新版本号写回。验证 MailEquipmentRecoveryTest/Mongo，并回归 MailGrantRecoveryTest/Mongo、原资源恢复测试与 PlayerCityAttackEndpointTest 的 mail: 来源合同。所有故障注入仅使用合成账号/随机自有Mongo库；不调用真实支付或玩家库。
+
+
+## 旧战令直接领取与赛季补邮件恢复
+
+`BattlePassService` 的非支付奖励路径使用 `BattlePassDeliveryPlan`：Progress 同次 CAS 保存资格与 pendingPlans（BSON 为可空 list，旧缺字段读为空）；回调只做纯进度转换，资产/邮箱调用在回调外。所有现有积分、解锁位和领取位更新保留 pending；确认投递后只删除 pending，不撤销资格。按 player 查询原季待投递使用 battle_pass 普通索引 idx_battle_pass_player。
+
+直接发奖来源为独立的 battlepass_claim，不能伪装为 mail；复用冻结附件原子收据算法，原 mail_gold/mail_item 身份保持不变。battlepass-plan-owned 的金币/道具收据由完整计划恢复，通用单类恢复不能拆分溢出包。季末按轨合并与迟到旧稳定邮件身份不变；保留时长及附件随计划固定，预约不写送达窗口；首次实际邮件保存后，回读胜出邮件，在同次 Progress CAS 确认其窗口并移除 pending。首写前失败隔日恢复仍享原保留时长，真保存丢响应/已领/已过期重试不得续期。旧 claimed 无计划不猜发。
+
+验证入口：BattlePassLegacyRecoveryTest 及其随机 Mongo 派生类、BattlePassDeliveryStoreTest，连同 BattlePassEndpointTest、BattlePassSweepTest、BattlePassStoreEquivalenceTest、原任务/活动恢复测试。故障由保存真实成功后抛 Error 注入，须区分业务首红和 Spring 测试夹具错误；Mongo 不可达/跳过不能计入已验收。
+
+部署仍需停目标旧写入者并取得应用/配置/数据库一致备份；旧 JAR 的 Progress 写入不保留新 pending，旧通用金币/道具恢复也不认识战令计划所有权，不能混跑或直接回退。应用回退须保留新字段/来源的兼容修复版本；否则停写恢复一致备份并评估之后进度。本次未操作真实库/后端、未执行新索引生产迁移，也未验证旧写入者混跑或整机重启。

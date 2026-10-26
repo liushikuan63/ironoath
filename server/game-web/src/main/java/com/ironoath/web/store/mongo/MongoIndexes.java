@@ -203,6 +203,7 @@ public final class MongoIndexes {
                 .on(MailDocument.FIELD_PLAYER_ID, Sort.Direction.ASC)
                 .on(MailDocument.FIELD_CREATED_AT, Sort.Direction.DESC)
                 .named("idx_mail_player_id_created_at"));
+        mongo.indexOps(BattlePassDocument.COLLECTION).ensureIndex(new Index().on("playerId",Sort.Direction.ASC).named("idx_battle_pass_player"));
         String mailExpiry = mailIndexes.ensureIndex(new Index()
                 .on(MailDocument.FIELD_EXPIRE_AT, Sort.Direction.ASC)
                 .named("idx_mail_expire_at"));

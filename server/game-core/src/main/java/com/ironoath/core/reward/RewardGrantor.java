@@ -157,7 +157,16 @@ public final class RewardGrantor implements RewardService {
         if(playerId==null||playerId.isBlank()||ctx==null||!ctx.durableMailAttachments()||!ctx.overflowToMail()
                 ||!ctx.sourceRef().startsWith("mail:")||!ctx.claimFacts().contains("mail-plan-owned")||rewards==null||rewards.isEmpty())
             throw new IllegalArgumentException("混合邮件需要冻结计划");
-        String id=ctx.sourceRef().substring(5);long now=clock.getAsLong();
+        return grantFrozenAttachments(playerId,rewards,ctx);
+    }
+    @Override public GrantResult grantBattlePass(String playerId,List<FrozenMailReward> rewards,RewardContext ctx) {
+        if(playerId==null||playerId.isBlank()||ctx==null||!ctx.durableBattlePass()||!ctx.overflowToMail()
+                ||!ctx.sourceRef().startsWith("battlepass:")||!ctx.claimFacts().contains("battlepass-plan-owned")||rewards==null||rewards.isEmpty())
+            throw new IllegalArgumentException("战令需要独立冻结计划身份");
+        return grantFrozenAttachments(playerId,rewards,ctx);
+    }
+    private GrantResult grantFrozenAttachments(String playerId,List<FrozenMailReward> rewards,RewardContext ctx) {
+        long now=clock.getAsLong();
         var granted=new ArrayList<RewardItem>();var overflow=new ArrayList<RewardItem>();
         var resourcePending=new ArrayList<String>();String itemPending=null,equipmentPending=null,goldPending=null;
         boolean bagDone=false,goldDone=false;
@@ -166,7 +175,7 @@ public final class RewardGrantor implements RewardService {
             if(reward.type()==RewardType.ITEM) {
                 if(bagDone)continue;bagDone=true;
                 var bagPlan=rewards.stream().filter(f->f.reward().type()==RewardType.ITEM).toList();
-                var accepted=bag.grantMailBagOnce(playerId,bagPlan,ctx,now);
+                var accepted=ctx.durableBattlePass()?bag.grantBattlePassBagOnce(playerId,bagPlan,ctx,now):bag.grantMailBagOnce(playerId,bagPlan,ctx,now);
                 accepted.creditedNow().forEach((item,n)->granted.add(new RewardItem(RewardType.ITEM,item,n)));
                 var credits=new java.util.HashMap<String,Long>();
                 if(accepted.items()!=null){credits.putAll(accepted.items().credited());if(accepted.items().pendingOverflow())itemPending=accepted.items().businessKey();}
@@ -177,14 +186,15 @@ public final class RewardGrantor implements RewardService {
             } else if(reward.type()==RewardType.RESOURCE&&"GOLD".equals(reward.id())) {
                 if(goldDone)continue;goldDone=true;long count=0;
                 for(var f:rewards)if(f.reward().type()==RewardType.RESOURCE&&"GOLD".equals(f.reward().id()))count=Math.addExact(count,f.reward().count());
-                var part=new RewardContext("free_gold",ctx.sourceRef(),"mail_gold:"+id,true,ctx.claimFacts());
+                var part=new RewardContext("free_gold",ctx.sourceRef(),ctx.frozenGoldKey(),true,ctx.claimFacts());
                 var accepted=wallet.grantGoldOnce(playerId,count,part,now);
                 if(accepted.creditedNow()>0)granted.add(new RewardItem(RewardType.RESOURCE,"GOLD",accepted.creditedNow()));
                 if(accepted.receipt().overflow()>0)overflow.add(new RewardItem(RewardType.RESOURCE,"GOLD",accepted.receipt().overflow()));
                 if(accepted.receipt().pendingOverflow())goldPending=part.traceId();
             } else {
                 String key=ctx.traceId()+":part:"+index;
-                var accepted=wallet.grantMailResourceOnce(playerId,reward,new RewardContext(ctx.source(),ctx.sourceRef(),key,true,ctx.claimFacts()),now);
+                var part=new RewardContext(ctx.source(),ctx.sourceRef(),key,true,ctx.claimFacts());
+                var accepted=ctx.durableBattlePass()?wallet.grantBattlePassResourceOnce(playerId,reward,part,now):wallet.grantMailResourceOnce(playerId,reward,part,now);
                 if(accepted.creditedNow()>0)granted.add(reward.withCount(accepted.creditedNow()));
                 if(accepted.receipt().overflow()>0)overflow.add(reward.withCount(accepted.receipt().overflow()));
                 if(accepted.receipt().pendingOverflow())resourcePending.add(key);
@@ -251,7 +261,7 @@ public final class RewardGrantor implements RewardService {
     @Override public void recoverItemClaims(String playerId) {
         for (var receipt : bag.pendingItemClaims(playerId)) {
             // Quest's frozen plan owns the combined resource/item mail and its original expiry.
-            if ("quest_item".equals(receipt.source()) || receipt.facts().contains("mail-plan-owned")) continue;
+            if ("quest_item".equals(receipt.source()) || (receipt.facts().contains("mail-plan-owned")||receipt.facts().contains("battlepass-plan-owned"))) continue;
             grantItemsOnce(playerId, receipt.requested().entrySet().stream()
                     .map(e -> new RewardItem(RewardType.ITEM, e.getKey(), e.getValue())).toList(),
                     new RewardContext(receipt.source(), receipt.sourceRef(), receipt.businessKey(), true, receipt.facts()));
@@ -301,7 +311,7 @@ public final class RewardGrantor implements RewardService {
     @Override
     public void recoverGoldClaims(String playerId) {
         for (var receipt : wallet.pendingGoldClaims(playerId)) {
-            if(receipt.facts().contains("mail-plan-owned"))continue;
+            if((receipt.facts().contains("mail-plan-owned")||receipt.facts().contains("battlepass-plan-owned")))continue;
             grantGoldOnce(playerId, List.of(new RewardItem(RewardType.RESOURCE, "GOLD", receipt.requested())),
                     new RewardContext(receipt.source(), receipt.sourceRef(), receipt.businessKey(), true, receipt.facts()));
         }

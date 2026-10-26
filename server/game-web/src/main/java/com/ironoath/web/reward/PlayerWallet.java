@@ -114,6 +114,11 @@ public final class PlayerWallet implements RewardPorts.Wallet {
             throw new IllegalArgumentException("普通资源邮件不能借用金币或任务身份");
         return acceptResourceOnce(playerId, reward, ctx, now);
     }
+    @Override public ResourceGrant grantBattlePassResourceOnce(String playerId,com.ironoath.core.reward.RewardItem reward,
+            com.ironoath.core.reward.RewardContext ctx,long now) {
+        if(ctx==null||!ctx.durableBattlePass()||!ctx.overflowToMail()||"GOLD".equals(reward.id()))throw new IllegalArgumentException("战令资源计划无效");
+        return acceptResourceOnce(playerId,reward,ctx,now);
+    }
     private ResourceGrant acceptResourceOnce(String playerId, com.ironoath.core.reward.RewardItem reward,
             com.ironoath.core.reward.RewardContext ctx, long now) {
         PlayerSave save = require(playerId);

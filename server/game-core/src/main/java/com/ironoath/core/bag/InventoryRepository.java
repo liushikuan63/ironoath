@@ -23,6 +23,10 @@ public interface InventoryRepository {
     }
 
 
+    default Optional<Inventory> findByPlayerIdForFrozenReward(String playerId, java.util.Map<String,Boolean> equipmentById) {
+        return findByPlayerIdForFrozenMail(playerId,equipmentById);
+    }
+
     /**
      * 首次创建背包。
      *

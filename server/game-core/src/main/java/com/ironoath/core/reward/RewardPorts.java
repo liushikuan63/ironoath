@@ -34,6 +34,9 @@ public final class RewardPorts {
         default ResourceGrant grantMailResourceOnce(String playerId, RewardItem reward, RewardContext ctx, long now) {
             throw new UnsupportedOperationException("钱包未实现普通资源邮件收据");
         }
+        default ResourceGrant grantBattlePassResourceOnce(String playerId,RewardItem reward,RewardContext ctx,long now) {
+            throw new UnsupportedOperationException("钱包未实现战令资源收据");
+        }
         default void completeResourceOverflow(String playerId, String key, String mailId) {
             throw new UnsupportedOperationException("钱包未实现任务溢出确认");
         }
@@ -90,6 +93,9 @@ public final class RewardPorts {
     public interface Bag {
         default com.ironoath.core.bag.Inventory.MailBagClaim grantMailBagOnce(String playerId,List<FrozenMailReward> items,RewardContext ctx,long now) {
             throw new UnsupportedOperationException("背包未实现按序邮件收据");
+        }
+        default com.ironoath.core.bag.Inventory.MailBagClaim grantBattlePassBagOnce(String playerId,List<FrozenMailReward> items,RewardContext ctx,long now) {
+            throw new UnsupportedOperationException("背包未实现战令冻结收据");
         }
         default void completeEquipmentOverflow(String playerId,String key,String mailId) { throw new UnsupportedOperationException("背包未实现装备溢出确认"); }
         default ItemGrant grantQuestItemsOnce(String playerId, java.util.Map<String,Long> items,

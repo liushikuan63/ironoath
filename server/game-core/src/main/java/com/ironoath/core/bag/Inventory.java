@@ -98,22 +98,35 @@ public final class Inventory {
     /** Allocate shared bag capacity in original attachment order, accepting both receipts in one CAS. */
     public MailBagClaim claimMailBagOnce(List<com.ironoath.core.reward.FrozenMailReward> attachments,
             com.ironoath.core.reward.RewardContext ctx, long now) {
-        if (ctx == null || !ctx.durableMailAttachments() || !ctx.overflowToMail() || !ctx.sourceRef().startsWith("mail:")
-                || !ctx.claimFacts().contains("mail-plan-owned") || attachments == null || attachments.isEmpty())
-            throw new IllegalArgumentException("背包附件需要稳定邮件计划");
+        if(ctx==null||!ctx.durableMailAttachments())throw new IllegalArgumentException("邮件计划身份无效");
+        return claimFrozenBagOnce(attachments,ctx,now);
+    }
+    public MailBagClaim claimBattlePassBagOnce(List<com.ironoath.core.reward.FrozenMailReward> attachments,
+            com.ironoath.core.reward.RewardContext ctx,long now) {
+        if(ctx==null||!ctx.durableBattlePass())throw new IllegalArgumentException("战令计划身份无效");
+        return claimFrozenBagOnce(attachments,ctx,now);
+    }
+    private MailBagClaim claimFrozenBagOnce(List<com.ironoath.core.reward.FrozenMailReward> attachments,
+            com.ironoath.core.reward.RewardContext ctx,long now) {
+        if(!ctx.overflowToMail()||!ctx.ownsFrozenAssets()||attachments==null||attachments.isEmpty()
+                ||ctx.durableMailAttachments()&&!ctx.claimFacts().contains("mail-plan-owned")
+                ||ctx.durableBattlePass()&&!ctx.claimFacts().contains("battlepass-plan-owned")
+                ||ctx.durableMailAttachments()&&!ctx.sourceRef().startsWith("mail:")
+                ||ctx.durableBattlePass()&&!ctx.sourceRef().startsWith("battlepass:"))
+            throw new IllegalArgumentException("背包附件需要稳定接受计划");
         var items = new LinkedHashMap<String,Long>(); var equipment = new LinkedHashMap<String,Long>();
         for (var frozen : attachments) {
             if (frozen.reward().type() != com.ironoath.core.reward.RewardType.ITEM) throw new IllegalArgumentException("背包计划只能包含物品");
             String id=frozen.reward().id();
             if(!frozen.equipment()&&(instanceCount(id)>0||equipmentClaims.values().stream().anyMatch(receipt->receipt.requested().containsKey(id)))
                     ||frozen.equipment()&&(counts.getOrDefault(id,0L)>0||itemClaims.values().stream()
-                            .anyMatch(receipt->receipt.facts().contains("mail-plan-owned")&&receipt.requested().containsKey(id))))
+                            .anyMatch(receipt->(receipt.facts().contains("mail-plan-owned")||receipt.facts().contains("battlepass-plan-owned"))&&receipt.requested().containsKey(id))))
                 throw new IllegalStateException("冻结附件分类与现有库存证据冲突，保留待恢复计划");
             (frozen.equipment() ? equipment : items).merge(id,frozen.reward().count(),Math::addExact);
         }
-        String mailId=ctx.sourceRef().substring(5), itemKey="mail_item:"+mailId, equipKey="mail_equipment:"+mailId;
+        String itemKey=ctx.frozenItemKey(),equipKey=ctx.frozenEquipmentKey();
         var oldItems=itemClaims.get(itemKey); var oldEquipment=equipmentClaims.get(equipKey);
-        if(itemClaims.containsKey("mail_items:"+mailId))throw new IllegalStateException("邮件已存在其他材料收据格式");
+        if(ctx.durableMailAttachments()&&itemClaims.containsKey("mail_items:"+ctx.sourceRef().substring(5)))throw new IllegalStateException("邮件已存在其他材料收据格式");
         if(oldItems!=null||oldEquipment!=null) {
             if ((!items.isEmpty() && oldItems==null) || (!equipment.isEmpty() && oldEquipment==null)
                     || oldItems!=null && (!oldItems.requested().equals(items) || !oldItems.sourceRef().equals(ctx.sourceRef()) || !oldItems.facts().equals(ctx.claimFacts()))
