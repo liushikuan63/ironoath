@@ -33,12 +33,17 @@ public record InventoryDocument(
         Map<String, Long> counts,
         java.util.List<Inventory.EquipInstance> equips,
         Integer nextEquipUid,
-        Map<String, com.ironoath.core.bag.ItemClaimReceipt> itemClaims) {
+        Map<String, com.ironoath.core.bag.ItemClaimReceipt> itemClaims,
+        java.util.List<com.ironoath.core.bag.EquipClaimReceipt> equipmentClaims) {
 
     public InventoryDocument(String playerId,long version,int capacityMax,Map<String,Long> counts,java.util.List<Inventory.EquipInstance> equips,int nextEquipUid) {
-        this(playerId,version,capacityMax,counts,equips,nextEquipUid,null);
+        this(playerId,version,capacityMax,counts,equips,nextEquipUid,null,null);
     }
 
+    public InventoryDocument(String playerId,long version,int capacityMax,Map<String,Long> counts,
+            java.util.List<Inventory.EquipInstance> equips,Integer nextEquipUid,Map<String,com.ironoath.core.bag.ItemClaimReceipt> itemClaims) {
+        this(playerId,version,capacityMax,counts,equips,nextEquipUid,itemClaims,null);
+    }
     /** 集合名。集中定义避免各处散落字符串。 */
     public static final String COLLECTION = "inventory";
 }

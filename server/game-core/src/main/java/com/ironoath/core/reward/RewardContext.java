@@ -46,6 +46,7 @@ public record RewardContext(String source, String sourceRef, String traceId, boo
     /** 新金币领取以traceId承载稳定业务key；外层HTTP requestId不参与资格唯一性。 */
     public boolean durableItems() { return "paid_item".equals(source) || "paid_items".equals(source) || "free_item".equals(source) || "quest_item".equals(source); }
     public boolean durableQuest() { return "quest_claim".equals(source); }
+    public boolean durableMailAttachments() { return "mail_attachment".equals(source); }
     public boolean durableMailResources() { return "mail_resource".equals(source); }
 
     public boolean durableGold() { return "free_gold".equals(source) || "paid_gold".equals(source); }

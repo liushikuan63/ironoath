@@ -17,6 +17,12 @@ public interface InventoryRepository {
     /** 取背包。新号返回 empty，由应用层用配置的初始容量创建。 */
     Optional<Inventory> findByPlayerId(String playerId);
 
+    /** Read classification from an already accepted mail plan; ordinary reads keep their existing rules. */
+    default Optional<Inventory> findByPlayerIdForFrozenMail(String playerId, java.util.Map<String,Boolean> equipmentById) {
+        return findByPlayerId(playerId);
+    }
+
+
     /**
      * 首次创建背包。
      *

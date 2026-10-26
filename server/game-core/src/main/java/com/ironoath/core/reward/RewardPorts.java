@@ -88,6 +88,10 @@ public final class RewardPorts {
 
     /** 背包。实现必须做堆叠上限与容量上限校验。 */
     public interface Bag {
+        default com.ironoath.core.bag.Inventory.MailBagClaim grantMailBagOnce(String playerId,List<FrozenMailReward> items,RewardContext ctx,long now) {
+            throw new UnsupportedOperationException("背包未实现按序邮件收据");
+        }
+        default void completeEquipmentOverflow(String playerId,String key,String mailId) { throw new UnsupportedOperationException("背包未实现装备溢出确认"); }
         default ItemGrant grantQuestItemsOnce(String playerId, java.util.Map<String,Long> items,
                 java.util.Map<String,Long> stackMax, RewardContext ctx, long now) {
             throw new UnsupportedOperationException("背包未实现冻结任务道具收据");

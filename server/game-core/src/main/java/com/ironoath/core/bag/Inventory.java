@@ -81,6 +81,68 @@ public final class Inventory {
     private int capacityMax;
 
 
+    private final Map<String, EquipClaimReceipt> equipmentClaims = new LinkedHashMap<>();
+    public Map<String,EquipClaimReceipt> equipmentClaims() { return java.util.Collections.unmodifiableMap(new LinkedHashMap<>(equipmentClaims)); }
+    public void restoreEquipmentClaims(java.util.Collection<EquipClaimReceipt> restored) {
+        var validated = new LinkedHashMap<String,EquipClaimReceipt>();
+        if (restored != null) for (var receipt : restored) {
+            if (receipt == null || validated.putIfAbsent(receipt.businessKey(),receipt) != null) throw new IllegalArgumentException("装备收据键重复或为空");
+        }
+        equipmentClaims.clear(); equipmentClaims.putAll(validated);
+    }
+    public void completeEquipmentOverflow(String key, String mailId) {
+        var receipt = equipmentClaims.get(key); if (receipt == null) throw new IllegalStateException("装备收据不存在");
+        equipmentClaims.put(key, receipt.withOverflowMail(mailId));
+    }
+    public record MailBagClaim(ItemClaimReceipt items, EquipClaimReceipt equipment, Map<String,Long> creditedNow) {}
+    /** Allocate shared bag capacity in original attachment order, accepting both receipts in one CAS. */
+    public MailBagClaim claimMailBagOnce(List<com.ironoath.core.reward.FrozenMailReward> attachments,
+            com.ironoath.core.reward.RewardContext ctx, long now) {
+        if (ctx == null || !ctx.durableMailAttachments() || !ctx.overflowToMail() || !ctx.sourceRef().startsWith("mail:")
+                || !ctx.claimFacts().contains("mail-plan-owned") || attachments == null || attachments.isEmpty())
+            throw new IllegalArgumentException("背包附件需要稳定邮件计划");
+        var items = new LinkedHashMap<String,Long>(); var equipment = new LinkedHashMap<String,Long>();
+        for (var frozen : attachments) {
+            if (frozen.reward().type() != com.ironoath.core.reward.RewardType.ITEM) throw new IllegalArgumentException("背包计划只能包含物品");
+            String id=frozen.reward().id();
+            if(!frozen.equipment()&&(instanceCount(id)>0||equipmentClaims.values().stream().anyMatch(receipt->receipt.requested().containsKey(id)))
+                    ||frozen.equipment()&&(counts.getOrDefault(id,0L)>0||itemClaims.values().stream()
+                            .anyMatch(receipt->receipt.facts().contains("mail-plan-owned")&&receipt.requested().containsKey(id))))
+                throw new IllegalStateException("冻结附件分类与现有库存证据冲突，保留待恢复计划");
+            (frozen.equipment() ? equipment : items).merge(id,frozen.reward().count(),Math::addExact);
+        }
+        String mailId=ctx.sourceRef().substring(5), itemKey="mail_item:"+mailId, equipKey="mail_equipment:"+mailId;
+        var oldItems=itemClaims.get(itemKey); var oldEquipment=equipmentClaims.get(equipKey);
+        if(itemClaims.containsKey("mail_items:"+mailId))throw new IllegalStateException("邮件已存在其他材料收据格式");
+        if(oldItems!=null||oldEquipment!=null) {
+            if ((!items.isEmpty() && oldItems==null) || (!equipment.isEmpty() && oldEquipment==null)
+                    || oldItems!=null && (!oldItems.requested().equals(items) || !oldItems.sourceRef().equals(ctx.sourceRef()) || !oldItems.facts().equals(ctx.claimFacts()))
+                    || oldEquipment!=null && (!oldEquipment.requested().equals(equipment) || !oldEquipment.sourceRef().equals(ctx.sourceRef())))
+                throw new IllegalStateException("邮件背包计划与既有收据不一致");
+            return new MailBagClaim(oldItems,oldEquipment,Map.of());
+        }
+        var next=copy();var credited=new LinkedHashMap<String,Long>();var itemCredited=new LinkedHashMap<String,Long>();
+        var equipmentUids=new LinkedHashMap<String,List<String>>();
+        for(var frozen:attachments) {
+            var reward=frozen.reward();long actual;
+            if(frozen.equipment()) {
+                int count=(int)Math.min(reward.count(),Math.max(0L,(long)next.capacityMax()-next.capacityUsed()));
+                var uids=count>0?next.mintEquips(reward.id(),count):List.<String>of();
+                equipmentUids.computeIfAbsent(reward.id(),ignored->new java.util.ArrayList<>()).addAll(uids);actual=uids.size();
+            } else {
+                actual=next.countOf(reward.id())==0 && next.capacityUsed()>=next.capacityMax()?0:next.add(reward.id(),reward.count(),frozen.stackMax());
+                if(actual>0)itemCredited.merge(reward.id(),actual,Math::addExact);
+            }
+            if(actual>0)credited.merge(reward.id(),actual,Math::addExact);
+        }
+        var itemReceipt=items.isEmpty()?null:new ItemClaimReceipt(itemKey,"free_item",ctx.sourceRef(),items,itemCredited,now,ctx.claimFacts(),null);
+        var equipmentReceipt=equipment.isEmpty()?null:new EquipClaimReceipt(equipKey,ctx.sourceRef(),equipment.entrySet().stream()
+                .map(e->new EquipClaimReceipt.Line(e.getKey(),e.getValue(),equipmentUids.getOrDefault(e.getKey(),List.of()))).toList(),now,null);
+        counts.clear();counts.putAll(next.counts);equips.clear();equips.putAll(next.equips);nextEquipUid=next.nextEquipUid;
+        if(itemReceipt!=null)itemClaims.put(itemKey,itemReceipt);if(equipmentReceipt!=null)equipmentClaims.put(equipKey,equipmentReceipt);
+        return new MailBagClaim(itemReceipt,equipmentReceipt,java.util.Collections.unmodifiableMap(credited));
+    }
+
     private final Map<String, ItemClaimReceipt> itemClaims = new LinkedHashMap<>();
     public Map<String, ItemClaimReceipt> itemClaims() { return java.util.Collections.unmodifiableMap(new LinkedHashMap<>(itemClaims)); }
     public void restoreItemClaims(Map<String, ItemClaimReceipt> restored) {
@@ -436,6 +498,7 @@ public final class Inventory {
         Inventory copy = new Inventory(capacityMax);
         copy.restore(snapshot(), equipSnapshot(), capacityMax, nextEquipUid, itemId -> false);
         copy.restoreItemClaims(itemClaims);
+        copy.restoreEquipmentClaims(equipmentClaims.values());
         return copy;
     }
 
@@ -464,6 +527,7 @@ public final class Inventory {
             throw new IllegalArgumentException("实例序号必须从 1 起，实际=" + restoredNextEquipUid);
         }
         itemClaims.clear();
+        equipmentClaims.clear();
         counts.clear();
         equips.clear();
         if (restoredEquips != null) {

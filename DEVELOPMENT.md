@@ -424,3 +424,10 @@ B05稳定战报ID及完整读回（#2386）：`BattleReport.idForOperation(opera
 MailResourceRecovery 仅接入纯非金币资源/体力邮件，保持既有 GOLD、普通 ITEM 和 paid 来源分支；装备/混合附件尚未迁入。MailRecord.acceptedPlan 与 claimedAt 原子接受，Mailbox 期限取已冻结事实，资源收据与 PlayerSave 同次保存。恢复入口为 owner 锁内 list/claimAll，不能让全局过期清理删除 pending，也不能 release 已接受承诺。
 
 验证：MailResourceRecoveryTest、MailResourceRecoveryMongoTest、MailAcceptedPlanStoreTest，并回归 MailGrantRecoveryTest/Mongo、MailEndpointTest、MailStoreEquivalenceTest。随机测试库为 ironoath_mail_resource_<UUID> 或 TestMongo 自有 ironoath_contract_<随机>，不使用玩家库。旧 BSON 缺字段可以读；旧服务会丢失新计划的写入/清理行为不可混部或直接回退。详情见 [B12 普通资源邮件恢复记录](B12_外围系统.md#普通非金币资源邮件的恢复切片2026-10-26)。
+
+
+### 装备/混合邮件恢复（2026-10-26）
+
+MailClaimPlan.frozenAttachments 保存接受时的附件分类/普通道具堆叠限制；null 继续走旧纯资源计划。Inventory.claimMailBagOnce 在同次版本CAS内按附件原序分配背包格子并写材料/实际装备UID收据。重放不能为已消耗的旧UID再铸造，也不能重置强化/穿戴。新增BSON装备收据使用列表，业务键不是Mongo字段名；Mongo旧装备迁移须避开 mail-plan-owned 收据已冻结的普通道具，其他真正旧装备计数仍按原规则迁移；旧字段缺失可读不等于旧二进制安全回退写入。 首次恢复通过 InventoryRepository.findByPlayerIdForFrozenMail 传入原计划分类；已有实例/收据冲突则保留计划明确失败，不能将新增普通 counts 隐藏在同 ID 实例后。
+
+MailResourceRecovery 的新候选必须先被旧Gold/Item收据固定恢复路径；RewardGrantor 的通用Gold/Item恢复跳过 mail-plan-owned，整封计划负责组合溢出。取得 Inventory 版本必须早于对应快照；不能先读旧库存再拿新版本号写回。验证 MailEquipmentRecoveryTest/Mongo，并回归 MailGrantRecoveryTest/Mongo、原资源恢复测试与 PlayerCityAttackEndpointTest 的 mail: 来源合同。所有故障注入仅使用合成账号/随机自有Mongo库；不调用真实支付或玩家库。

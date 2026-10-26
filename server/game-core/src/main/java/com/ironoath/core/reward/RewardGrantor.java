@@ -152,6 +152,55 @@ public final class RewardGrantor implements RewardService {
         return new GrantResult(granted, overflow, mailId, null);
     }
 
+    /** Whole mail plan owns combined overflow; bag capacity is allocated in original order in one CAS. */
+    @Override public GrantResult grantMailAttachments(String playerId,List<FrozenMailReward> rewards,RewardContext ctx) {
+        if(playerId==null||playerId.isBlank()||ctx==null||!ctx.durableMailAttachments()||!ctx.overflowToMail()
+                ||!ctx.sourceRef().startsWith("mail:")||!ctx.claimFacts().contains("mail-plan-owned")||rewards==null||rewards.isEmpty())
+            throw new IllegalArgumentException("混合邮件需要冻结计划");
+        String id=ctx.sourceRef().substring(5);long now=clock.getAsLong();
+        var granted=new ArrayList<RewardItem>();var overflow=new ArrayList<RewardItem>();
+        var resourcePending=new ArrayList<String>();String itemPending=null,equipmentPending=null,goldPending=null;
+        boolean bagDone=false,goldDone=false;
+        for(int index=0;index<rewards.size();index++) {
+            var frozen=rewards.get(index);var reward=frozen.reward();
+            if(reward.type()==RewardType.ITEM) {
+                if(bagDone)continue;bagDone=true;
+                var bagPlan=rewards.stream().filter(f->f.reward().type()==RewardType.ITEM).toList();
+                var accepted=bag.grantMailBagOnce(playerId,bagPlan,ctx,now);
+                accepted.creditedNow().forEach((item,n)->granted.add(new RewardItem(RewardType.ITEM,item,n)));
+                var credits=new java.util.HashMap<String,Long>();
+                if(accepted.items()!=null){credits.putAll(accepted.items().credited());if(accepted.items().pendingOverflow())itemPending=accepted.items().businessKey();}
+                if(accepted.equipment()!=null){accepted.equipment().credited().forEach((item,n)->credits.merge(item,n,Math::addExact));if(accepted.equipment().pendingOverflow())equipmentPending=accepted.equipment().businessKey();}
+                // Reconstruct overflow in original bag-line order, including duplicate item lines.
+                for(var line:bagPlan){var got=line.reward();long credited=Math.min(got.count(),credits.getOrDefault(got.id(),0L));credits.put(got.id(),credits.getOrDefault(got.id(),0L)-credited);
+                    if(got.count()>credited)overflow.add(got.withCount(got.count()-credited));}
+            } else if(reward.type()==RewardType.RESOURCE&&"GOLD".equals(reward.id())) {
+                if(goldDone)continue;goldDone=true;long count=0;
+                for(var f:rewards)if(f.reward().type()==RewardType.RESOURCE&&"GOLD".equals(f.reward().id()))count=Math.addExact(count,f.reward().count());
+                var part=new RewardContext("free_gold",ctx.sourceRef(),"mail_gold:"+id,true,ctx.claimFacts());
+                var accepted=wallet.grantGoldOnce(playerId,count,part,now);
+                if(accepted.creditedNow()>0)granted.add(new RewardItem(RewardType.RESOURCE,"GOLD",accepted.creditedNow()));
+                if(accepted.receipt().overflow()>0)overflow.add(new RewardItem(RewardType.RESOURCE,"GOLD",accepted.receipt().overflow()));
+                if(accepted.receipt().pendingOverflow())goldPending=part.traceId();
+            } else {
+                String key=ctx.traceId()+":part:"+index;
+                var accepted=wallet.grantMailResourceOnce(playerId,reward,new RewardContext(ctx.source(),ctx.sourceRef(),key,true,ctx.claimFacts()),now);
+                if(accepted.creditedNow()>0)granted.add(reward.withCount(accepted.creditedNow()));
+                if(accepted.receipt().overflow()>0)overflow.add(reward.withCount(accepted.receipt().overflow()));
+                if(accepted.receipt().pendingOverflow())resourcePending.add(key);
+            }
+        }
+        String mailId=null;
+        if(!resourcePending.isEmpty()||itemPending!=null||equipmentPending!=null||goldPending!=null) {
+            mailId=mailbox.sendOverflow(playerId,List.copyOf(overflow),ctx);
+            for(String key:resourcePending)wallet.completeResourceOverflow(playerId,key,mailId);
+            if(goldPending!=null)wallet.completeGoldOverflow(playerId,goldPending,mailId);
+            if(itemPending!=null)bag.completeItemOverflow(playerId,itemPending,mailId);
+            if(equipmentPending!=null)bag.completeEquipmentOverflow(playerId,equipmentPending,mailId);
+        }
+        return new GrantResult(granted,overflow,mailId,null);
+    }
+
     @Override
     public GrantResult grantMailResources(String playerId, List<RewardItem> rewards, RewardContext ctx) {
         if (playerId == null || playerId.isBlank() || ctx == null || !ctx.durableMailResources() || !ctx.overflowToMail()
@@ -202,7 +251,7 @@ public final class RewardGrantor implements RewardService {
     @Override public void recoverItemClaims(String playerId) {
         for (var receipt : bag.pendingItemClaims(playerId)) {
             // Quest's frozen plan owns the combined resource/item mail and its original expiry.
-            if ("quest_item".equals(receipt.source())) continue;
+            if ("quest_item".equals(receipt.source()) || receipt.facts().contains("mail-plan-owned")) continue;
             grantItemsOnce(playerId, receipt.requested().entrySet().stream()
                     .map(e -> new RewardItem(RewardType.ITEM, e.getKey(), e.getValue())).toList(),
                     new RewardContext(receipt.source(), receipt.sourceRef(), receipt.businessKey(), true, receipt.facts()));
@@ -252,6 +301,7 @@ public final class RewardGrantor implements RewardService {
     @Override
     public void recoverGoldClaims(String playerId) {
         for (var receipt : wallet.pendingGoldClaims(playerId)) {
+            if(receipt.facts().contains("mail-plan-owned"))continue;
             grantGoldOnce(playerId, List.of(new RewardItem(RewardType.RESOURCE, "GOLD", receipt.requested())),
                     new RewardContext(receipt.source(), receipt.sourceRef(), receipt.businessKey(), true, receipt.facts()));
         }

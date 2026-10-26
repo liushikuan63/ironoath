@@ -110,7 +110,7 @@ public final class PlayerWallet implements RewardPorts.Wallet {
     @Override
     public ResourceGrant grantMailResourceOnce(String playerId, com.ironoath.core.reward.RewardItem reward,
             com.ironoath.core.reward.RewardContext ctx, long now) {
-        if (ctx == null || !ctx.durableMailResources() || !ctx.overflowToMail() || "GOLD".equals(reward.id()))
+        if (ctx == null || !(ctx.durableMailResources() || ctx.durableMailAttachments()) || !ctx.overflowToMail() || "GOLD".equals(reward.id()))
             throw new IllegalArgumentException("普通资源邮件不能借用金币或任务身份");
         return acceptResourceOnce(playerId, reward, ctx, now);
     }

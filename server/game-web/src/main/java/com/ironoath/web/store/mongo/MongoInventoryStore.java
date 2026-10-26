@@ -38,6 +38,11 @@ public final class MongoInventoryStore implements InventoryRepository {
 
     @Override
     public Optional<Inventory> findByPlayerId(String playerId) {
+        return findByPlayerIdForFrozenMail(playerId,java.util.Map.of());
+    }
+
+    @Override public Optional<Inventory> findByPlayerIdForFrozenMail(String playerId,java.util.Map<String,Boolean> equipmentById) {
+        equipmentById=java.util.Map.copyOf(equipmentById);
         if (playerId == null) {
             return Optional.empty();
         }
@@ -47,7 +52,7 @@ public final class MongoInventoryStore implements InventoryRepository {
         var receipts=InventoryItemClaimCodec.read(raw.get("itemClaims"));
         // Decode this field locally before Spring attempts to instantiate the other historical class.
         Document base=new Document(raw);base.remove("itemClaims");
-        Inventory inventory=toDomain(mongo.getConverter().read(InventoryDocument.class,base));
+        Inventory inventory=toDomain(mongo.getConverter().read(InventoryDocument.class,base),receipts,equipmentById);
         inventory.restoreItemClaims(receipts);
         return Optional.of(inventory);
     }
@@ -63,7 +68,7 @@ public final class MongoInventoryStore implements InventoryRepository {
         try {
             Document raw=new Document();
             mongo.getConverter().write(new InventoryDocument(playerId,0L,inventory.capacityMax(),
-                    inventory.snapshot(),inventory.equipSnapshot(),inventory.nextEquipUid()),raw);
+                    inventory.snapshot(),inventory.equipSnapshot(),inventory.nextEquipUid(),null,java.util.List.copyOf(inventory.equipmentClaims().values())),raw);
             raw.put("itemClaims",InventoryItemClaimCodec.write(inventory.itemClaims(),mongo.getConverter()));
             mongo.insert(raw,InventoryDocument.COLLECTION);
             return true;
@@ -82,6 +87,7 @@ public final class MongoInventoryStore implements InventoryRepository {
                 .set("counts", inventory.snapshot())
                 .set("itemClaims", InventoryItemClaimCodec.write(inventory.itemClaims(),mongo.getConverter()))
                 // 实例账本必须同一条更新里写：漏了它，"装备去哪了"就成了只有重启才能复现的问题
+                .set("equipmentClaims", java.util.List.copyOf(inventory.equipmentClaims().values()))
                 .set("equips", inventory.equipSnapshot())
                 .set("nextEquipUid", inventory.nextEquipUid())
                 .set("capacityMax", inventory.capacityMax())
@@ -119,12 +125,25 @@ public final class MongoInventoryStore implements InventoryRepository {
      * 迁移失败的那一条会留在 counts 里当普通道具，看得见但穿不了，
      * 而不是从玩家的背包里消失。
      */
-    private Inventory toDomain(InventoryDocument doc) {
+    private Inventory toDomain(InventoryDocument doc,java.util.Map<String,com.ironoath.core.bag.ItemClaimReceipt> receipts,java.util.Map<String,Boolean> equipmentById) {
+        // Frozen ordinary mail classification survives later ItemCfg changes. Genuine legacy equipment still migrates.
+        var frozenStackIds=new java.util.HashSet<String>();
+        receipts.values().stream().filter(receipt->receipt.facts().contains("mail-plan-owned"))
+                .forEach(receipt->frozenStackIds.addAll(receipt.requested().keySet()));
+        var acceptedEquipmentIds=new java.util.HashSet<String>();
+        if(doc.equipmentClaims()!=null)doc.equipmentClaims().forEach(receipt->acceptedEquipmentIds.addAll(receipt.requested().keySet()));
+        equipmentById.forEach((id,equipment)->{
+            if(equipment&&frozenStackIds.contains(id)||!equipment&&(acceptedEquipmentIds.contains(id)
+                    ||doc.equips()!=null&&doc.equips().stream().anyMatch(instance->instance.equipId().equals(id))))
+                throw new IllegalStateException("冻结附件分类与已有装备或材料证据冲突，保留待恢复计划");
+        });
         Inventory inventory = Inventory.empty(doc.capacityMax());
         inventory.restore(doc.counts(), doc.equips(), doc.capacityMax(),
                 doc.nextEquipUid() == null || doc.nextEquipUid() <= 0 ? 1 : doc.nextEquipUid(),
                 // 老文档没有这两个字段：null 视作"一件也没有"、0 视作"序号未初始化"
                 itemId -> {
+                    if(equipmentById.containsKey(itemId))return equipmentById.get(itemId);
+                    if(frozenStackIds.contains(itemId))return false;
                     try {
                         return configs.get(ItemCfg.class, itemId).type() == ItemCfg.Type.EQUIP;
                     } catch (ConfigException e) {
@@ -134,6 +153,7 @@ public final class MongoInventoryStore implements InventoryRepository {
                     }
                 });
         inventory.restoreItemClaims(doc.itemClaims());
+        inventory.restoreEquipmentClaims(doc.equipmentClaims());
         return inventory;
     }
 }

@@ -260,7 +260,7 @@ class MailResourceRecoveryTest {
         rebuilt().claimAll(uid, new MailClaimAllReq(id())); assertThat(amount(uid, resource)).isEqualTo(13);
         assertThat(store.findById(uid, mailId).orElseThrow().acceptedPlan()).isNull();
     }
-    @Test void paymentSourcesGoldAndMixedAttachmentsDoNotEnterThisNewLane() {
+    @Test void paymentSourcesGoldAndUnsupportedAttachmentsDoNotEnterThisNewLane() {
         var helper = new MailResourceRecovery(store, configs, rewards); long now = time.serverNow();
         for (String source : List.of("pay:fixture", "paid_gold:fixture", "paid_item:fixture", "payment:fixture")) {
             var mail = new MailStore.MailRecord(id(), "fixture", "OVERFLOW", "夹具", "正文",
@@ -268,7 +268,7 @@ class MailResourceRecoveryTest {
             assertThat(helper.supports(mail)).isFalse();
         }
         for (var lines : List.of(List.of(new MailStore.RewardLine("RESOURCE", "GOLD", 1, "金币")),
-                List.of(new MailStore.RewardLine("RESOURCE", "GRAIN", 13, "资源奖励"), new MailStore.RewardLine("ITEM", "item_res_iron_5k", 1, "铁矿包")))) {
+                List.of(new MailStore.RewardLine("RESOURCE", "GRAIN", 13, "资源奖励"), new MailStore.RewardLine("HERO", "hero_fixture", 1, "武将")))) {
             var mail = new MailStore.MailRecord(id(), "fixture", "SYSTEM", "夹具", "正文", lines, "fixture", now, now + 1000, null, null);
             assertThat(helper.supports(mail)).isFalse();
         }
