@@ -449,3 +449,10 @@ MailResourceRecovery 的新候选必须先被旧Gold/Item收据固定恢复路�
 `StageUnitRule.allows(UnitKind)` 是真实 StageAppService 与 `--f2p-stages` 的共用纯判据；配置/协议限制枚举及 UnitCfg.Type 的名称由 StageContractParityTest 校验，未知名称不得默认放行。准入只作用于玩家，不能筛掉守方单位。CLI 仍为显式纯步兵/历史参考诊断，非法编队不模拟、不计胜率，诊断完成不代表B09-4通过。
 
 验证入口：StageUnitRuleTest（16组合+缺类型拒绝）、F2pStagesAdmissionTest（真实打印/内核与私有临时配置）、原 F2pStagesProvenanceTest 和 StageEndpointTest/StageContractParityTest。完整合法七天画像、BOSS/阶级/累计三星和真实平台证据单列；不把旧45天keys或6833标签当作新画像。
+
+
+## B09 BOSS 参数和输入冻结
+
+线上 BattleRulesAssembler 与离线 BattleParamsResolver 都调用 `BossMechanic.from(Type, GlobalParamSource)`；原有 GlobalParamSource 足够，无须扩展 BattleParams 构造器或复制一份CLI参数映射。REINFORCEMENT 读间隔/援军比例，SHIELD_PHASE 读阈值/防御增益，COUNTER_STRIKE 读反射比例；NONE 无参数读取。缺参/非法值保持现有失败方向，不降级为 NONE。参数值与机制规则均未调整。
+
+验证入口：BossMechanicAssemblyTest（字段映射/按类型读取/原记录冻结）、BattleRulesAssemblerBossTest（真实生产适配及私有registry热更）、F2pStagesBossTest（实际回合触发、非法编队不执行、工具真实热更），连同既有 BossMechanicTest 对照战和原Stage/CLI回归。global热更测试使用 ConfigRegistry.reload 与 com.ironoath.config.model.GlobalCfg；不写真实配置文件。完整七天画像、敌方阶级及累计三星依旧分开验收。

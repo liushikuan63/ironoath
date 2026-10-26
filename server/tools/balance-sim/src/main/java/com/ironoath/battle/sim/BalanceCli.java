@@ -1640,7 +1640,7 @@ public final class BalanceCli {
      * 原B09验收4旁的历史简化战斗诊断；本模式本身不证明当前七天画像或前三章全三星。
      * 默认6833沿用#564历史固定参考，调用方可用--troops显式提供纯步兵数量。
      * --f2p-days仅作展示标签：这里没有运行f2p7d，也不从当前资源结余换算军队。
-     * 已共享玩家准入；剩余BOSS/三星局限必须随输出公开，不能把诊断完成当验收通过。
+     * 已共享玩家准入；剩余画像/阶级/三星局限必须随输出公开，不能把诊断完成当验收通过。
      */
     private static boolean printF2pStages(ConfigRegistry configs, BattleParamsResolver resolver,
                                            BattleRules rules, Map<UnitType, UnitStats> stats,
@@ -1692,6 +1692,8 @@ public final class BalanceCli {
                 continue;
             }
             ArmySide attacker = resolver.bareArmy("攻方", playerUnits, Long.MAX_VALUE / 4);
+            var mechanic = resolver.bossMechanic(row.bossMechanic());
+            long observedBossTriggers = 0;
             int wins = 0;
             for (int i = 0; i < runs; i++) {
                 // Player entry restrictions must never delete any configured defending units.
@@ -1704,17 +1706,20 @@ public final class BalanceCli {
                 BattleResult r = BattleSimulator.simulate(new BattleInput(attacker, defender,
                         TerrainType.PLAIN, seed + i * 7919L + s, BattleType.PVE,
                         BattleModifier.none(), BattleModifier.none(), stats,
-                        rules, DefenderStore.none()));
+                        rules, DefenderStore.none(), mechanic));
+                observedBossTriggers += r.rounds().stream().flatMap(round -> round.skills().stream())
+                        .filter(trigger -> com.ironoath.battle.BossMechanic.TRIGGER_SOURCE.equals(trigger.heroId())).count();
                 boolean won = r.winner() == Winner.ATTACKER;
                 wins += won ? 1 : 0;
             }
             double rate = wins / (double) runs;
             System.out.printf("%-14s%-8d%-10d%.1f%%%n",
                     row.id(), total, roundLimit, rate * 100);
+            if (!mechanic.isNone()) System.out.printf("机制 %s：%s，实际触发 %d 次%n", row.id(), mechanic.type(), observedBossTriggers);
         }
         System.out.println();
         System.out.println("边界：准入复用生产规则，非法显式编队未模拟，守方四兵种完整保留；"
-                + "bossMechanic 未装配，医院/武将/科技画像和三星亦未验证。"
+                + "BOSS 按原 global 参数装配；敌方阶级、医院/武将/科技画像和三星仍未验证。"
                 + "不可解释为真实关卡胜率或 B09-4 验收通过。");
         System.out.printf("诊断状态（不判验收）：%s",
                 worstTotal > 0 ? "旧装配报告最大守方 " + worstTotal + " 人；不构成全三星结论。" : "");

@@ -48,6 +48,12 @@ public final class BattleParamsResolver {
         return BattleRules.from(BattleParams.of(configs));
     }
 
+    /** Same pure factory and original parameter source as the live stage service; no cache. */
+    public com.ironoath.battle.BossMechanic bossMechanic(com.ironoath.config.cfg.StageCfg.BossMechanic declared) {
+        if (declared == null) throw new IllegalArgumentException("declared 不得为 null，无机制请传 NONE");
+        return com.ironoath.battle.BossMechanic.from(com.ironoath.battle.BossMechanic.Type.valueOf(declared.name()), configs);
+    }
+
     /**
      * 取某阶级的四兵种属性。
      *

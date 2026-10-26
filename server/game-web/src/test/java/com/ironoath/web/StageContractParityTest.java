@@ -150,4 +150,11 @@ class StageContractParityTest {
         assertThat(Arrays.stream(com.ironoath.core.army.UnitKind.values()).map(Enum::name).toList())
                 .containsExactlyElementsOf(Arrays.stream(com.ironoath.config.cfg.UnitCfg.Type.values()).map(Enum::name).toList());
     }
+    @Test
+    void pureBossFactoryTypeMatchesConfiguredAndProtocolMechanisms() {
+        assertThat(Arrays.stream(com.ironoath.battle.BossMechanic.Type.values()).map(Enum::name).toList())
+                .containsExactlyElementsOf(Arrays.stream(com.ironoath.config.cfg.StageCfg.BossMechanic.values()).map(Enum::name).toList());
+        assertThat(Arrays.stream(com.ironoath.battle.BossMechanic.Type.values()).map(Enum::name).toList())
+                .containsExactlyElementsOf(Arrays.stream(BossMechanic.values()).map(Enum::name).toList());
+    }
 }

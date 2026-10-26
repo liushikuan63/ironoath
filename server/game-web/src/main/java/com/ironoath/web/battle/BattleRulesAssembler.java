@@ -47,16 +47,6 @@ public class BattleRulesAssembler {
         if (declared == null) {
             throw new IllegalArgumentException("declared 不得为 null，无机制请传 BossMechanic.NONE");
         }
-        return switch (declared) {
-            case NONE -> BossMechanic.none();
-            case REINFORCEMENT -> BossMechanic.reinforcement(
-                    configs.longParam("BOSS_REINFORCE_INTERVAL_ROUNDS"),
-                    configs.fixedParam("BOSS_REINFORCE_RATIO"));
-            case SHIELD_PHASE -> BossMechanic.shieldPhase(
-                    configs.fixedParam("BOSS_SHIELD_HP_THRESHOLD"),
-                    configs.fixedParam("BOSS_SHIELD_DEF_BONUS"));
-            case COUNTER_STRIKE -> BossMechanic.counterStrike(
-                    configs.fixedParam("BOSS_COUNTER_REFLECT_RATIO"));
-        };
+        return BossMechanic.from(BossMechanic.Type.valueOf(declared.name()), configs);
     }
 }
