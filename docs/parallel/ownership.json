@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "5fbf4e4c8f3a74db596206292e1c2ae2dd52f81a",
+  "purpose": "文档分工白名单；不是运行锁、源码写入权转移或任务已启动的证明",
+  "activation": "协调者核实旧owner释放或确认本轮归属，在既有.qoder-work-queue.md登记实际thread/worktree/base/resources后才生效",
+  "default_owner": "COORD",
+  "unknown_path_policy": "暂停该文件修改，提出精确路径与理由；协调者先更新分工再下发，不自动扩大范围",
+  "coordinator": {
+    "card": "docs/parallel/README.md",
+    "existing_paths": [
+      "AGENTS.md",
+      "待完善收口_VibeCoding开发包.md",
+      "收口清单.md",
+      "验收矩阵.md",
+      "上线检查清单.md",
+      "CC开发全流程.md",
+      "SLG对标补充_VibeCoding开发包.md",
+      "B13_国家与国战.md",
+      "B19_付费发货与礼包弹窗.md",
+      "server/game-core/src/main/java/com/ironoath/core/nation/Nation.java",
+      "server/game-web/src/main/java/com/ironoath/web/nation/NationStore.java",
+      "server/game-web/src/main/java/com/ironoath/web/nation/NationLeaders.java",
+      "server/game-web/src/main/java/com/ironoath/web/service/NationAppService.java",
+      "server/game-web/src/main/java/com/ironoath/web/service/SocialAppService.java",
+      "server/game-web/src/main/java/com/ironoath/web/store/memory/InMemoryNationStore.java",
+      "server/game-web/src/main/java/com/ironoath/web/store/mongo/MongoNationStore.java",
+      "server/game-web/src/main/java/com/ironoath/web/store/mongo/NationDocument.java",
+      "server/game-web/src/test/java/com/ironoath/web/NationEndpointTest.java",
+      "server/game-web/src/test/java/com/ironoath/web/store/NationStoreEquivalenceTest.java",
+      "server/game-web/src/test/java/com/ironoath/web/store/TestMongo.java"
+    ],
+    "exclusive_globs": [
+      "contract/**",
+      "scripts/**",
+      "client/**",
+      "server/**/pom.xml",
+      "server/**/dto/generated/**",
+      "server/**/config/cfg/**",
+      "server/**/src/main/resources/**",
+      "server/**/src/test/resources/**",
+      "package*.json",
+      ".github/**",
+      "tools/**"
+    ],
+    "local_only_paths": [
+      ".qoder-work-queue.md",
+      ".dsh-work-queue.md"
+    ],
+    "coordination_paths": [
+      "docs/parallel/README.md",
+      "docs/parallel/ownership.json"
+    ]
+  },
+  "tasks": {
+    "A": {
+      "title": "国战奖分恢复与成员有效时长分摊",
+      "card": "docs/parallel/A-war-awards.md",
+      "activation_dependencies": [
+        "R0-owner-and-interface-freeze"
+      ],
+      "existing_paths": [
+        "server/game-web/src/main/java/com/ironoath/web/service/WarAppService.java",
+        "server/game-web/src/main/java/com/ironoath/web/rank/RankBoardService.java",
+        "server/game-web/src/main/java/com/ironoath/web/nation/NationMembership.java",
+        "server/game-web/src/main/java/com/ironoath/web/nation/WarStore.java",
+        "server/game-web/src/main/java/com/ironoath/web/store/memory/InMemoryWarStore.java",
+        "server/game-web/src/main/java/com/ironoath/web/store/mongo/MongoWarStore.java",
+        "server/game-web/src/main/java/com/ironoath/web/store/mongo/WarDocument.java",
+        "server/game-web/src/main/java/com/ironoath/web/season/SeasonBoardStore.java",
+        "server/game-web/src/main/java/com/ironoath/web/store/memory/InMemorySeasonBoardStore.java",
+        "server/game-web/src/main/java/com/ironoath/web/store/mongo/MongoSeasonBoardStore.java",
+        "server/game-web/src/main/java/com/ironoath/web/social/SocialStore.java",
+        "server/game-web/src/main/java/com/ironoath/web/store/memory/InMemorySocialStore.java",
+        "server/game-web/src/main/java/com/ironoath/web/store/mongo/MongoSocialStore.java",
+        "server/game-web/src/main/java/com/ironoath/web/store/mongo/AllianceDocument.java",
+        "server/game-core/src/main/java/com/ironoath/core/nation/WarScoreBoard.java",
+        "server/game-web/src/test/java/com/ironoath/web/WarEndpointTest.java",
+        "server/game-web/src/test/java/com/ironoath/web/RankEndpointTest.java",
+        "server/game-web/src/test/java/com/ironoath/web/store/WarStoreEquivalenceTest.java",
+        "server/game-web/src/test/java/com/ironoath/web/store/SeasonBoardStoreEquivalenceTest.java",
+        "server/game-web/src/test/java/com/ironoath/web/store/SocialStoreEquivalenceTest.java",
+        "server/game-web/src/test/java/com/ironoath/web/SocialEndpointTest.java"
+      ],
+      "proposed_new_paths": [
+        "server/game-web/src/main/java/com/ironoath/web/nation/WarAwardPlan.java",
+        "server/game-web/src/test/java/com/ironoath/web/nation/WarAwardPlanTest.java"
+      ],
+      "shared_change_requests": [
+        "国家历史反查接口及Mongo持久语义",
+        "必要的成员变更接线；先证明现有历史确有缺口",
+        "国家聚合/跨服务锁顺序调整"
+      ]
+    },
+    "B": {
+      "title": "驻军回家前拒绝迁都与既定权限接线",
+      "card": "docs/parallel/B-capital-migration.md",
+      "activation_dependencies": [
+        "R0-owner-and-interface-freeze"
+      ],
+      "existing_paths": [
+        "server/game-web/src/main/java/com/ironoath/web/controller/NationController.java",
+        "server/game-web/src/main/java/com/ironoath/web/service/WarCapitalTargetResolver.java",
+        "server/game-web/src/main/java/com/ironoath/web/service/MarchAppService.java",
+        "server/game-web/src/main/java/com/ironoath/web/service/StrategicTargetMarchAdvancer.java",
+        "server/game-web/src/main/java/com/ironoath/web/world/StrategicGarrisonWithdrawal.java",
+        "server/game-web/src/main/java/com/ironoath/web/world/TargetOperationStore.java",
+        "server/game-web/src/main/java/com/ironoath/web/world/TargetOccupationStore.java",
+        "server/game-web/src/test/java/com/ironoath/web/StrategicWithdrawalEndpointFlowTest.java",
+        "server/game-web/src/test/java/com/ironoath/web/store/StrategicGarrisonWithdrawalTest.java",
+        "server/game-web/src/test/java/com/ironoath/web/NationRallyEndpointTest.java",
+        "server/game-web/src/test/java/com/ironoath/web/NationRallyFortressMongoEndpointTest.java"
+      ],
+      "proposed_new_paths": [
+        "server/game-web/src/main/java/com/ironoath/web/service/CapitalMigrationService.java",
+        "server/game-web/src/test/java/com/ironoath/web/CapitalMigrationEndpointTest.java"
+      ],
+      "shared_change_requests": [
+        "nation契约与生成DTO",
+        "NationAppService/Nation聚合/存储的迁都接线",
+        "现有官员权限与锁顺序；不新增职务/人数门槛"
+      ]
+    },
+    "C": {
+      "title": "生产GameItem-only及旧回调开发测试兼容",
+      "card": "docs/parallel/C-gameitem-production.md",
+      "activation_dependencies": [
+        "R0-owner-confirmation"
+      ],
+      "existing_paths": [
+        "server/game-web/src/main/java/com/ironoath/web/controller/PayController.java",
+        "server/game-web/src/main/java/com/ironoath/web/config/PayBeansConfig.java",
+        "server/game-web/src/main/java/com/ironoath/web/config/ProductionReadiness.java",
+        "server/game-web/src/test/java/com/ironoath/web/PayEndpointTest.java",
+        "server/game-web/src/test/java/com/ironoath/web/config/ProductionReadinessTest.java"
+      ],
+      "proposed_new_paths": [],
+      "shared_change_requests": [
+        "仅在现有端点/bean范围无法表达时申请profile配置或签名接口调整；不得绕过readiness"
+      ]
+    },
+    "Q": {
+      "title": "独立复审与集成验收",
+      "card": "docs/parallel/Q-integration-acceptance.md",
+      "activation_dependencies": [
+        "只读准备可在R0进行",
+        "运行验收需要冻结集成SHA和独占资源"
+      ],
+      "existing_paths": [],
+      "proposed_new_paths": [],
+      "shared_change_requests": [
+        "发现产品或量具缺陷返回原owner；Q不改实现/断言以修绿"
+      ]
+    }
+  },
+  "runtime_resources": {
+    "isolated_per_task": [
+      "worktree",
+      "target和生成缓存",
+      "Maven本地仓",
+      "owned Mongo库前缀",
+      "Redis前缀或db索引",
+      "端口",
+      "日志截图目录"
+    ],
+    "serialized": [
+      "共享契约生成",
+      "协调台账及编号",
+      "集成提交",
+      "同一Cocos产物构建与消费者",
+      "单台微信开发者工具/同账号验收",
+      "全量重构建和已准入5000负载"
+    ],
+    "live_task_registry": ".qoder-work-queue.md（协调者单写；不在此JSON伪造active/锁状态）"
+  }
+}

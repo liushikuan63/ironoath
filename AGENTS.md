@@ -118,6 +118,7 @@
 | 跨会话接续 | `.qoder-work-queue.md`（**未跟踪**；第一条未完成项就是下一件事） |
 | 客户端够不着的发送口 | `客户端发送口缺口清单.md` + `report-client-send-paths.mjs` |
 | 工程操作（怎么跑起来） | `DEVELOPMENT.md`、`Cocos调试落地清单.md` |
+| 多任务协调与文件归属 | `docs/parallel/README.md`、`docs/parallel/ownership.json`（A/B/C分卡、Q独立验收；共享文件由协调者串行，实际owner仍在原队列核验） |
 
 ## 七、台账纪律（`收口清单.md` 单列，因为它最容易改坏）
 
