@@ -6,6 +6,7 @@ import java.util.List;
 import org.springframework.stereotype.Component;
 import com.ironoath.core.activity.ActivityProgress;
 import com.ironoath.core.activity.ActivityWindow;
+import com.ironoath.core.quest.GoalType;
 
 /** 读、事件与领取共用的实例恢复；保旧开放承诺，到期后才选择新规则。 */
 @Component
@@ -24,6 +25,15 @@ public class ActivityLedger {
         this.store=store; this.history=history; this.anchors=anchors;
     }
     public Book load(String playerId, long now, Mode mode) {
+        return load(playerId, now, mode, null);
+    }
+
+    /** Event callers supply the goal that can consume a new window; other load modes keep their rules. */
+    public Book loadForEvent(String playerId, long now, GoalType goal) {
+        return load(playerId, now, Mode.EVENT, java.util.Objects.requireNonNull(goal, "event goal"));
+    }
+
+    private Book load(String playerId, long now, Mode mode, GoalType eventGoal) {
         var stored=store.load(playerId).orElse(null);
         long serverAnchor=stored == null ? anchors.serverOpenMs(playerId) : stored.serverOpenMs();
         long playerAnchor=anchors.playerAnchorMs(playerId);
@@ -59,8 +69,15 @@ public class ActivityLedger {
                     || instance.def().retired());
             if (!keep) {
                 var current=rules.resolve(id, now, serverAnchor, playerAnchor);
-                if (current != null) instance=current;
-                else if (instance!=null && instance.openedAt()==null) instance=null;
+                // Only a matching new definition may replace positive unclaimed expired progress.
+                // Resolve without publishing: a revision may change the goal at this boundary.
+                boolean unrelated=mode==Mode.EVENT && eventGoal!=null && expired && pending
+                        && (current==null || current.def().retired()
+                        || current.def().condition().goalType()!=eventGoal);
+                if (!unrelated) {
+                    if (current != null) instance=current;
+                    else if (instance!=null && instance.openedAt()==null) instance=null;
+                }
                 // 已移除的旧实例保留原存档，固定窗口保证不能继续累积或重领。
             }
             if (instance == null) continue;

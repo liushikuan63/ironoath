@@ -53,7 +53,7 @@ public class ActivityEventListener implements GameEventBus.Listener {
         try {
             long now = timeService.serverNow();
             String playerId = event.playerId();
-            ActivityLedger.Book book = ledger.load(playerId, now, ActivityLedger.Mode.EVENT);
+            ActivityLedger.Book book = ledger.loadForEvent(playerId, now, event.goalType());
             ActivityProgress progress = book.progress();
             progress.onEvent(event);
             ledger.save(book);
