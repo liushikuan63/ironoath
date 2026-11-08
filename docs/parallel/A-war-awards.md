@@ -1,7 +1,7 @@
 # A线：国战奖分恢复与有效时长分摊
 
 **目标**：让所有惰性结算入口都能从持久计划恢复奖分，重复投递不重复入榜；固定bonus依已裁的历史有效成员时长比例分摊。
-**当前状态**：COORD接手A线；A-R0历史反查、A1/A2/A3/A4候选均在主树未提交。JDK17的`game-web -am -DskipTests compile`成功编译815个主源码；`WarAwardPlanTest` 5/0/0/0、`WarEndpointTest` 28/0/0/0、`RankEndpointTest` 20/0/0/0；War/Season/Social存储等价与排名合并批次104/0/0/0。新增Mongo War计划往返用例后`WarStoreEquivalenceTest`为45/0/0/0。使用任务专属M2与仅绑定127.0.0.1:27028的一次性Mongo，未触碰共享`mongo27`。A2遵循已裁的每人全战期额度按其历史有效成员时长折算；完整整仓测试、跨WarAppService+双Mongo存储恢复与Q独立验收仍未完成。
+**当前状态**：A-R0历史反查与A1/A2/A3/A4候选已于本地提交`f401fdae`（未推送）。JDK17的`game-web -am -DskipTests compile`成功编译815个主源码；`WarAwardPlanTest` 5/0/0/0、`WarEndpointTest` 28/0/0/0、`RankEndpointTest` 20/0/0/0；War/Season/Social存储等价与排名合并批次104/0/0/0。新增Mongo War计划往返用例后`WarStoreEquivalenceTest`为45/0/0/0。Node20 `scripts/check.sh` EXIT=0（静态51、客户端1420/0、Node harness76/0、Python28/0）；台账门与`git diff --check`通过。使用任务专属M2与仅绑定127.0.0.1:27028的一次性Mongo，未触碰共享`mongo27`。A2遵循已裁的每人全战期额度按其历史有效成员时长折算；整仓`test.sh`、运行时/跨进程Mongo恢复与Q独立验收仍未完成。
 **规格**：[B13](../../B13_国家与国战.md) #2459/#2461/#2473、[开发包§零](../../待完善收口_VibeCoding开发包.md#current-execution)。技术栈沿当前Java17/Maven与内存/Mongo双实现。
 
 ## 写入边界
@@ -44,6 +44,6 @@ mvn -Dmaven.repo.local="${IRONOATH_TASK_M2:?}" -Dironoath.test.mongo.uri="${IRON
 
 | 格 | 状态 | 基线/候选 | 验证与证据 | 未做/下一步 |
 |---|---|---|---|---|
-| A-R0 | IN_PROGRESS | 文档基线5fbf4e4c；主树候选583fca5e | `SocialStore.allianceMemberEpochs`已接内存/Mongo历史反查；`SocialStoreEquivalenceTest`现跑30/0/0/0，Mongo与内存用例全执行；A轮测试资源已登记为专属M2与自有临时Mongo | 仍待整批集成及Q独立验收；历史成员计算的Mongo服务级联动未与War投递放在同一测试中 |
-| A1/A3/A4 | IN_PROGRESS | 主树候选583fca5e；WarScoreBoard、RankBoardService、WarAppService、WarAwardPlan及端点测试仍未提交 | 生产`settleIfExpired`仅有`WarAppService.java:158,373`两处，均进统一恢复出口；现跑`WarEndpointTest` 28/0/0/0（含两条历史RED到GREEN），`RankEndpointTest` 20/0/0/0；ScopedIncrement恢复/重放用例与Mongo计划/完成标记新Store重读均有定向GREEN | 仍需用真实`MongoWarStore`+`MongoSeasonBoardStore`联合驱动服务级部分投递后重启恢复，并由Q在冻结候选上独立复核；未跑整仓`check.sh`/`test.sh` |
-| A2 | IN_PROGRESS | #2473及#2477用户裁决；每人全战期额度按本人有效成员时长比例折算 | `RankEndpointTest`现跑20/0/0/0，覆盖历史交集、重入后合并取整、国家归属间断、战后新成员排除、零时长及有效期重叠拒绝；存储等价批次同时验证内存/Mongo成员区间读回 | 端到端War结算与Mongo历史读取目前由分层测试组合证明；仍需Q对冻结候选做跨国家历史/重启交叉验收，不能据局部GREEN标完整B13完成 |
+| A-R0 | IN_PROGRESS | 文档基线5fbf4e4c；代码提交f401fdae | `SocialStore.allianceMemberEpochs`已接内存/Mongo历史反查；`SocialStoreEquivalenceTest`现跑30/0/0/0，Mongo与内存用例全执行；A轮测试资源已登记为专属M2与自有临时Mongo | 仍待整批集成及Q独立验收；历史成员计算的Mongo服务级联动未与War投递放在同一测试中 |
+| A1/A3/A4 | IN_PROGRESS | 提交f401fdae；含WarScoreBoard、RankBoardService、WarAppService、WarAwardPlan及端点测试 | 生产`settleIfExpired`仅有`WarAppService.java:158,373`两处，均进统一恢复出口；`WarEndpointTest` 28/0/0/0（含两条历史RED到GREEN），`RankEndpointTest` 20/0/0/0；ScopedIncrement恢复/重放用例与Mongo计划/完成标记新Store重读均有定向GREEN | 仍需用真实`MongoWarStore`+`MongoSeasonBoardStore`联合驱动服务级部分投递后重启恢复，并由Q在冻结候选上独立复核；未跑整仓`test.sh` |
+| A2 | IN_PROGRESS | #2473及#2477用户裁决；提交f401fdae；每人全战期额度按本人有效成员时长比例折算 | `RankEndpointTest`现跑20/0/0/0，覆盖历史交集、重入后合并取整、国家归属间断、战后新成员排除、零时长及有效期重叠拒绝；`SocialStoreEquivalenceTest`与Mongo计划往返均通过 | 端到端War结算与Mongo历史读取目前由分层测试组合证明；仍需Q对冻结候选做跨国家历史/重启交叉验收，不能据局部GREEN标完整B13完成 |
