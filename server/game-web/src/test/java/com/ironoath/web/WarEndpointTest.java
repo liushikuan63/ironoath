@@ -814,9 +814,22 @@ class WarEndpointTest {
 
         mockMvc.perform(get("/nation/war").header(PLAYER_HEADER,playerId))
                 .andExpect(status().is5xxServerError());
-        assertThat(wars.findLatest().orElseThrow().phase()).isEqualTo(WarScoreBoard.Phase.SETTLED);
+        WarScoreBoard failedDelivery = wars.findLatest().orElseThrow();
+        assertThat(failedDelivery.phase()).isEqualTo(WarScoreBoard.Phase.SETTLED);
+        assertThat(failedDelivery.seasonAwardPlan())
+                .as("首次投递前，已冻结的原战事计划必须独立落盘")
+                .isNotNull();
+        assertThat(failedDelivery.seasonAwardPlan().warStartedAt()).isEqualTo(startedAt);
+        assertThat(failedDelivery.seasonAwardedAt())
+                .as("投递失败不能提前写完成标记")
+                .isNull();
         mockMvc.perform(get("/nation/war").header(PLAYER_HEADER,playerId))
                 .andExpect(status().isOk());
+        WarScoreBoard afterRetry = wars.findLatest().orElseThrow();
+        assertThat(afterRetry.seasonAwardPlan()).isEqualTo(failedDelivery.seasonAwardPlan());
+        assertThat(afterRetry.seasonAwardedAt())
+                .as("重试成功后才写入同一份计划的完成标记")
+                .isNotNull();
 
         verify(rankBoards,times(2)).reportWarSeasonPoints(any(WarScoreBoard.class),any(WarScoreBoard.Result.class));
     }

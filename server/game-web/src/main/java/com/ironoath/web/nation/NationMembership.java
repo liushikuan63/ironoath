@@ -1,12 +1,18 @@
 package com.ironoath.web.nation;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 import org.springframework.stereotype.Component;
 
@@ -61,7 +67,10 @@ public class NationMembership {
     }
 
     /**
-     * 一个国家的全部成员 playerId（反方向那一跳：国家 → 成员联盟 → 盟内成员）。
+     * 一个国家当前的全部成员 playerId（反方向那一跳：国家 → 成员联盟 → 盟内成员）。
+     *
+     * <p>此方法只返回当前花名册，不能用来推断历史成员资格；历史战事时长请使用
+     * {@link #effectiveMemberMillisByPlayer(Nation, long, long)}。
      *
      * <p><b>为什么必须是一次 {@link SocialStore#allAlliances()}，而不是按成员联盟逐个
      * {@code allianceById}</b>：一个国能容纳几个盟是按等级发的
@@ -118,4 +127,85 @@ public class NationMembership {
         }
         return List.copyOf(playerIds);
     }
+
+    /**
+     * 每名玩家在指定国家、指定半开区间内的持久成员时长（毫秒）。
+     *
+     * <p>此口只读Social的联盟成员历史与Nation的联盟归属历史，再与战事区间求交；
+     * <b>不会用当前花名册补造过去</b>。旧成员若没有可辩护的历史起点就没有可计时区间，
+     * 因而不能凭重试当天名单领取旧战奖金。
+     *
+     * <p>多个成员/国家历史段先求交再按玩家合并。若同一玩家在同一国家出现重叠的有效区间，
+     * 说明持久历史自相矛盾；这里 fail closed，而不是把重叠时长双计。
+     */
+    public Map<String, Long> effectiveMemberMillisByPlayer(Nation nation, long warStartedAt, long settledAt) {
+        Objects.requireNonNull(nation, "国战成员时长计算必须带持久国家历史");
+        if (warStartedAt < 0L || settledAt < warStartedAt) {
+            throw new IllegalArgumentException("国战成员时长查询区间无效：startedAt="
+                    + warStartedAt + " settledAt=" + settledAt);
+        }
+        if (settledAt == warStartedAt) {
+            return Map.of();
+        }
+
+        Set<String> allianceIds = new TreeSet<>();
+        for (Nation.AllianceMembershipPeriod period : nation.formerAllianceMemberships()) {
+            allianceIds.add(period.allianceId());
+        }
+        allianceIds.addAll(nation.memberAllianceIds());
+
+        Map<String, List<TimeRange>> rangesByPlayer = new HashMap<>();
+        for (String allianceId : allianceIds) {
+            List<SocialStore.AllianceMemberEpoch> memberEpochs = Objects.requireNonNull(
+                    social.allianceMemberEpochs(allianceId), "联盟成员历史不得为 null：allianceId=" + allianceId);
+            List<NationStore.AllianceNationEpoch> nationEpochs = Objects.requireNonNull(
+                    nations.allianceNationEpochs(allianceId), "联盟国家历史不得为 null：allianceId=" + allianceId);
+
+            for (NationStore.AllianceNationEpoch nationEpoch : nationEpochs) {
+                if (!nation.id().equals(nationEpoch.nationId())) {
+                    continue;
+                }
+                long countryFrom = Math.max(warStartedAt, nationEpoch.fromAt());
+                long countryUntil = Math.min(settledAt, nationEpoch.untilAt());
+                if (countryFrom >= countryUntil) {
+                    continue;
+                }
+                for (SocialStore.AllianceMemberEpoch memberEpoch : memberEpochs) {
+                    long from = Math.max(countryFrom, memberEpoch.fromAt());
+                    long until = Math.min(countryUntil, memberEpoch.untilAt());
+                    if (from < until) {
+                        rangesByPlayer.computeIfAbsent(memberEpoch.playerId(), ignored -> new ArrayList<>())
+                                .add(new TimeRange(from, until));
+                    }
+                }
+            }
+        }
+
+        long warDuration = settledAt - warStartedAt;
+        Map<String, Long> durations = new TreeMap<>();
+        for (Map.Entry<String, List<TimeRange>> entry : rangesByPlayer.entrySet()) {
+            List<TimeRange> ranges = entry.getValue();
+            ranges.sort(Comparator.comparingLong(TimeRange::fromAt).thenComparingLong(TimeRange::untilAt));
+            long total = 0L;
+            long previousUntil = -1L;
+            for (TimeRange range : ranges) {
+                if (range.fromAt() < previousUntil) {
+                    throw new IllegalStateException("同一玩家国战成员有效区间重叠，拒绝重复计时：playerId="
+                            + entry.getKey() + " nationId=" + nation.id());
+                }
+                total = Math.addExact(total, range.untilAt() - range.fromAt());
+                previousUntil = range.untilAt();
+            }
+            if (total > warDuration) {
+                throw new IllegalStateException("玩家国战成员有效时长超过战事全期：playerId="
+                        + entry.getKey() + " nationId=" + nation.id());
+            }
+            if (total > 0L) {
+                durations.put(entry.getKey(), total);
+            }
+        }
+        return Collections.unmodifiableMap(new LinkedHashMap<>(durations));
+    }
+
+    private record TimeRange(long fromAt, long untilAt) {}
 }

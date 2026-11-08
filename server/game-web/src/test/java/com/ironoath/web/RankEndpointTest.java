@@ -2,6 +2,10 @@ package com.ironoath.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -12,10 +16,12 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.AdditionalAnswers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -33,6 +39,7 @@ import com.ironoath.common.ErrorCode;
 import com.ironoath.common.json.JsonUtils;
 import com.ironoath.common.time.TimeService;
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.core.nation.WarAwardPlan;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.season.SeasonSettlement;
 import com.ironoath.web.bot.BotRegistry;
@@ -183,7 +190,7 @@ class RankEndpointTest {
      * 恰好是本仓「数值零硬编码」那条铁律的反面教材。
      */
     @Test
-    @DisplayName("国战结算发赛季分：门槛不过不建行；分等于击杀乘每杀点数；调两次就是两倍（旗标存在的理由）")
+    @DisplayName("国战结算发赛季分：门槛不过不建行；分等于击杀乘每杀点数；同一结算重投不重复累分")
     void warSeasonPointsLandOnTheWarBoardWithThresholdApplied() {
         String hunter = newPlayer(16);
         String idler = newPlayer(16);
@@ -220,12 +227,13 @@ class RankEndpointTest {
                 .as("国战分不进击杀榜：两张榜各记一件事（击杀榜收全量，WAR 榜只收这一场）")
                 .isEmpty();
 
-        // 同一场再发一次：本方法自己不幂等 —— 这正是"每场仗只调一次"这条前提必须成立的直接证据，
-        // 那条前提由 WarStore.Settlement#settledNow 保证（等价测试里钉着）。
-        ranks.reportWarSeasonPoints(board, outcome);
+        // 同一场重投同一份 outcome：作用域回执必须幂等，settledNow 不能是防止重复发奖的唯一屏障。
+        assertThat(ranks.reportWarSeasonPoints(board, outcome))
+                .as("同一份计划重投仍核验同一位受益人")
+                .isEqualTo(1);
         assertThat(ranks.list(hunter, RankType.WAR, 1, 0).entries().get(0).value())
-                .as("累加语义调两次就是两倍分 —— settledNow 旗标存在的全部理由")
-                .isEqualTo(2L * (points.minKills() + 40L) * points.pointPerKill());
+                .as("重复投递不得将同一国战分累加两次")
+                .isEqualTo((points.minKills() + 40L) * points.pointPerKill());
     }
 
     @Test
@@ -621,6 +629,151 @@ class RankEndpointTest {
     }
 
     @Test
+    @DisplayName("已冻结计划从Snapshot恢复后重投，作用域回执不重复累分")
+    void frozenPlanReplayAfterSnapshotDoesNotDoubleAward() throws Exception {
+        War war = warWithTwoNations(12L, 40L);
+        ConfigRegistry anchored = anchoredWithBonuses(7L, 5L, 3L);
+        RankBoardService svc = warService(anchored);
+
+        assertThat(svc.reportWarSeasonPoints(war.board(), war.outcome()))
+                .as("第一次按当前验收奖励给四名成员建榜行")
+                .isEqualTo(4);
+        Map<String, Long> firstRows = warRows(svc, war);
+        var frozenPlan = war.board().seasonAwardPlan();
+        assertThat(frozenPlan).isNotNull();
+
+        var restored = com.ironoath.core.nation.WarScoreBoard.fromSnapshot(
+                war.board().toSnapshot(), war.board().rules());
+        assertThat(restored.seasonAwardPlan()).isEqualTo(frozenPlan);
+        assertThat(svc.reportWarSeasonPoints(restored, restored.settledResult()))
+                .as("从新领域对象重放同一计划时仍逐人核验原回执")
+                .isEqualTo(4);
+        assertThat(warRows(svc, war))
+                .as("新Store/新对象重放后每个玩家的累计分仍与第一次完全一致")
+                .isEqualTo(firstRows);
+    }
+
+    @Test
+    @DisplayName("首名ScopedIncrement已写后故障：快照重载复用计划并只补剩余玩家")
+    void partialScopedIncrementFailureResumesFromSnapshotWithoutDoubleAward() throws Exception {
+        War war = warWithTwoNations(12L, 40L);
+        ConfigRegistry anchored = anchoredWithBonuses(7L, 5L, 3L);
+        InMemorySeasonBoardStore persisted = new InMemorySeasonBoardStore();
+        AtomicBoolean failAfterFirstWrite = new AtomicBoolean(true);
+        SeasonBoardStore faulting = mock(SeasonBoardStore.class, AdditionalAnswers.delegatesTo(persisted));
+        doAnswer(invocation -> {
+            String seasonId = invocation.getArgument(0);
+            SeasonSettlement.Board board = invocation.getArgument(1);
+            SeasonBoardStore.ScopedIncrement increment = invocation.getArgument(2);
+            SeasonBoardStore.ScopedIncrement written = persisted.recordScopedIncrement(seasonId, board, increment);
+            if (failAfterFirstWrite.compareAndSet(true, false)) {
+                throw new IllegalStateException("simulated failure after first durable WAR receipt");
+            }
+            return written;
+        }).when(faulting).recordScopedIncrement(anyString(), any(SeasonSettlement.Board.class),
+                any(SeasonBoardStore.ScopedIncrement.class));
+        RankBoardService svc = warService(anchored, faulting);
+
+        assertThatThrownBy(() -> svc.reportWarSeasonPoints(war.board(), war.outcome()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("simulated failure after first durable WAR receipt");
+        WarAwardPlan frozenPlan = war.board().seasonAwardPlan();
+        assertThat(frozenPlan).isNotNull();
+        assertThat(frozenPlan.members()).hasSize(4);
+        assertThat(war.board().seasonAwardedAt()).isNull();
+        List<SeasonSettlement.Entry> afterFirstWrite = persisted.board(
+                frozenPlan.seasonId(), SeasonSettlement.Board.WAR);
+        assertThat(afterFirstWrite).hasSize(1);
+        assertThat(afterFirstWrite.get(0).id()).isEqualTo(frozenPlan.members().get(0).playerId());
+
+        var restored = com.ironoath.core.nation.WarScoreBoard.fromSnapshot(
+                war.board().toSnapshot(), war.board().rules());
+        assertThat(restored.seasonAwardPlan()).isEqualTo(frozenPlan);
+        assertThat(svc.reportWarSeasonPoints(restored, restored.settledResult()))
+                .as("持久化的首个回执应重放不增分，其余三名应补齐")
+                .isEqualTo(frozenPlan.size());
+        Map<String, Long> expectedRows = frozenPlan.members().stream().collect(
+                java.util.stream.Collectors.toMap(WarAwardPlan.Member::playerId, WarAwardPlan.Member::score));
+        assertThat(warRows(svc, war)).containsExactlyInAnyOrderEntriesOf(expectedRows);
+
+        assertThat(svc.reportWarSeasonPoints(restored, restored.settledResult()))
+                .as("全员完成后再次重放仍只核对同一批作用域回执")
+                .isEqualTo(frozenPlan.size());
+        assertThat(warRows(svc, war)).containsExactlyInAnyOrderEntriesOf(expectedRows);
+    }
+
+    @Test
+    @DisplayName("A2 历史时长bonus：先合并重入区间再取整，国家失效与战后新成员不领分")
+    void warBonusUsesMergedDurableMembershipIntervals() throws Exception {
+        War war = warWithTwoNations(12L, 40L);
+        long startedAt = war.board().startedAt();
+        long settledAt = war.board().settledAt();
+        assertThat(settledAt - startedAt).isEqualTo(1_000L);
+        String winnerNationId = war.outcome().winnerId();
+        assertThat(winnerNationId).isNotNull();
+
+        com.ironoath.core.nation.Nation winnerNation = nationStore.findById(winnerNationId).orElseThrow();
+        assertThat(winnerNation.memberAllianceIds()).hasSize(1);
+        String allianceId = winnerNation.memberAllianceIds().iterator().next();
+        var currentAlliance = socialStore.allianceById(allianceId).orElseThrow();
+        String joinedAfterWar = newPlayer(16);
+        long expectedVersion = currentAlliance.version();
+        currentAlliance.join(joinedAfterWar);
+        socialStore.saveAlliance(currentAlliance, expectedVersion, settledAt + 1L);
+        assertThat(socialStore.allianceOf(joinedAfterWar)).isPresent();
+
+        SocialStore historicalSocial = mock(SocialStore.class, AdditionalAnswers.delegatesTo(socialStore));
+        NationStore historicalNations = mock(NationStore.class, AdditionalAnswers.delegatesTo(nationStore));
+        List<SocialStore.AllianceMemberEpoch> overlapping = List.of(
+                new SocialStore.AllianceMemberEpoch(war.winnerKiller(), startedAt, settledAt),
+                new SocialStore.AllianceMemberEpoch(war.winnerMate(), startedAt, startedAt + 700L),
+                new SocialStore.AllianceMemberEpoch(war.winnerMate(), startedAt + 600L, settledAt),
+                new SocialStore.AllianceMemberEpoch(joinedAfterWar, settledAt + 1L, Long.MAX_VALUE));
+        List<NationStore.AllianceNationEpoch> countryHistory = List.of(
+                new NationStore.AllianceNationEpoch(winnerNationId, startedAt, startedAt + 400L),
+                new NationStore.AllianceNationEpoch(winnerNationId, startedAt + 600L, settledAt));
+        org.mockito.Mockito.doReturn(overlapping).when(historicalSocial).allianceMemberEpochs(allianceId);
+        org.mockito.Mockito.doReturn(countryHistory).when(historicalNations).allianceNationEpochs(allianceId);
+
+        ConfigRegistry anchored = anchoredWithBonuses(9L, 0L, 0L);
+        RankBoardService svc = new RankBoardService(new InMemorySeasonBoardStore(),
+                historicalSocial, historicalNations,
+                new com.ironoath.web.nation.NationMembership(historicalSocial, historicalNations),
+                players, bots, anchored, new SeasonRulesAssembler(anchored), timeService);
+        assertThatThrownBy(() -> svc.reportWarSeasonPoints(war.board(), war.outcome()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("同一玩家国战成员有效区间重叠");
+        assertThat(war.board().seasonAwardPlan())
+                .as("非法的持久历史不得冻结成可投递计划")
+                .isNull();
+
+        // mate 重入两次，各200ms；先合并为400ms再 floor(9*400/1000)=3，逐段取整会错成2。
+        // winnerKiller 虽全程在联盟，但国家归属只有800ms，floor(9*800/1000)=7。
+        List<SocialStore.AllianceMemberEpoch> validEpochs = List.of(
+                new SocialStore.AllianceMemberEpoch(war.winnerKiller(), startedAt, settledAt),
+                new SocialStore.AllianceMemberEpoch(war.winnerMate(), startedAt, startedAt + 200L),
+                new SocialStore.AllianceMemberEpoch(war.winnerMate(), startedAt + 600L, startedAt + 800L),
+                new SocialStore.AllianceMemberEpoch(joinedAfterWar, settledAt + 1L, Long.MAX_VALUE),
+                new SocialStore.AllianceMemberEpoch("player_zero_effective", startedAt + 400L, startedAt + 600L),
+                new SocialStore.AllianceMemberEpoch("player_outside_overlap", startedAt - 200L, startedAt - 100L),
+                new SocialStore.AllianceMemberEpoch("player_outside_overlap", startedAt - 150L, startedAt - 50L));
+        org.mockito.Mockito.doReturn(validEpochs).when(historicalSocial).allianceMemberEpochs(allianceId);
+
+        assertThat(svc.reportWarSeasonPoints(war.board(), war.outcome())).isEqualTo(3);
+        Map<String, Long> rows = warRows(svc, war);
+        var points = new SeasonRulesAssembler(anchored).warSeasonPoints();
+        assertThat(rows.get(war.winnerKiller()))
+                .isEqualTo(war.winnerKills() * points.pointPerKill() + 7L);
+        assertThat(rows.get(war.winnerMate())).isEqualTo(3L);
+        assertThat(rows).doesNotContainKey(joinedAfterWar);
+        assertThat(rows).doesNotContainKey("player_zero_effective");
+        assertThat(rows).doesNotContainKey("player_outside_overlap");
+        assertThat(rows).doesNotContainKey(war.initiatorMate());
+        assertThat(war.board().seasonAwardPlan().members().stream()
+                .map(WarAwardPlan.Member::playerId).toList()).doesNotContain(joinedAfterWar);
+    }
+
+    @Test
     @DisplayName("3b-2 平分时不发胜方分：winnerId=null 原样继承，只发参与分与发起加成")
     void tiedWarPaysNoWinnerBonus() throws Exception {
         War war = warWithTwoNations(40L, 40L, false);   // 两边同分且无人持王城 ⇒ 没有胜者
@@ -691,7 +844,7 @@ class RankEndpointTest {
     }
 
     @Test
-    @DisplayName("3b-2 发奖读路：bonus 为 0 时连国家档与花名册都不碰；给正数时花名册按国一次、名字按人一次批量")
+    @DisplayName("3b-2 发奖读路：bonus 为 0 时连历史也不碰；给正数时按盟读持久区间、昵称一次批量")
     void bonusZeroSkipsRosterReadsEntirely() throws Exception {
         War war = warWithTwoNations(12L, 40L);
         RankOrgBoardQueryCountTest.QueryCounter counter = new RankOrgBoardQueryCountTest.QueryCounter();
@@ -708,27 +861,35 @@ class RankEndpointTest {
         assertThat(zeroSide.reportWarSeasonPoints(war.board(), war.outcome()))
                 .as("这一场只发击杀分（两个打够门槛的人）").isEqualTo(2);
         assertThat(counter.countOf("allAlliances"))
-                .as("三条 bonus 全为 0 时一次花名册都不该读 —— 删掉那句短路，这里就是 2").isZero();
+                .as("三条 bonus 全为 0 时一次当前花名册都不该读 —— 删掉那句短路，这里就是 2").isZero();
+        assertThat(counter.countOf("allianceMemberEpochs")).as("bonus为0时不读联盟成员历史").isZero();
+        assertThat(counter.countOf("allianceNationEpochs")).as("bonus为0时不读联盟国家历史").isZero();
         assertThat(counter.countOf("findById"))
                 .as("连国家档都不该去捞（为 0 的发奖不该付两次读）").isZero();
         assertThat(counter.countOf("findByPlayerId"))
                 .as("名字不许按人点查：那把花名册省下来的往返又在下一跳还回去").isZero();
 
-        // ---- B 相：同样的库存，把 bonus 摆成正数 ----
+        // ---- B 相：用一场新战事，因为A相已经把第一场的零bonus计划定格 ----
         counter.reset();
+        War paidWar = warWithTwoNations(12L, 40L);
         ConfigRegistry paid = anchoredWithBonuses(7L, 5L, 3L);
         RankBoardService paidSide = new RankBoardService(new InMemorySeasonBoardStore(),
                 countedSocial, countedNations,
                 new com.ironoath.web.nation.NationMembership(countedSocial, countedNations),
                 countedPlayers, bots, paid, new SeasonRulesAssembler(paid), timeService);
-        assertThat(paidSide.reportWarSeasonPoints(war.board(), war.outcome()))
+        assertThat(paidSide.reportWarSeasonPoints(paidWar.board(), paidWar.outcome()))
                 .as("四个成员全进账：两个击杀者 + 两个只挂名的").isEqualTo(4);
         assertThat(counter.countOf("allAlliances"))
-                .as("花名册按<b>参战国</b>一次一趟（这一场有两个参战国），而不是按人也不按盟")
-                .isEqualTo(2);
+                .as("发奖不再从当前花名册推断过去的成员").isZero();
+        assertThat(counter.countOf("allianceMemberEpochs"))
+                .as("两参战国各有一个历史联盟，按联盟反查一次、不按成员逐人点查").isEqualTo(2);
+        assertThat(counter.countOf("allianceNationEpochs"))
+                .as("两参战国各读一次联盟归属历史").isEqualTo(2);
+        assertThat(counter.countOf("allianceById")).as("历史发奖不逐盟取当前对象").isZero();
+        assertThat(counter.countOf("findById")).as("正bonus每个参战国家只读一次").isEqualTo(2);
         assertThat(counter.countOf("findBriefs"))
-                .as("名字一次批量读回，覆盖全部四名进账的人").isEqualTo(1);
-        assertThat(counter.countOf("findByPlayerId")).as("B 相同样没有点查").isZero();
+                .as("昵称一次批量读回，覆盖全部四名进账的人").isEqualTo(1);
+        assertThat(counter.countOf("findByPlayerId")).as("B 相同样没有玩家点查").isZero();
     }
 
     /** 建一个「两个盟、每盟两人」的国家（多出来的那个盟是后来整体加入的，走的是真入籍动作）。 */
@@ -778,36 +939,43 @@ class RankEndpointTest {
     }
 
     private War warWithTwoNations(long attackerKills,long defenderKills,boolean defenderHoldsCapital) throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
         String attackerLeader = newPlayer(16);
         String attackerMate = newPlayer(16);
         String attackerAlliance = createAlliance(attackerLeader, attackerMate);
-        post200("/nation/found", attackerLeader, new NationFoundReq(newRequestId(), "发起国", 100L, 200L));
+        post200("/nation/found", attackerLeader, new NationFoundReq(newRequestId(), "发起国" + suffix, 100L, 200L));
         String attackerNation = nationStore.findByAlliance(attackerAlliance).orElseThrow().id();
 
         String defenderLeader = newPlayer(16);
         String defenderMate = newPlayer(16);
         String defenderAlliance = createAlliance(defenderLeader, defenderMate);
-        post200("/nation/found", defenderLeader, new NationFoundReq(newRequestId(), "接战国", 300L, 400L));
+        post200("/nation/found", defenderLeader, new NationFoundReq(newRequestId(), "接战国" + suffix, 300L, 400L));
         String defenderNation = nationStore.findByAlliance(defenderAlliance).orElseThrow().id();
 
         var rules = new com.ironoath.web.nation.WarRulesAssembler(anchoredConfigs()).rules();
+        long startedAt = timeService.serverNow();
         // 第三个参数是发起国：宣战那一次必须把它带上（板子是唯一活到结算那一刻的东西）
         com.ironoath.core.nation.WarScoreBoard board =
-                new com.ironoath.core.nation.WarScoreBoard(rules, timeService.serverNow(), attackerNation);
+                new com.ironoath.core.nation.WarScoreBoard(rules, startedAt, attackerNation);
         board.registerNation(attackerNation);
         board.registerNation(defenderNation);
-        startBalancedSiege(board, attackerNation, defenderNation, timeService.serverNow());
-        if(defenderHoldsCapital)board.captureCapital(defenderNation,timeService.serverNow());
+        startBalancedSiege(board, attackerNation, defenderNation, startedAt);
+        if(defenderHoldsCapital)board.captureCapital(defenderNation,startedAt);
         board.recordKill(attackerNation, attackerLeader, attackerKills);
         board.recordKill(defenderNation, defenderLeader, defenderKills);
-        return new War(board, board.settle(timeService.serverNow()),
+        // A2 时长比例夹具必须有正分母；1秒不会跨过占领分的整分钟边界。
+        return new War(board, board.settle(startedAt + 1_000L),
                 attackerLeader, attackerMate, attackerKills,
                 defenderLeader, defenderMate, defenderKills);
     }
 
     /** 用给定配置换一个榜服务（榜存储每次新建，免得三个用例互相看见条目）。 */
     private RankBoardService warService(ConfigRegistry configs) {
-        return new RankBoardService(new InMemorySeasonBoardStore(), socialStore, nationStore,
+        return warService(configs, new InMemorySeasonBoardStore());
+    }
+
+    private RankBoardService warService(ConfigRegistry configs, SeasonBoardStore seasonBoards) {
+        return new RankBoardService(seasonBoards, socialStore, nationStore,
                 membership(), players, bots, configs, new SeasonRulesAssembler(configs), timeService);
     }
 

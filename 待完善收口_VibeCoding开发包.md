@@ -60,6 +60,8 @@
 
 纯文档变更执行表格形状、只增不删、引用/脚本入口及 `git diff --check`；不为文字修改启动玩家服务。实现批次仍执行 `check.sh`、`test.sh`、相应构建及真启动/关键探针；共用 UI 改动增加相关批跑，契约变更先生成。构建与消费同一产物的探针不得并行；Windows 使用 Git Bash、Node 20 和仓库 `scripts/env.sh`。
 
+**DSH 命令输出限流（Windows）**：通过 DSH 命令运行器调用 `git log`、`git diff`、`git show`（含 `git diff --check`）时，即使预期无输出也必须先将 stdout/stderr 重定向到本次唯一日志，再仅查看末尾 30 行（PowerShell 用 `Get-Content -Tail 30`，Git Bash 用 `tail -30`）。PowerShell 在原生 `git` 调用后立即保存 `$LASTEXITCODE`，尾读日志后返回该值；`--oneline` 等展示参数不替代输出限流。Windows 的验证命令仍遵循本节的 Git Bash 约定。
+
 本次只读计数快照：静态门 **51**；GameApi **155** 方法、生产零调用 **0**、仅内部调用 **6**；运行时探针文件 **84**。验收矩阵编号行 **266**：237 ✅、19 🟡、9 ⬜、1“不适用”（出售功能按裁决撤下）；上线清单勾选 **75**、未勾选 **34**。这些是文档/文件结构计数，不是通过率或本轮测试结果；复跑入口见 §二·补·三。
 
 ---
@@ -71,6 +73,77 @@
 A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属确认后可独立开始；Q先准备、再对冻结集成SHA验收。两层成员历史已经存在，不另造日志。共享契约生成、主台账/编号、集成提交和同一产物的构建/探针串行。每线交精确补丁和证据，由COORD把该格代码、任务卡、§四与收口清单一次原子提交，原留档纪律不取消。
 
 本次只完成任务包划分；未自动创建聊天或启动A/B/C/Q，未转移旧B13源码owner。实际owner、worktree、SHA、资源和下一步仍写原队列，不另建运行状态账本。旧历史状态与本节分工冲突时按当前核验和明确授权处理，不以文档里的“active”认领资源。
+
+### 0.7 当前接续（2026-11-08 · #2475）
+
+- 持久目标`goal-d8536ca4-220b-4088-a792-8025fe3adbcc`继续处理B13奖分恢复、迁都及生产禁用旧支付回调。当前主树`D:/Java/GitHub/ironoath`基线`583fca5e`；A源码、测试和任务卡仍在工作树，未提交/未推送。历史未跟踪队列、备份、构建/美术/临时文件均保留，不纳入本格。
+- A-R0读取口与内存/Mongo实现、A1/A3计划持久化与两入口恢复骨架、故障/重放测试已写入候选；`game-web -am -o -DskipTests compile`在JDK17 `BUILD SUCCESS`（增量主源码编译），`git diff --check` EXIT=0，ownership JSON及拟新增路径断言PASS。**测试源码未编译/执行**，历史RED不可作本轮GREEN证据。
+- `IRONOATH_TASK_M2`与`IRONOATH_TASK_MONGO_URI`均unset；A卡规定不跑测试、不回退到localhost:27017。A2的比例方法已有用户裁决，但具体总额基数仍未确定，未擅自实现。B工作树基线干净；C工作树有五个预期文件改动但没有可复核测试回执；两线尚无验收完成证据。
+- 下一步：先取到隔离测试资源后编译并跑A卡定向套件；A2仅澄清奖金总额基数后实现；B/C按任务卡与当前worktree证据继续。完整测试、运行验收、台账、原子提交和阶段推送仍未完成。详见本节§四 #2475与`docs/parallel/A-war-awards.md`。
+
+### 0.8 当前接续（2026-11-08 · #2477）
+
+- 继续goal `goal-d8536ca4-220b-4088-a792-8025fe3adbcc`，主树`D:/Java/GitHub/ironoath`候选仍基线`583fca5e`。用户已选每名成员的全战期bonus按其在该国的持久有效时长折算；`NationMembership.effectiveMemberMillisByPlayer`和`RankBoardService`历史时长路径、A2反例测试已编辑，尚未提交。
+- 当前实现按`[startedAt,settledAt)`与Social成员epoch/Nation归属epoch求交，按玩家合并后用BigInteger向下取整；有效区间重叠fail closed，战事外重叠不阻断，bonus为0仍短路。测试含重入、国家归属间断、战后入盟、零有效期和内外重叠反例。
+- 最新JDK17主源码compile退出1：Maven不能保存`server/game-web/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst`，不作为源码编译结论；当前有界`git diff --check` EXIT=0。A/B测试未编译/执行，`IRONOATH_TASK_MONGO_URI`仍缺；用户允许自建Maven仓但隔离路径尚未落地。
+- `.qoder-work-queue.md`单文件备份虽获授权，`win_bash cp`因`Permission denied`失败，队列未改；因此B代码尚未激活。C仅静态审查，compile入口前次未启动Maven；A/B/C仍无完整验收、提交/推送。
+- 最终文档表格门尝试`check-checklist-table.sh` EXIT=1；9/9 fixtures均未执行内容判据，因Node `mkdtemp`在用户Temp目录返回`EPERM`；不重试换路径。
+- 下一步：解决构建目标可写性的外部阻塞、取得自有Mongo测试资源后跑A卡定向套件；保持队列/既有未跟踪文件不动，未批准前不重试被拒的写路径或绕过。
+
+### 0.9 当前接续（2026-11-08 · #2478）
+
+- 用户确认Maven与队列目标写权限恢复后，按原命令重跑`source scripts/env.sh && mvn -f server/pom.xml -pl game-web -am -q -o -DskipTests compile`仍EXIT=1，错误仍指向`server/game-web/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst`；不是源码结果，不再重跑或更换路径。
+- Docker CLI可用，但只读`docker ps`仍报`permission denied while trying to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine`；未能确认/访问容器。`IRONOATH_TASK_M2`与`IRONOATH_TASK_MONGO_URI`仍unset；未运行任何测试。
+- 用户授权的`.qoder-work-queue.md`单文件备份在目标检查通过后再试仍`Permission denied`，队列未动；不改走其他工具/路径。`收口清单.md`尚未追加#2477，既有未跟踪内容保留。
+- 下一步等待底层target/队列写权限和Docker API访问恢复，或用户提供经批准的资源入口；恢复后先只读核实目标，再继续定向验证。Goal保持active。
+
+### 0.10 当前接续（2026-11-09 · #2479）
+
+- 第5轮goal仍active；主树候选`583fca5e`，A2公式与反例、A3恢复用例已写，但当前源码/测试未编译或执行。静态grep确认生产`settleIfExpired`仅由`WarAppService`两处调用（`server/game-web/src/main/java/com/ironoath/web/service/WarAppService.java:158,373`），均进入统一奖分/恢复出口。
+- 用户授权的新Maven仓候选`D:\Java\maven\m2-ironoath-a-20261109`不存在；`game-core -am test`用该仓初始化失败EXIT=1：`Could not create local repository at D:\Java\maven\m2-ironoath-a-20261109`，测试未启动。此前A2后`game-web -am -DskipTests compile`仍在写`target/.../createdFiles.lst`时EXIT=1，不是源码编译结论；不换目录或工具绕过。
+- Mongo测试URI未提供；Docker named pipe读请求仍`permission denied`，未启动/改动容器。`.qoder-work-queue.md`备份写入被拒，队列未编辑；`收口清单.md`未追加本格。未提交、未推送。
+- 下一步仅在可写测试资源和Mongo授权入口可用后重跑对应验证；继续保留全部旧队列/未跟踪文件。
+
+### 0.11 当前接续（2026-11-09 · #2480）
+
+- 用户允许更换隔离M2路径后，`D:\Java\maven\m2-ironoath-a-20261109`与`C:\Users\Admin\.m2\ironoath-task-a-20261109`均在Maven创建仓库阶段失败（`Could not create local repository`，EXIT=1），测试没有启动；不再尝试第三个路径。`IRONOATH_TASK_M2`和`IRONOATH_TASK_MONGO_URI`仍未配置。
+- 用户确认可用本机Docker后，`docker ps`仍被Docker named pipe权限拒绝；不换通道重试。队列备份在用户报告权限恢复后，使用原路径/原`win_bash cp`再次被拒，未编辑`.qoder-work-queue.md`或`收口清单.md`，B写入未激活。
+- C worktree按正确测试路径复核5个预期文件，364 insertions/17 deletions，`git diff --check` EXIT=0；仅静态审查，没有C编译/测试证据。A2/A3源码仍未编译/测试。未提交/推送。
+- 用户已批准仅对`D:\Java\maven`范围诊断/修复文件权限；ACL脚本无只读模式，执行需PowerShell 7；`pwsh` WindowsApps入口报`ENOENT`，已查常见PowerShell 7目录不存在，因此未运行脚本/未改ACL，也不切换到PowerShell 5或其他shell。只有恢复可用PowerShell 7后才执行这条已授权命令。
+- 下一步仍需要实际可写的隔离M2位置及当前会话可访问的自有Mongo测试资源；在条件到位前保留所有源码/文档改动、不声明GREEN。
+
+### 0.12 当前接续（2026-11-09 · #2482）
+
+- 用户提供PowerShell 7可执行路径后，按批准范围仅运行一次ACL诊断，`-Path`与`-AllowRoot`均为`D:\Java\maven`。脚本在读取ACL之前，因不能创建`D:\Java\maven\acl-repair-20261109`报告目录而停止（`Access to the path ... is denied`，EXIT=1）；`FIXED=0, GRANTED=0, REFUSED=0, RESTORED=0`、`rollback=not-needed`、`report=null`、`nextAction=stop`。无ACL被读取/修改，无报告、备份或回滚项；按技能规则不更换`-Out`路径、不重试。
+- 该次结果只证明报告目录不可写，未诊断Maven本地仓与队列备份拒绝的ACL根因。两条M2创建路径仍不可用，Mongo URI缺失、Docker named pipe仍拒绝，A类测试未启动；源码/文档保持未提交。
+
+### 0.13 当前接续（2026-11-09 · #2483）
+
+- Goal第6轮仍active；D盘M2候选`D:\Java\maven\m2-ironoath-a-20261109`现在已存在但无文件。按已授权原路径显式启动`game-core -am test`后，Maven仍不能创建tracking目录/文件：`Failed to create parent directories for tracking file ... spring-boot-dependencies-3.2.5.pom.lastUpdated`，随后`.pom.part.lock`报路径不存在，`CORE_TEST_EXIT=1`；没有任何测试执行，不是源码编译结论，也不试第三路径。
+- ACL脚本已按#2482停止，不再重试；队列备份仍被拒，Mongo URI unset且Docker named pipe拒绝。C正确路径下5个文件静态改动，364 insertions/17 deletions，未compile/test。未提交/推送。
+
+### 0.14 当前接续（2026-11-09 · #2484）
+
+- 用户新增允许联网与申请ACL权限；但#2482唯一ACL脚本在读ACL前就因`prepare_report`写入被拒而以`nextAction=stop`终止，诊断技能要求失败后停止，且本会话审批提示禁用，因此未重跑或改用其他写入通道；没有ACL变更。Maven隔离仓子目录写入和队列备份仍不可用，A类测试未执行。
+- `ops_discover_tools`仅选择到本地文件inspect/replace/write工具，没有ACL修复/授权能力；未调用文件工具绕过D盘ACL，权限状态仍未知。
+
+### 0.15 当前接续（2026-11-09 · #2486）
+
+- C worktree `D:\tmp\ironoath-live-c-20261108` 的`PayController.callback`生产拒绝分支现只记录固定拒绝原因，不再把请求中的原始`orderId`写入WARN日志；限定文件`git diff --check` EXIT=0。C当前五文件差异363 insertions/17 deletions，未编译/测试。
+- A代码和测试仍没有新编译/运行证据；M2子目录写入失败、Mongo URI未设置。ACL脚本按`nextAction=stop`停止；队列备份未成功、未改队列；无提交/推送。
+
+### 0.16 当前接续（2026-11-09 · #2487）
+
+- B卡R0当前为PREREQ：只读确认现有权限档与`lastLoginAt`候选，KING/Officer边界、缺档/时钟异常、坐标/费用/冷却仍需冻结；队列备份被拒，owner/worktree/resources未登记，未启动B源码。
+- C日志最小修正与A2时长实现仍仅静态；A/B测试没有新运行证据，M2/Mongo和ACL写入能力未恢复。收口清单/队列未追加本格；未提交/推送。
+
+### 0.17 当前接续（2026-11-09 · #2489）
+
+- 当前目标持有线程`01a1bc3e-d0d6-7cb2-bdc9-71d1fd70b548`；主树候选`583fca5e`，A线源码/测试与任务卡仍未提交。Maven仓`D:\Java\maven\m2-ironoath-a-20261109`现可写并成功工作；`game-web -am -DskipTests compile`在JDK17.0.12编译815个主源码，`BUILD SUCCESS`。本轮已完成`WarAwardPlanTest`5/0/0/0、`WarEndpointTest`28/0/0/0、`RankEndpointTest`20/0/0/0、War/Season/Social存储等价合并批次104/0/0/0且0跳过；Node20 `scripts/check.sh` EXIT=0（静态51、客户端1420/0/0、Node harness76/0、Python28/0、探针语法84），台账表格9/9、append-only保留5629行、doc-counts为51；`git diff --check` EXIT=0。
+- 使用仅绑定`127.0.0.1:27028`且`/data/db`为tmpfs的一次性Mongo容器`ironoath-a-mongo-20261109-0208`，未连接共享`mongo27:27017`。Mongo存储类测试中的随机`ironoath_contract_*`库由`TestMongo` drop；容器/端口资源的最终清理回读尚待本批结束。
+- 首次A存储/榜单合并运行出现2个失败：旧Rank测试仍要求相同结算重投翻倍，另一失败是同一测试方法重复创建固定国家名。已将断言改为幂等重投并给战事夹具国家名加唯一后缀；之后`RankEndpointTest`20/0/0/0和合并104/0/0/0通过。首次失败证据`D:/tmp/ironoath-a-war-store-rank-20261109T0212.log`，修正后证据`D:/tmp/ironoath-a-rank-only-20261109T0214.log`、`D:/tmp/ironoath-a-war-store-rank-20261109T0220.log`、`D:/tmp/ironoath-a-war-plan-store-20261109T0217.log`。
+- A1/A2/A3/A4定向路径及`check.sh`现有GREEN；仍未做整仓`test.sh`、冻结集成SHA上的Q独立复核、运行时探针，或`WarAppService`+Mongo War/Season Store跨进程部分投递联合恢复。B迁都R0仍为PREREQ，C工作树的支付候选尚未编译/测试；未推送。
+- 下一步：按本任务卡与§八完成A线变更、检查精确暂存路径并本地提交；随后用独立资源验证C，继续保留B产品规则缺口并等待对应裁决，不猜坐标/费用/冷却。
 
 ---
 
@@ -8409,4 +8482,54 @@ TEST_EXIT=0
 
 | 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
 |---|---|---|---|---|
-| #2474 A/B/C任务分卡、共享接口单写、Q独立验收 | 本格原子本地提交；不推送 | 基线5fbf4e4c；现读两层成员历史已存在，A/B共享国家存储与接口，C五文件独立。新增协同入口/四张任务卡/精确ownership，主包与AGENTS/CC互链；分区/路径/命令语法一致性107/107，A21/B11/C5现有写文件零交集且不覆盖共享区，4拟新增路径明确未创建；本地链接49、测试类14均存在；文档门及diff均EXIT0，表格自测9/9且0失败/跳过，三名只读复审完成；Q子Bash显式参数/退出码fixture通过（未执行Maven） | D:/tmp/ironoath-parallel-docs-evidence-20261031；docs/parallel/README.md与ownership.json | 只完成可分派文档；未启动A/B/C/Q、未创建聊天或接管旧writer、未实现产品功能、未跑代码全套/构建/业务/真机/支付/5000。静态写集合不重叠不等于自动锁或无语义冲突；实际owner和资源须R0核验 |
+| #2474 A/B/C任务分卡、共享接口单写、Q独立验收 | 本格原子本地提交；不推送 | 基线5fbf4e4c；现读两层成员历史已存在，A/B共享国家存储与接口，C五文件独立。新增协同入口/四张任务卡/精确ownership，主包与AGENTS/CC互链；分区/路径/命令语法一致性107/107，A21/B11/C5现有写文件零交集且不覆盖共享区，4拟新增路径明确未创建；本地链接49、测试类14均存在；文档门及diff均EXIT0，表格自测9/9且0失败/跳过，三名只读复审完成；Q子Bash显式参数/退出码fixture通过（未执行Maven） | D:/tmp/ironoath-parallel-docs-evidence-20261031；docs/parallel/README.md与ownership.json | 只完成可分派文档；未启动A/B/C/Q、未创建聊天或接管旧writer、未实现产品功能、未跑代码全套/构建/业务/真机/支付/5000。静态写集合不重叠不等于自动锁或无语义冲突；实际owner和资源须R0核验
+
+### 2026-11-08 · #2475 A线奖分恢复与历史反查接续
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| #2475 A-R0/A1/A3恢复骨架与故障用例 | 主树候选583fca5e；未提交、未推送 | JDK17离线`mvn -f server/pom.xml -pl game-web -am -o -DskipTests compile` BUILD SUCCESS、EXIT=0（增量主源码编译）；`git diff --check` EXIT=0；`check-checklist-table.sh` 9/9、0失败/0跳过且6份文档2行与表头一致；`check-checklist-append-only.sh` EXIT=0；ownership JSON解析与拟新增核心路径断言PASS。`WarScoreBoard`计划/标记Snapshot、`RankBoardService` scoped receipt、`WarAppService`两入口恢复、Social按联盟反查与A3故障/重放测试源码已编辑；测试源码未编译或执行。历史WarEndpointTest 28/2/0/0仅为旧RED。 | D:/tmp/ironoath-a-war-main-compile-20261108.log、D:/tmp/ironoath-doc-diff-check-2475-final-20261108.log、D:/tmp/ironoath-checklist-table-2475-final-20261108.log、D:/tmp/ironoath-checklist-append-only-2475-final-20261108.log；docs/parallel/A-war-awards.md；相关Java源码与测试 | `IRONOATH_TASK_M2`与`IRONOATH_TASK_MONGO_URI` unset，按A卡未跑测试、未接localhost:27017；A2奖金池总额基数未裁，不实现分摊公式；未提交/推送。B/C仍待工作线可复核证据。
+
+### 2026-11-08 · #2476 DSH 命令输出限流防复现
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| #2476 DSH命令输出限流防复现 | 未提交、未推送（同文档有既存#2475差异，不夹带） | 有界`git diff --check` PowerShell/Git Bash均EXIT=0；`check-checklist-append-only.sh` EXIT=0（5629行保留）；`check-checklist-table.sh` EXIT=0（9/9、0跳过；新增行门6份文档/3行等宽）；脚本运行于Node v24.19.0 | 本轮用户截图；§零.0.5第63行；D:/tmp/ironoath-2476-final-append-only-20261108.log；D:/tmp/ironoath-2476-final-table-20261108.log；D:/tmp/ironoath-2476-final-pwsh-diff-check-result-20261108.log；D:/tmp/ironoath-2476-final-git-bash-wrapper-20261108.log | 未改守卫/输出阈值；Node 20未复验；不夹带既存#2475差异提交；不推送。 |
+
+### 2026-11-08 · #2477 A2历史成员时长分摊静态实现
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| #2477 A2历史成员时长奖金分摊 | 主树候选583fca5e；未提交、未推送 | 用户已确认每人全战期额度按本人在该国的持久有效时长比例折算；`NationMembership`求交并按玩家汇总，`RankBoardService`用BigInteger向下取整，`RankEndpointTest`增加重入/国家归属间断/战后入盟/有效与无效重叠反例。JDK17 `mvn -f server/pom.xml -pl game-web -am -q -o -DskipTests compile` EXIT=1，Maven无法写`server/game-web/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst`，不能判断源码编译结果；有界`git diff --check` EXIT=0；`check-checklist-table.sh` EXIT=1，9/9 fixtures未进入内容判据，Node `mkdtemp`在用户Temp目录返回`EPERM` | `docs/parallel/A-war-awards.md`；`server/game-web/src/main/java/com/ironoath/web/nation/NationMembership.java`；`server/game-web/src/main/java/com/ironoath/web/rank/RankBoardService.java`；`server/game-web/src/test/java/com/ironoath/web/RankEndpointTest.java` | A/B测试未编译/执行；Mongo URI缺失；隔离Maven仓未建；不得用受拒的target写路径绕过；收口清单未新增本格；B/C未验收。
+
+### 2026-11-08 · #2478 原构建重试和队列备份仍未通过
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| #2478 验证/写入资源确认 | 主树候选583fca5e；未提交、未推送 | 用户确认权限恢复后重跑原JDK17 `game-web -am -DskipTests compile`仍EXIT=1，Maven仍无法保存`createdFiles.lst`；Docker `docker ps`被`permission denied while trying to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine`拒绝，未访问容器；`IRONOATH_TASK_M2`与`IRONOATH_TASK_MONGO_URI`仍unset；队列备份原路径重试仍`Permission denied` | 本轮Maven与Docker工具返回；无运行时截图 | 未编译测试/未连Mongo/未改容器；队列及`收口清单.md`未改；不绕过被拒路径；A/B/C全验收、提交与推送未做。
+
+### 2026-11-09 · #2479 A4调用点与隔离核心测试初始化
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| #2479 A4静态调用点与M2测试初始化 | 主树候选583fca5e；未提交、未推送 | `grep settleIfExpired(`全仓扫描仅两处生产调用，均在`server/game-web/src/main/java/com/ironoath/web/service/WarAppService.java:158,373`并路由到统一发奖/恢复方法。JDK17.0.12下以用户授权的`D:\Java\maven\m2-ironoath-a-20261109`运行`mvn -Dmaven.repo.local="$IRONOATH_TASK_M2" -Dstyle.color=never -f server/pom.xml -pl game-core -am test` EXIT=1，Maven在测试前报`Could not create local repository at D:\Java\maven\m2-ironoath-a-20261109`；无测试执行。A2后`game-web`编译仍于`target/.../createdFiles.lst`写入失败EXIT=1，非源码编译结果 | 本轮只读调用点扫描、Maven实际错误；无截图（非UI任务） | A2/A3测试未编译/执行；Mongo URI缺失、Docker named pipe拒绝；队列备份与checklist门仍阻塞；未更新收口清单、未提交/推送。
+
+### 2026-11-09 · #2480 第二个隔离M2路径与C线静态状态
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| #2480 备用M2初始化与C写域核对 | 主树候选583fca5e；未提交、未推送 | 用户允许更换M2路径后，只读确认`C:\Users\Admin\.m2\ironoath-task-a-20261109`不存在，再以JDK17.0.12运行`mvn -Dmaven.repo.local="$IRONOATH_TASK_M2" -Dstyle.color=never -f server/pom.xml -pl game-core -am test` EXIT=1：`Could not create local repository at C:\Users\Admin\.m2\ironoath-task-a-20261109`，测试未启动。C worktree正确路径复核5文件，364 insertions/17 deletions，`git diff --check` EXIT=0；仍无C编译/测试结果。队列备份在用户恢复权限后原路径/原工具重试仍Permission denied。 | Maven实际错误、C worktree状态与diff-check；无截图（非UI任务） | 不再试第三个M2路径；Mongo URI缺失、Docker named pipe未授权访问；队列未编辑，B未激活；`收口清单.md`未追加，所有源码未提交/推送。
+
+
+### 2026-11-09 · #2481 D盘权限根因诊断受执行器阻断
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| #2481 D:\\Java\\maven ACL诊断待执行 | 主树候选583fca5e；未提交、未推送 | 用户批准权限诊断/修复范围仅`D:\\Java\\maven`。所选ACL技能脚本无只读模式，获准命令会在范围内修复其证明的目录权限问题、移除显式应用包访问项，留备份与回滚。PowerShell 7入口`C:\\Users\\Admin\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe`此前报`ENOENT`；常见PS7安装目录检查均不存在。未运行脚本、未改变ACL；不切换到PowerShell 5或其它shell | 技能契约与当前`glob`结果 | 需可用PowerShell 7入口后再执行已批准的单目录命令；M2/Mongo测试、队列备份、B/C、收口清单、本地提交/推送仍未完成。
+| #2482 ACL报告目录拒绝导致停止 | 主树候选583fca5e；未提交、未推送 | 用户提供的PowerShell 7在获批`D:\Java\maven`范围运行一次：`-Path`/`-AllowRoot`为`D:\Java\maven`，`-Out`为`D:\Java\maven\acl-repair-20261109`。`prepare_report`创建目录被拒：`Access to the path 'D:\Java\maven\acl-repair-20261109' is denied.`，EXIT=1；`FIXED=0, GRANTED=0, REFUSED=0, RESTORED=0`、`rollback=not-needed`、`report=null`、`nextAction=stop`。脚本未读/更改ACL | PowerShell 7实际运行回执；无报告文件（报告目录创建失败） | 按技能停止，不换路径/工具/重试；未诊断Maven仓ACL根因；A2/A3测试未执行，M2/Mongo、队列、B/C、收口清单及提交/推送仍未完成。 |
+| #2483 隔离M2目录存在但子路径写入失败 | 主树候选583fca5e；未提交、未推送 | D盘候选目录只读发现后，以JDK17.0.12和Git Bash运行`mvn -Dmaven.repo.local="$IRONOATH_TASK_M2" -Dstyle.color=never -f server/pom.xml -pl game-core -am test`，`CORE_TEST_EXIT=1`；Maven未能创建`spring-boot-dependencies-3.2.5.pom.lastUpdated`所需父目录，`.pom.part.lock`报路径不存在。测试未启动；无源码通过/失败结论 | Maven实际输出、原始退出码；无截图（非UI任务） | 不尝试第三个M2路径或其它写入通道；Mongo URI缺失、ACL诊断已按停止判据结束，队列/收口清单/提交/推送未完成。 |
+| #2484 后续ACL授权不构成可执行写入 | 主树候选583fca5e；未提交、未推送 | 用户m04296允许联网与申请ACL权限；#2482诊断在ACL读取前因报告目录写入失败并返回`nextAction=stop`，技能要求停止，审批提示亦不可用。未重跑、未换通道、未改ACL | 用户授权与ACL脚本实际回执；无ACL报告 | Maven子目录写入、队列备份仍被拒；无A类测试执行，未提交/推送。 |
+| #2485 宿主未提供ACL权限修复能力 | 主树候选583fca5e；未提交、未推送 | `ops_discover_tools`检索ACL/授权后仅选择`ops_inspect_local_file`、`ops_replace`、`ops_write_file`，没有ACL检查/修复接口；未运行文件写工具改变权限，ACL仍未读取/修改 | capability discovery回执；无权限修改 | 不重跑已停止的ACL脚本，不用文件工具绕过；M2/Mongo、队列备份、A验证与B/C仍待。 |
+| #2486 C生产回调拒绝日志去除请求订单号 | 主树候选583fca5e；C worktree基线583fca5e；未提交 | `PayController.callback`拒绝分支日志由带`req.orderId()`改为仅记录固定政策原因；回读确认没有请求订单号；C五文件当前363 insertions/17 deletions；该文件`git diff --check` EXIT=0。仅静态检查，未编译/测试 | C源码读回、定向grep、限定文件`git diff --check`；无截图（非UI任务） | C编译/测试、A类测试仍未完成；M2/Mongo与ACL权限问题未解；队列/收口清单仍未补；未合并/提交/推送 |
+| #2487 B迁都R0只读复核，当前PREREQ | 主树候选583fca5e；B未实施；未提交、未推送 | 复读B卡/ownership/README、B13裁决、`role_permission`、`NationPermissions`、`PlayerRepository`与`PlayerInitService`：仅确认现有权限档与持久`lastLoginAt`来源；未写接口/代码或冻结未决规则 | 只读源码/文档证据；无测试、无截图（非UI任务） | `MOVE_CAPITAL`权限映射与KING/Officer边界、lastLogin缺档/0/时钟异常、坐标/费用/冷却仍需R0冻结；队列备份/owner登记被写入拒绝阻断；A/C测试与全验收仍未完成 |
+| #2489 A线定向回归与Mongo计划持久化 | 主树候选583fca5e；未提交、未推送 | 专属M2及隔离Mongo现可用；`game-web -am -DskipTests compile`编译815个主源码BUILD SUCCESS；WarAwardPlanTest 5/0/0/0；WarEndpointTest 28/0/0/0；RankEndpointTest 20/0/0/0；War/Season/Social等价与排名合并104/0/0/0、0跳过；新增Mongo计划/完成标记重开Store往返；Node20 `check.sh`静态51、客户端1420/0/0、Node76/0、Python28/0、探针84通过；台账9/9、append-only 5629行保留、doc-counts51。初次合并RED 103/2后修正旧倍增预期及重复国家名fixture，复跑全绿。 | D:/tmp/ironoath-a-war-store-rank-20261109T0220.log；D:/tmp/ironoath-a-war-plan-store-20261109T0217.log；D:/tmp/ironoath-a-rank-only-20261109T0214.log；D:/tmp/ironoath-a-check-20261109T0222.log；游戏核心与端点Surefire报告；本轮Maven编译回执 | 未跑整仓`test.sh`、运行时探针；WarAppService与双Mongo存储跨进程部分投递联合恢复及Q独立冻结SHA验收仍待；B-R0仍PREREQ、C支付线未验；不触碰真实玩家库、不推送。 |

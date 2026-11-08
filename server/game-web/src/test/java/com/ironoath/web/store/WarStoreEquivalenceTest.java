@@ -28,6 +28,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.core.nation.WarAwardPlan;
 import com.ironoath.core.nation.WarScoreBoard;
 import com.ironoath.web.nation.WarRulesAssembler;
 import com.ironoath.web.nation.WarStore;
@@ -148,6 +149,49 @@ class WarStoreEquivalenceTest {
             assertThat(restored.targetNationId()).as("%s must not infer a target from nation row order", label)
                     .isEqualTo("target-nation");
             assertThat(restored.toSnapshot().targetNationId()).isEqualTo("target-nation");
+        }
+    }
+
+    @Test
+    @DisplayName("冻结的国战奖分计划与完成标记经过内存/Mongo落盘、重开后保持原样")
+    void frozenWarAwardPlanAndCompletionMarkerSurviveRoundTripOnBothStores() {
+        long settledAt = T0 + rules.rules().durationMillis();
+        WarAwardPlan plan = new WarAwardPlan(1, T0, "season-archive-test", List.of(
+                new WarAwardPlan.Member("player-a", "成员甲", 31L),
+                new WarAwardPlan.Member("player-b", null, 7L)));
+
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            WarScoreBoard active = siegePair(T0, "n1", "n2");
+            active.recordKill("n1", "player-a", 100L);
+            assertThat(store.insertIfNoneActive(active)).as("%s 建立同一待测战事", label).isTrue();
+
+            WarStore.Settlement settlement = store.settleIfExpired(settledAt).orElseThrow();
+            assertThat(settlement.settledNow()).as("%s 必须落盘一次终局", label).isTrue();
+            WarScoreBoard settled = settlement.board();
+            settled.freezeSeasonAwardPlan(plan);
+            store.save(settled);
+
+            WarStore afterFreezeReader = store instanceof MongoWarStore ? newMongoStore() : store;
+            WarScoreBoard afterFreeze = afterFreezeReader.findByStartedAt(T0).orElseThrow();
+            assertThat(afterFreeze.seasonAwardPlan())
+                    .as("%s 新Store重读仍保留逐人、逐名、逐分冻结计划", label)
+                    .isEqualTo(plan);
+            assertThat(afterFreeze.seasonAwardedAt())
+                    .as("%s 计划已存但投递未完成时不能伪造完成标记", label)
+                    .isNull();
+
+            long awardedAt = settledAt + 1L;
+            afterFreeze.markSeasonAwarded(awardedAt);
+            afterFreezeReader.save(afterFreeze);
+            WarStore afterCompleteReader = store instanceof MongoWarStore ? newMongoStore() : afterFreezeReader;
+            WarScoreBoard completed = afterCompleteReader.findByStartedAt(T0).orElseThrow();
+            assertThat(completed.seasonAwardPlan())
+                    .as("%s 标记完成后不能丢失原计划", label)
+                    .isEqualTo(plan);
+            assertThat(completed.seasonAwardedAt())
+                    .as("%s 新Store重读保留投递完成时刻", label)
+                    .isEqualTo(awardedAt);
         }
     }
 

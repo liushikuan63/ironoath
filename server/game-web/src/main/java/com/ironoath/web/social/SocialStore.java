@@ -48,6 +48,14 @@ public interface SocialStore {
         }
     }
 
+    /** A player's historical interval inside a named alliance, using [fromAt, untilAt). */
+    record AllianceMemberEpoch(String playerId,long fromAt,long untilAt) {
+        public AllianceMemberEpoch {
+            if(playerId==null || playerId.isBlank() || fromAt<0 || untilAt<fromAt)
+                throw new IllegalArgumentException("联盟历史成员时间段无效");
+        }
+    }
+
     /** 一条聊天记录。 */
     record ChatMessage(String messageId, String channel, String senderId, String senderName,
                        String content, long sentAt) {
@@ -182,6 +190,14 @@ public interface SocialStore {
 
     /** Historical alliance membership for lazy resource settlement; implementations must retain closed intervals. */
     default List<AllianceMembershipEpoch> allianceMembershipEpochs(String playerId) {
+        return List.of();
+    }
+
+    /**
+     * All retained membership epochs for one alliance, including closed and disbanded-alliance history.
+     * Results are stable by {@code fromAt}, then {@code playerId}; intervals are half-open.
+     */
+    default List<AllianceMemberEpoch> allianceMemberEpochs(String allianceId) {
         return List.of();
     }
 

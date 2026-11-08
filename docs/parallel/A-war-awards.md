@@ -1,26 +1,27 @@
 # A线：国战奖分恢复与有效时长分摊
 
 **目标**：让所有惰性结算入口都能从持久计划恢复奖分，重复投递不重复入榜；固定bonus依已裁的历史有效成员时长比例分摊。
-**当前状态**：任务包已编制，未分配实际owner、未启动源码实施。依赖 [协同入口R0](./README.md)；接口冻结前只做现有代码取证与测试准备。
+**当前状态**：COORD接手A线；A-R0历史反查、A1/A2/A3/A4候选均在主树未提交。JDK17的`game-web -am -DskipTests compile`成功编译815个主源码；`WarAwardPlanTest` 5/0/0/0、`WarEndpointTest` 28/0/0/0、`RankEndpointTest` 20/0/0/0；War/Season/Social存储等价与排名合并批次104/0/0/0。新增Mongo War计划往返用例后`WarStoreEquivalenceTest`为45/0/0/0。使用任务专属M2与仅绑定127.0.0.1:27028的一次性Mongo，未触碰共享`mongo27`。A2遵循已裁的每人全战期额度按其历史有效成员时长折算；完整整仓测试、跨WarAppService+双Mongo存储恢复与Q独立验收仍未完成。
 **规格**：[B13](../../B13_国家与国战.md) #2459/#2461/#2473、[开发包§零](../../待完善收口_VibeCoding开发包.md#current-execution)。技术栈沿当前Java17/Maven与内存/Mongo双实现。
 
 ## 写入边界
 
-精确路径读取 [ownership.json](./ownership.json) 的`tasks.A`；只写这些源码/测试及本卡。主要是`WarAppService`、`RankBoardService`、`NationMembership`、War/Season存储和Social历史读取；拟新增`WarAwardPlan`及其测试只是一种可用承载，最终结构先在R0登记。
+精确路径读取 [ownership.json](./ownership.json) 的`tasks.A`；只写这些源码/测试及本卡。主要是`WarAppService`、`RankBoardService`、`NationMembership`、War/Season存储和Social历史读取。`WarAwardPlan`及测试登记在`game-core/nation`：`WarScoreBoard.Snapshot`属于game-core，核心模块不能反向依赖game-web。
 
 `Nation`、`NationStore`及Mongo/内存保存、`NationAppService`、`SocialAppService`、共享国家测试由COORD写。不要为了取历史而把整个国家/社交模块认领。B的迁都/March文件只读；契约与生成物不能自行改。
 
 ## 已核事实与接口依赖
 
 - 两层成员历史**已经存在**：SocialStore保存玩家↔联盟历史，NationStore保存联盟↔国家历史。`NationMembership.playerIdsOf`目前取当前名单；`allAlliances()`排除已解散联盟，不能把当前集合当全部历史受益人。
-- 先核历史反查是否覆盖退出、踢出、解散、跨国与重入，再求两层区间的有效交集。建盟/审核加入/踢出/退出已有时间记录，解散已有历史归档；只有有效反证证明缺口时才申请COORD修改入口，不新造第二套历史日志。
-- R0需给出国家历史读取签名、起止时间边界/旧记录行为、War/Season持久计划与回执关系。使用原War的持久赛季事实，缺失时fail closed，不能回退到重试当日赛季/名单。
-- A输出可恢复奖分计划、确定性分配和幂等落榜；B消费国家状态时必须保持历史及既有War载荷不被迁都覆盖。接口改动重新走COORD，不在两线各自发明兼容方式。
+- 已核历史反查覆盖退出、踢出、解散、跨国与重入的数据来源：建盟/审核加入/踢出/退出有时间段，解散后Mongo原`_id`档案保留且内存历史Map不随联盟对象删除；没有可辩护历史起点的旧成员不补当前名单/重试时刻基线，不新造第二套历史日志。
+- **A-R0历史读取契约（签名/边界已冻结；实现和等价断言已加入但未test-compile/run）**：在`SocialStore`新增`record AllianceMemberEpoch(String playerId,long fromAt,long untilAt)`与`List<AllianceMemberEpoch> allianceMemberEpochs(String allianceId)`。返回该联盟保留的所有历史成员区间，含已解散归档；按`fromAt`、`playerId`确定性排序，区间为`[fromAt,untilAt)`，`Long.MAX_VALUE`表示尚未闭合。Mongo按联盟原`_id`读归档文档，不走过滤已解散的`allianceById`/`allAlliances()`；内存版从保留的玩家历史映射反查。旧未知成员仅在建立durable baseline后从观察时刻计时；`NationStore.allianceNationEpochs(String allianceId)`复用现有接口。
+- **A-R0恢复契约**：计划冻结进`WarScoreBoard.Snapshot`；`WarAppService`先存计划再用`SeasonBoardStore.recordScopedIncrement`投递，主键`sourceId=operationId=war_<startedAt>`、`sequence=1`；所有成员投递和独立回读成功后才写`seasonAwardedAt`。`warStatus`与`declare`均恢复同一计划，缺少原结算赛季时fail closed，不回退重试当天赛季/名单。
+- A输出可恢复奖分计划、确定性分配和幂等落榜；B消费国家状态时必须保持历史及既有War载荷不被迁都覆盖。共享接口改变重新走COORD，不在两线各自发明兼容方式。
 
 ## 分格与可失败判据
 
 - [ ] **A1 复现首红**：现跑`WarEndpointTest.settledWarRetriesFailedSeasonAwardFromDurableState`和`declaringSettlesTheExpiredWarWithoutAPanelRead`。保留真实断言及最终退出码；2026-10-25历史RED不是本轮结果。
-- [ ] **A2 历史区间与分配**：覆盖加入/退出/重入、联盟退国/解散、区间交集、零有效时长、同一事实不同读取顺序。固定bonus按已裁比例，整数舍入及余数规则必须确定、总量守恒且重放一致；不改变奖励总额。尚缺产品含义仅停该分支并记录，不猜数。
+- [ ] **A2 历史区间与分配（用户已确认基数）**：覆盖加入/退出/重入、联盟退国/解散、区间交集、零有效时长、同一事实不同读取顺序。每名成员按其本人在该国的有效时长折算自己的全战期bonus；有效区间先按玩家合并，再按`floor(bonus × memberMillis / warDurationMillis)`向下取整，小数余数不转给其他成员；不改变每人全战期额度。源码和反例测试已编辑，尚未编译/执行；无Mongo URI不能运行集成测试。
 - [ ] **A3 持久恢复**：在SETTLED落盘后、首人落榜后、部分成功后故障；换新Store实例重读可继续。旧赛季和受益人不漂移；重复请求/并发重试不给双份分。不能用重放`accumulate`代替幂等凭证。
 - [ ] **A4 生产接线**：读面板和再次宣战都进入同一恢复机制；计数所有`settleIfExpired`生产调用点，拒绝只修一个入口。关联Rank/War/Season与历史存储测试通过后交COORD集成。
 
@@ -43,4 +44,6 @@ mvn -Dmaven.repo.local="${IRONOATH_TASK_M2:?}" -Dironoath.test.mongo.uri="${IRON
 
 | 格 | 状态 | 基线/候选 | 验证与证据 | 未做/下一步 |
 |---|---|---|---|---|
-| A-R0 | NOT_STARTED | 文档基线5fbf4e4c；无候选 | 仅有本次只读分工，无本线测试结果 | 先核原owner及共享历史接口；原两条RED未在本轮执行 |
+| A-R0 | IN_PROGRESS | 文档基线5fbf4e4c；主树候选583fca5e | `SocialStore.allianceMemberEpochs`已接内存/Mongo历史反查；`SocialStoreEquivalenceTest`现跑30/0/0/0，Mongo与内存用例全执行；A轮测试资源已登记为专属M2与自有临时Mongo | 仍待整批集成及Q独立验收；历史成员计算的Mongo服务级联动未与War投递放在同一测试中 |
+| A1/A3/A4 | IN_PROGRESS | 主树候选583fca5e；WarScoreBoard、RankBoardService、WarAppService、WarAwardPlan及端点测试仍未提交 | 生产`settleIfExpired`仅有`WarAppService.java:158,373`两处，均进统一恢复出口；现跑`WarEndpointTest` 28/0/0/0（含两条历史RED到GREEN），`RankEndpointTest` 20/0/0/0；ScopedIncrement恢复/重放用例与Mongo计划/完成标记新Store重读均有定向GREEN | 仍需用真实`MongoWarStore`+`MongoSeasonBoardStore`联合驱动服务级部分投递后重启恢复，并由Q在冻结候选上独立复核；未跑整仓`check.sh`/`test.sh` |
+| A2 | IN_PROGRESS | #2473及#2477用户裁决；每人全战期额度按本人有效成员时长比例折算 | `RankEndpointTest`现跑20/0/0/0，覆盖历史交集、重入后合并取整、国家归属间断、战后新成员排除、零时长及有效期重叠拒绝；存储等价批次同时验证内存/Mongo成员区间读回 | 端到端War结算与Mongo历史读取目前由分层测试组合证明；仍需Q对冻结候选做跨国家历史/重启交叉验收，不能据局部GREEN标完整B13完成 |

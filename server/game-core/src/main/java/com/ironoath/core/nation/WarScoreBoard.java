@@ -111,6 +111,42 @@ public final class WarScoreBoard {
     private Long siegeStartedAt;
     /** 窗口结束前未进入围城而作废；与正常围城结算分开，不能发赛季分。 */
     private boolean abandonedWithoutSiege;
+    /**
+     * 真正结算（围城打完）发生的服务端时刻；旧档与未结算的板子为 {@code null}。
+     *
+     * <p><b>为什么结算时刻必须落盘，而不是调用方记在局部变量里</b>：赛季分要发给
+     * <b>结算时所在的那个赛季</b>。原先这个时刻只活在 {@code WarAppService} 的栈上，
+     * 一旦发奖那一步失败（BUG #2459），下一次读能拿到的只有「现在」—— 用重试当天的赛季
+     * 给一场旧仗发分，会把分记到一个玩家根本没打过的赛季榜上，而且不像错误、像正常发放。
+     * 落盘之后，重试读到的是同一个时刻、同一个赛季（B13 #2460「只认 durable 事实」那条）。
+     *
+     * <p>它同时也是「这一场到底有没有真正结过」的第二个凭证：{@link #phase()} 为
+     * {@code SETTLED} 有两种来路（围城打完 / 筹备逾期作废），只有前者带结算时刻。
+     * 但仍要看 {@link #abandonedWithoutSiege()} —— 作废那一支刻意不带时刻，两者互为反证。
+     */
+    private Long settledAt;
+    /**
+     * 这一场的赛季分<b>投递完成</b>的服务端时刻；没投递过、或投递做到一半失败，都是 {@code null}。
+     *
+     * <p><b>为什么"发完没发完"必须落盘</b>：{@link #phase()} 为 {@code SETTLED} 只说明分算完了，
+     * 不说明分进了赛季榜 —— 那是<b>另一次存储写入</b>（{@code SeasonBoardStore}），两个库不在一个事务里。
+     * 原先发奖条件是「这一次调用把它结掉了」（{@code Settlement#settledNow}），于是进程崩在两次写之间以后，
+     * 这句话永远是假的，那一场的分就<b>再也发不出去</b>，而且不报错（BUG #2459）。
+     * 把它落盘以后，判据变成"这板子结过账、且还没投递过"，重试才有立足点。
+     *
+     * <p>它<b>不</b>单独充当幂等凭证：真正的防重发是赛季榜那一侧按 {@code (playerId, 战事主键)} 的
+     * 作用域增量回执（见 {@code SeasonBoardStore#recordScopedIncrement}）。这个时刻只负责
+     * 「已经发完了就别再算一遍」，并在故障复盘时回答"到底发到哪一步"。
+     */
+    private Long seasonAwardedAt;
+    /**
+     * 这一场要发的赛季分清单；{@code null} 表示<b>还没算过</b>，空计划表示<b>算过了、这一场不发</b>。
+     *
+     * <p>两者不是一回事：前者要去算一遍，后者是一次已经下过的决定（赛季没开，或没人够门槛），
+     * 重试时不该再算。合并成一个 {@code null} 会让"判过不发"的那一场每次读面板都重算一遍，
+     * 而重算的输入里含着可热更的配置表与可改的昵称 —— 那正是 #2460 说的「不能拿重试当天的东西当原始依据」。
+     */
+    private WarAwardPlan seasonAwardPlan;
     /** 仓储读副本的版本，不进业务快照；旧副本不能覆盖后来写入的行军回执。 */
     private long repositoryVersion = -1L;
 
@@ -486,6 +522,8 @@ public final class WarScoreBoard {
         }
         settleOccupation(now);
         phase = Phase.SETTLED;
+        // 结算时刻与「结过账」同一次落盘：它是赛季分的季节来源，重试必须读到同一个值
+        settledAt = now;
 
         Map<String, Score> finalScores = new LinkedHashMap<>();
         String winner = capitalHolder;
@@ -523,6 +561,113 @@ public final class WarScoreBoard {
 
     public boolean abandonedWithoutSiege() {
         return abandonedWithoutSiege;
+    }
+
+    /**
+     * 真正结算（围城打完）发生的服务端时刻；筹备逾期作废与未结算都是 {@code null}。
+     *
+     * <p>调用方拿它去定「这一场该发哪个赛季的分」—— <b>用重试当天的时刻算赛季是错的</b>，
+     * 那会把奖励记到玩家没打过的赛季上（见字段注释）。为 null 时只有一个正确反应：不发，
+     * 而不是猜一个。
+     */
+    public Long settledAt() {
+        return settledAt;
+    }
+
+    /**
+     * 这一场的赛季分投递完成时刻；没投递过（含投递做到一半失败）为 {@code null}。
+     *
+     * <p>调用方据此判断「还要不要再发一次」。<b>非 null 只表示上一次投递跑完了，
+     * 不表示每一行都落库</b> —— 中途失败时它保持 null，重试由赛季榜那侧的作用域回执去重。
+     */
+    public Long seasonAwardedAt() {
+        return seasonAwardedAt;
+    }
+
+    /**
+     * 记下「这一场的赛季分已经投递完了」。
+     *
+     * <p><b>只允许在投递真的跑完之后调</b>，而且<b>必须随板子落盘</b>（{@code WarStore#save}）——
+     * 只改内存副本的话，下一次读拿到的还是旧档，重试照样会再算一遍。
+     *
+     * <p>重复调只有第一次生效：后来的调用不覆盖原时刻，那个时刻是「第一次跑完」的凭证，
+     * 覆盖它会让故障复盘失去"到底哪一次成功"这个读数。
+     */
+    public void markSeasonAwarded(long now) {
+        if (phase != Phase.SETTLED || abandonedWithoutSiege) {
+            throw new IllegalStateException("战事未真正结算，不能标记赛季分投递完成");
+        }
+        if (seasonAwardPlan == null) {
+            throw new IllegalStateException("国战奖分计划尚未定格，不能标记投递完成");
+        }
+        if (seasonAwardedAt == null) {
+            seasonAwardedAt = now;
+        }
+    }
+
+    /** 上一次算好并落盘的奖分计划；{@code null} 表示还没算过（不是"不发"）。 */
+    public WarAwardPlan seasonAwardPlan() {
+        return seasonAwardPlan;
+    }
+
+    /**
+     * 把这一场该发的分<b>定格</b>下来。只在 {@code seasonAwardPlan == null} 时接受新计划。
+     *
+     * <p><b>不接受覆盖是刻意的</b>：计划一旦落盘，它就是"这一场欠谁多少分"的唯一依据。
+     * 允许覆盖意味着改一次配置表或改一个昵称就能让已经投递了一半的那一场换一份载荷 ——
+     * 赛季榜那侧会把它判成「同代次原事件载荷冲突」而整场卡死，而症状只是"有的人没拿到分"。
+     *
+     * <p>要重算只有一个正当时机：故障之后发现这份计划本身就是错的（例如赛季 id 取自错误的时刻）。
+     * 那种情况下应当由人把这一格修好再发布，而不是让代码在运行时悄悄改写已发过一半的账。
+     *
+     * @throws IllegalStateException 计划已存在且与 {@code plan} 不同
+     */
+    public void freezeSeasonAwardPlan(WarAwardPlan plan) {
+        if (plan == null) {
+            throw new IllegalArgumentException("战事不能接受空计划：不发的意思是给一份 active()==false 的计划");
+        }
+        if (phase != Phase.SETTLED || abandonedWithoutSiege) {
+            throw new IllegalStateException("只有真正结算的战事才能冻结赛季分计划");
+        }
+        if (plan.warStartedAt() != startedAt) {
+            throw new IllegalArgumentException("国战奖分计划不属于本战事：plan.startedAt="
+                    + plan.warStartedAt() + " board.startedAt=" + startedAt);
+        }
+        if (seasonAwardPlan != null) {
+            if (!seasonAwardPlan.equals(plan)) {
+                throw new IllegalStateException("国战奖分计划已定格，不允许改写：startedAt="
+                        + seasonAwardPlan.warStartedAt() + " 已定格人数=" + seasonAwardPlan.size()
+                        + " 新计划人数=" + plan.size());
+            }
+            return;
+        }
+        seasonAwardPlan = plan;
+    }
+
+    /**
+     * 由<b>已结算</b>的这块板子重建结算结果。
+     *
+     * <p><b>为什么可以重建</b>：{@link #settle(long)} 返回的 {@link Result} 三个来源都在板上 ——
+     * 胜者是当时的 {@code capitalHolder}、名次表就是 {@link #snapshot()}、击杀数与全服目标也都是字段。
+     * 结算之后这些字段<b>不再被任何路径改动</b>（{@code settle} 第二次调直接抛），所以重建出来的是同一份。
+     *
+     * <p><b>为什么需要重建</b>：{@code Result} 原先只活在结算那一次调用的栈上。进程在「结算已落盘、
+     * 奖分还没发」之间停下，重启后没有任何地方能再产生它，于是那一场的分永远发不出去（BUG #2459）。
+     * 把结果当作可以从持久事实重算的派生值，而不是必须被传递的一等对象，这条路才闭合。
+     *
+     * @throws IllegalStateException 板子还没结算 —— 那时没有"结果"可言，不猜
+     */
+    public Result settledResult() {
+        if (phase != Phase.SETTLED || abandonedWithoutSiege) {
+            throw new IllegalStateException("战事未真正结算，没有可重建的结算结果：phase=" + phase
+                    + " abandonedWithoutSiege=" + abandonedWithoutSiege);
+        }
+        Map<String, Score> finalScores = new LinkedHashMap<>();
+        for (Map.Entry<String, long[]> entry : scores.entrySet()) {
+            long[] parts = entry.getValue();
+            finalScores.put(entry.getKey(), new Score(parts[0], parts[1], parts[2]));
+        }
+        return new Result(capitalHolder, finalScores, totalKills, serverGoalReached());
     }
 
     /** 新战事从入围城起算；旧存档缺字段时保留历史宣战锚点。仅在 SIEGE 时消费。 */
@@ -870,6 +1015,8 @@ public final class WarScoreBoard {
      *   <li>少 {@code siegeStartedAt}：新围城会退回宣战锚点，筹备久了就变成零秒战。</li>
      *   <li>少 {@code preparationExpiresAt}：新筹备会退回旧90分钟或永久占住单场名额；</li>
      *   <li>少 {@code abandonedWithoutSiege}：作废战事会被误当正常结算并发赛季分。</li>
+      *   <li>少 {@code seasonAwardPlan}：故障恢复会按重试时的配置、名单或昵称重算，导致同一回执载荷冲突。</li>
+      *   <li>少 {@code seasonAwardedAt}：已发完的战事会被误认为待恢复；赛季榜作用域回执仍能防止双加，但会重复走流程。</li>
      * </ul>
      *
      * <p><b>{@code rules} 刻意不进快照</b>，与 {@code Nation.Snapshot} 同一条理由：规则来自配置表且会热更，
@@ -896,7 +1043,50 @@ public final class WarScoreBoard {
                            List<String> goalClaimed, long totalKills,
                            List<MarchFatigueReceipt> marchFatigueReceipts, Long siegeStartedAt,
                            Long preparationExpiresAt, Boolean abandonedWithoutSiege,List<BattleEvent> battleEvents,
-                           List<BattleReservation> pendingBattleReservations) {
+                           List<BattleReservation> pendingBattleReservations,
+                           /* 真正结算时刻；旧快照缺失时保持 null，不猜结算赛季 */
+                           Long settledAt,
+                           /* 赛季分投递完成时刻；旧快照缺失时保持 null，触发幂等恢复 */
+                           Long seasonAwardedAt, WarAwardPlan seasonAwardPlan) {
+
+        /** 旧19字段快照：计划后加；缺失按「尚未定格」处理，保留恢复机会。 */
+        public Snapshot(long startedAt, Phase phase, String initiatorNationId, String targetNationId,
+                        List<NationRow> nations, String capitalHolder, long capitalHeldSince,
+                        Map<String, Long> fatigue, Map<String, Long> playerKills, List<String> goalClaimed,
+                        long totalKills, List<MarchFatigueReceipt> marchFatigueReceipts, Long siegeStartedAt,
+                        Long preparationExpiresAt, Boolean abandonedWithoutSiege, List<BattleEvent> battleEvents,
+                        List<BattleReservation> pendingBattleReservations, Long settledAt, Long seasonAwardedAt) {
+            this(startedAt, phase, initiatorNationId, targetNationId, nations, capitalHolder, capitalHeldSince,
+                    fatigue, playerKills, goalClaimed, totalKills, marchFatigueReceipts, siegeStartedAt,
+                    preparationExpiresAt, abandonedWithoutSiege, battleEvents, pendingBattleReservations,
+                    settledAt, seasonAwardedAt, null);
+        }
+
+        /** 旧18字段快照：结算时刻之外也缺投递标记与计划；按未投递/未定格恢复。 */
+        public Snapshot(long startedAt, Phase phase, String initiatorNationId, String targetNationId,
+                        List<NationRow> nations, String capitalHolder, long capitalHeldSince,
+                        Map<String, Long> fatigue, Map<String, Long> playerKills, List<String> goalClaimed,
+                        long totalKills, List<MarchFatigueReceipt> marchFatigueReceipts, Long siegeStartedAt,
+                        Long preparationExpiresAt, Boolean abandonedWithoutSiege, List<BattleEvent> battleEvents,
+                        List<BattleReservation> pendingBattleReservations, Long settledAt) {
+            this(startedAt, phase, initiatorNationId, targetNationId, nations, capitalHolder, capitalHeldSince,
+                    fatigue, playerKills, goalClaimed, totalKills, marchFatigueReceipts, siegeStartedAt,
+                    preparationExpiresAt, abandonedWithoutSiege, battleEvents, pendingBattleReservations,
+                    settledAt, null);
+        }
+
+        /** 旧17字段快照：结算时刻是后加的，缺它就当「没留下结账凭证」，读时兼容、不回写。 */
+        public Snapshot(long startedAt, Phase phase, String initiatorNationId, String targetNationId,
+                        List<NationRow> nations, String capitalHolder, long capitalHeldSince,
+                        Map<String, Long> fatigue, Map<String, Long> playerKills, List<String> goalClaimed,
+                        long totalKills, List<MarchFatigueReceipt> marchFatigueReceipts, Long siegeStartedAt,
+                        Long preparationExpiresAt, Boolean abandonedWithoutSiege, List<BattleEvent> battleEvents,
+                        List<BattleReservation> pendingBattleReservations) {
+            this(startedAt, phase, initiatorNationId, targetNationId, nations, capitalHolder, capitalHeldSince,
+                    fatigue, playerKills, goalClaimed, totalKills, marchFatigueReceipts, siegeStartedAt,
+                    preparationExpiresAt, abandonedWithoutSiege, battleEvents, pendingBattleReservations,
+                    null, null);
+        }
 
         /** 旧战略回执快照：没有闭战预留，读时兼容，不迁移回写。 */
         public Snapshot(long startedAt,Phase phase,String initiatorNationId,List<NationRow> nations,
@@ -904,7 +1094,8 @@ public final class WarScoreBoard {
                         List<String> goalClaimed,long totalKills,List<MarchFatigueReceipt> marchFatigueReceipts,Long siegeStartedAt,
                         Long preparationExpiresAt,Boolean abandonedWithoutSiege,List<BattleEvent> battleEvents) {
             this(startedAt,phase,initiatorNationId,null,nations,capitalHolder,capitalHeldSince,fatigue,playerKills,goalClaimed,
-                    totalKills,marchFatigueReceipts,siegeStartedAt,preparationExpiresAt,abandonedWithoutSiege,battleEvents,List.of());
+                    totalKills,marchFatigueReceipts,siegeStartedAt,preparationExpiresAt,abandonedWithoutSiege,battleEvents,List.of(),
+                    null,null);
         }
 
         /** 旧战略回执快照：没有闭战预留；缺 targetNationId 时保留历史未知，不推断参战顺序。 */
@@ -913,7 +1104,8 @@ public final class WarScoreBoard {
                         List<String> goalClaimed,long totalKills,List<MarchFatigueReceipt> marchFatigueReceipts,Long siegeStartedAt,
                         Long preparationExpiresAt,Boolean abandonedWithoutSiege,List<BattleEvent> battleEvents) {
             this(startedAt,phase,initiatorNationId,targetNationId,nations,capitalHolder,capitalHeldSince,fatigue,playerKills,goalClaimed,
-                    totalKills,marchFatigueReceipts,siegeStartedAt,preparationExpiresAt,abandonedWithoutSiege,battleEvents,List.of());
+                    totalKills,marchFatigueReceipts,siegeStartedAt,preparationExpiresAt,abandonedWithoutSiege,battleEvents,List.of(),
+                    null,null);
         }
 
         /** 旧14字段快照：没有战略战斗回执，读时兼容，不迁移回写。 */
@@ -922,7 +1114,8 @@ public final class WarScoreBoard {
                         List<String> goalClaimed,long totalKills,List<MarchFatigueReceipt> marchFatigueReceipts,Long siegeStartedAt,
                         Long preparationExpiresAt,Boolean abandonedWithoutSiege) {
             this(startedAt,phase,initiatorNationId,null,nations,capitalHolder,capitalHeldSince,fatigue,playerKills,goalClaimed,
-                    totalKills,marchFatigueReceipts,siegeStartedAt,preparationExpiresAt,abandonedWithoutSiege,List.of(),List.of());
+                    totalKills,marchFatigueReceipts,siegeStartedAt,preparationExpiresAt,abandonedWithoutSiege,List.of(),List.of(),
+                    null,null);
         }
 
         public Snapshot(long startedAt, Phase phase, String initiatorNationId,
@@ -953,6 +1146,12 @@ public final class WarScoreBoard {
                 throw new IllegalArgumentException("targetNationId 不得为空白");
             }
             abandonedWithoutSiege = Boolean.TRUE.equals(abandonedWithoutSiege);
+            if (seasonAwardPlan != null && (phase != Phase.SETTLED || abandonedWithoutSiege)) {
+                throw new IllegalArgumentException("赛季分计划只能附在真正结算的战事上");
+            }
+            if (seasonAwardPlan != null && seasonAwardPlan.warStartedAt() != startedAt) {
+                throw new IllegalArgumentException("存档国战奖分计划与战事 startedAt 不匹配");
+            }
             nations = List.copyOf(nations == null ? List.of() : nations);
             fatigue = Collections.unmodifiableMap(new LinkedHashMap<>(
                     fatigue == null ? Map.of() : fatigue));
@@ -1003,7 +1202,8 @@ public final class WarScoreBoard {
         return new Snapshot(startedAt, phase, initiatorNationId, targetNationId, rows, capitalHolder, capitalHeldSince,
                 new LinkedHashMap<>(fatigue), new LinkedHashMap<>(playerKills),
                 List.copyOf(goalClaimed), totalKills, List.copyOf(marchFatigueReceipts.values()), siegeStartedAt,
-                preparationExpiresAt, abandonedWithoutSiege,List.copyOf(battleEvents.values()),List.copyOf(pendingBattleReservations.values()));
+                preparationExpiresAt, abandonedWithoutSiege,List.copyOf(battleEvents.values()),List.copyOf(pendingBattleReservations.values()),
+                settledAt, seasonAwardedAt, seasonAwardPlan);
     }
 
     /**
@@ -1031,6 +1231,11 @@ public final class WarScoreBoard {
                 snapshot.totalKills(), snapshot.preparationExpiresAt());
         board.siegeStartedAt = snapshot.siegeStartedAt();
         board.abandonedWithoutSiege = snapshot.abandonedWithoutSiege();
+        // 结算时刻只在「围城打完」那一支有值；作废档缺它是正确的，不是丢字段
+        board.settledAt = snapshot.settledAt();
+        // 投递标记缺它就当「没投递过」：旧档读出来能发一次，而赛季榜那侧的作用域回执挡住重发
+        board.seasonAwardedAt = snapshot.seasonAwardedAt();
+        board.seasonAwardPlan = snapshot.seasonAwardPlan();
         for (MarchFatigueReceipt receipt : snapshot.marchFatigueReceipts()) {
             MarchFatigueReceipt previous = board.marchFatigueReceipts.putIfAbsent(receipt.marchId(), receipt);
             if (previous != null && !previous.equals(receipt)) {

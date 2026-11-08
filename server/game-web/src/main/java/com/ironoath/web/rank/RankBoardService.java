@@ -1,5 +1,6 @@
 package com.ironoath.web.rank;
 
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -15,6 +16,7 @@ import com.ironoath.common.time.TimeService;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.web.bot.BotRegistry;
 import com.ironoath.core.nation.Nation;
+import com.ironoath.core.nation.WarAwardPlan;
 import com.ironoath.core.nation.WarScoreBoard;
 import com.ironoath.core.player.PlayerBrief;
 import com.ironoath.core.player.PlayerRepository;
@@ -28,6 +30,7 @@ import com.ironoath.web.dto.generated.RankSnapshotResp;
 import com.ironoath.web.dto.generated.RankType;
 import com.ironoath.web.nation.NationMembership;
 import com.ironoath.web.nation.NationStore;
+import com.ironoath.web.nation.WarStore;
 import com.ironoath.web.season.SeasonBoardStore;
 import com.ironoath.web.battle.CapturedStrategicBattle;
 import com.ironoath.web.battle.StrategicBattleKillPlan;
@@ -81,10 +84,9 @@ public class RankBoardService {
     private final SocialStore social;
     private final NationStore nations;
     /**
-     * 国战赛季分的三条 bonus 要按<b>国家花名册</b>给（胜国／参战国／发起国的<b>全体成员</b>，
-     * 不是只有打了人的那几个），而那一跳的唯一真源在这里 —— 不在本类自己写第二份
-     * （{@code NationMembership} 的类注释就是为这件事存在的：两个读者各写一遍，
-     * 先分叉的总是「没有联盟」与「有联盟但没入籍」这两种缺席怎么算）。
+     * 国战赛季分的三条bonus仍按参战/胜方/发起国给每名成员各自额度；受益时长只信
+     * {@link NationMembership#effectiveMemberMillisByPlayer} 的持久两层历史。这里不重写历史区间逻辑，
+     * 也不把每人额度改成国家共享池或回退重试当日花名册。
      */
     private final NationMembership membership;
     private final PlayerRepository players;
@@ -186,11 +188,15 @@ public class RankBoardService {
      * 分三次写就是三次原子写，而榜上那一行读起来仍然是合计 —— 见
      * {@code SeasonRulesAssembler.WarSeasonPoints#bonusOf}）。
      *
-     * <p><b>只有一个调用点，而且它必须保证"每场仗只调一次"</b>（{@code WarStore.Settlement#settledNow}）。
-     * 本方法走的是 {@code accumulate}（累加语义），调两次就是发两倍分。为什么不在这里再设一道幂等旗标：
-     * 那要把旗标写进战事存档，而存档的"少带一项就复活出假状态"这条刚在 2c 被钉过；
-     * 现在「结算转换只发生一次」是存储层临界区保证的、并且有用例钉住的更强事实，
-     * 就不该为它再造第二份真相（同 B23 §五「不造第二本账」那条裁决的形状）。
+     * <p><b>这个方法可以被重试了</b>（B13 #2459 / #2461）。原先它要求"每场仗只调一次"
+     * （靠 {@code WarStore.Settlement#settledNow}），因为走的是累加语义的 {@code accumulate}；
+     * 于是进程崩在"结算已落盘、奖分还没发"之间以后，那个条件永远为假，那一场的分再也发不出去、且不报错。
+     * 现在分成两步：{@link #freezeWarSeasonAward} 算出计划并定格进战事存档，
+     * {@link #deliverWarSeasonAward} 按计划投递，幂等凭证在赛季榜那侧的
+     * {@code (playerId, sourceId=战事主键)} 作用域增量回执上 —— 重复投递不加分，断在哪都从那儿继续。
+     *
+     * <p><b>赛季只认结算那一刻</b>，见 {@link #freezeWarSeasonAward}；取不到就发一份
+     * {@code active()==false} 的计划（fail closed），不拿重试当天的赛季顶替。
      *
      * <p><b>胜负的唯一来源是 {@code result}</b>（内核 {@code settle()} 那一次的返回值）：
      * 平分时 {@code winnerId} 为 null（内核刻意不按 id 字典序硬挑赢家），此时<b>只发参与分与发起加成、
@@ -199,13 +205,13 @@ public class RankBoardService {
      * 挡成一次抛）：{@code settledNow=false} 那一次压根不该走到这里。参战方全集也取自它，
      * 所以胜负与"这一场有哪些国家"是<b>同一次遍历</b>的产物，不存在两者对不上的窗口。
      *
-     * <p><b>三条 bonus 全为 0 时连花名册都不查</b>：那是一次为 0 的发奖要付两次读（国家档 + 整国成员），
+     * <p><b>三条 bonus 全为 0 时不查成员历史</b>：那是一次为 0 的发奖还要付Nation/Social历史读取，
      * 而这三条参数的<b>出厂值就是 0</b>（档位等 #756 拍板）。所以「为 0 就整段跳过」是这一格的一条判据，
      * 用例把它钉住了 —— 删掉那句短路，读数就会红。
      *
      * <p><b>名字一次批量读回，且只读投影</b>（{@code PlayerRepository#findBriefs}）：加了 bonus 之后
-     * 这条路一发奖就是<b>整国成员</b>，每人一次 {@code findByPlayerId} 会把"花名册那一跳已经批量"
-     * 这件事在下一跳原样还回去。用 {@code findBriefs} 而不是 {@code findByPlayerIds}：这里要的只有昵称，
+     * 历史区间先确定<b>实际受益人</b>，不需要按人调用 {@code findByPlayerId}
+     * 受益人昵称随后一次批量读取。用 {@code findBriefs} 而不是 {@code findByPlayerIds}：这里要的只有昵称，
      * 而整档里的资源表 / PVP 账本 / 科技 / 权益都是白搬白反序列化的字节
      * （那两条口的分工写在 {@code PlayerRepository} 的注释里）。读档为 null 时给 null 名字，
      * 由 {@link #displayNameOf} 那一份回退兜住 —— <b>不要在这里填 playerId</b>（红线：屏上不出现裸 id）。
@@ -213,9 +219,39 @@ public class RankBoardService {
      * @return 实际进账的人数（0 = 没发：赛季没开、没人打够门槛而且 bonus 又都是 0、或全是 Bot）
      */
     public int reportWarSeasonPoints(WarScoreBoard board, WarScoreBoard.Result result) {
-        String seasonId = seasonIdOrNull();
+        // 计划一旦定过格，就只重放那一份；不再重算。重算的输入里含着可热更的 bonus 档位与可改的昵称，
+        // 让它们在两次尝试之间变脸，会把已经投递了一半的那一场判成「同代次原事件载荷冲突」并卡死
+        // （那正是 B13 #2460 说的"不能拿重试当天的东西当原始依据"）。
+        WarAwardPlan plan = board.seasonAwardPlan();
+        if (plan == null) {
+            plan = freezeWarSeasonAward(board, result);
+            board.freezeSeasonAwardPlan(plan);
+        }
+        return deliverWarSeasonAward(plan);
+    }
+
+    /**
+     * 算这一场<b>该发什么</b>，但<b>不写任何账</b>（B13 #2459 / #2460 / #2461）。
+     *
+     * <p><b>赛季只认结算那一刻</b>：{@code board.settledAt()} 是 {@code settle(long)} 与
+     * {@code phase=SETTLED} 同一次落盘写下的时刻，进程在"结算已落盘、奖分还没发"之间停下之后，
+     * 重试读到的仍是同一个时刻、同一个赛季。原先这里取的是 {@code time.serverNow()}，
+     * 于是隔天重试会把昨天的仗记进今天的赛季 —— 不报错、看着像正常发放。
+     *
+     * <p><b>取不到就说取不到</b>：{@code settledAt == null}（本次改造之前就结掉的老档）、
+     * 或那一刻没落在任何赛季里，都返回一份 {@code active()==false} 的计划。
+     * 不去找"最接近的赛季"，也不拿当前赛季顶替 —— 分进错了赛季和分没发是一样重的账错，
+     * 但前者没人看得出来。
+     */
+    public WarAwardPlan freezeWarSeasonAward(WarScoreBoard board, WarScoreBoard.Result result) {
+        java.util.Objects.requireNonNull(board, "国战奖分计划必须带战事：赛季与受益人都从它来");
+        // 胜负来源只有一份：内核 settle() 那一次的返回值（第二次调它直接抛，积分也已定格）。
+        // 传 null 的调用方以为自己发了奖而实际没发，那是一次静默少发；抛出来才能在下一次探针里被看见。
+        java.util.Objects.requireNonNull(result,
+                "国战赛季分必须带结算结果：winnerId 与参战方都只能从 WarScoreBoard#settle 那一份拿");
+        String seasonId = board.settledAt() == null ? null : seasonIdOrNull(board.settledAt());
         if (seasonId == null) {
-            return 0;
+            return new WarAwardPlan(1, board.startedAt(), null, List.of());
         }
         SeasonRulesAssembler.WarSeasonPoints rules = assembler.warSeasonPoints();
         // 个人 → 这一场该进账的总分。LinkedHashMap：同一个人在击杀账和花名册里都出现时只留一行，
@@ -228,23 +264,27 @@ public class RankBoardService {
             }
         }
 
-        // 胜负来源只有一份：内核 settle() 那一次的返回值（第二次调它直接抛，积分也已定格）。
-        // 这里要求它非空而不是"没有就少发一档"—— 传 null 的调用方以为自己发了奖而实际没发，
-        // 那是一次静默少发；抛出来才能在下一次探针里被看见。
-        java.util.Objects.requireNonNull(result,
-                "国战赛季分必须带结算结果：winnerId 与参战方都只能从 WarScoreBoard#settle 那一份拿");
         String winnerId = result.winnerId();
         String initiatorId = board.initiatorNationId();
-        // result.scores() 的键集就是参战方全集，且行序与 winnerId 出自同一次遍历（两者不可能对不上）
+        // result.scores() 的键集就是参战方全集，且行序与 winnerId 出自同一次遍历（两者不可能对不上）。
+        // 每个配置值仍是「每名成员的全战期额度」：按该玩家在这个国家的持久有效时长折算，
+        // 不能把它改成每国一个共享池，也不能重试时回退到当前花名册。
+        long warDurationMillis = board.settledAt() - board.startedAt();
         for (String nationId : result.scores().keySet()) {
             long bonus = rules.bonusOf(nationId, winnerId, initiatorId);
             if (bonus <= 0L) {
                 continue;
             }
-            // 只在真的要发的时候才去捞这一国的花名册 —— 上面那句短路是一条判据，不是一句优化
-            Nation nation = nations.findById(nationId).orElse(null);
-            for (String playerId : membership.playerIdsOf(nation)) {
-                pending.merge(playerId, bonus, Long::sum);
+            // 全零短路是一条判据：既不读Nation，也不查联盟历史、玩家昵称或当前roster。
+            Nation nation = nations.findById(nationId).orElseThrow(() -> new IllegalStateException(
+                    "国战成员时长计算缺少参战国家持久历史：nationId=" + nationId));
+            Map<String, Long> memberMillis = membership.effectiveMemberMillisByPlayer(
+                    nation, board.startedAt(), board.settledAt());
+            for (Map.Entry<String, Long> member : memberMillis.entrySet()) {
+                long prorated = proratedMemberBonus(bonus, member.getValue(), warDurationMillis);
+                if (prorated > 0L) {
+                    pending.merge(member.getKey(), prorated, Long::sum);
+                }
             }
         }
 
@@ -258,19 +298,87 @@ public class RankBoardService {
             humans.add(row.getKey());
         }
         if (humans.isEmpty()) {
+            // 有人够门槛但没一个能进榜（全是 Bot）时，给一份"没人"的计划而不是 null：
+            // null 是"还没算过"，会让下一次读再算一遍。
+            return new WarAwardPlan(1, board.startedAt(), seasonId, List.of());
+        }
+        // 历史区间先确定实际受益玩家；昵称只通过一次 findBriefs 批量读取，不逐人取整档。
+        Map<String, PlayerBrief> briefs = players.findBriefs(humans);
+        List<String> sorted = new ArrayList<>(humans);
+        sorted.sort(Comparator.naturalOrder());
+        List<WarAwardPlan.Member> members = new ArrayList<>(sorted.size());
+        for (String playerId : sorted) {
+            members.add(new WarAwardPlan.Member(playerId,
+                    briefs.get(playerId) == null ? null : briefs.get(playerId).nickName(),
+                    pending.get(playerId)));
+        }
+        return new WarAwardPlan(1, board.startedAt(), seasonId, members);
+    }
+
+    /**
+     * 每人自己的全战期额度按有效成员时长折算，向下取整；小数余数不转给其他玩家。
+     *
+     * <p>区间已由 {@link NationMembership#effectiveMemberMillisByPlayer} 按玩家合并，
+     * 所以完整覆盖全战期者仍得到原额度，重入不会因分段次数多而丢余数。
+     */
+    private static long proratedMemberBonus(long memberBonus, long memberMillis, long warDurationMillis) {
+        if (memberBonus <= 0L || memberMillis <= 0L) {
+            return 0L;
+        }
+        if (warDurationMillis <= 0L || memberMillis > warDurationMillis) {
+            throw new IllegalArgumentException("国战成员bonus比例参数无效：memberMillis="
+                    + memberMillis + " warDurationMillis=" + warDurationMillis);
+        }
+        return BigInteger.valueOf(memberBonus)
+                .multiply(BigInteger.valueOf(memberMillis))
+                .divide(BigInteger.valueOf(warDurationMillis))
+                .longValueExact();
+    }
+
+    /**
+     * 把一份<b>已定格</b>的奖分计划投递进赛季榜（B13 #2459 / #2461）。
+     *
+     * <p><b>幂等凭证在赛季榜那一侧</b>：每个受益人一次 {@code recordScopedIncrement}，
+     * {@code sourceId} 是<b>战事主键</b>（{@code war_<开场时刻>}）—— 同一场仗再投一次，
+     * 只要载荷完全相同就是原样返回、不加分。所以这里可以放心地被重试：进程崩在"发了三个人"之后，
+     * 重启后再走一遍，那三个人不再加分，剩下的继续发完。
+     *
+     * <p>{@code delta} 用计划里的分数，{@code sequence} 恒为 1、{@code operationId} 与 {@code sourceId} 同值：
+     * 一场仗只有一个代次，不存在"这场仗的第二次操作"。{@code isScopedReplay} 里
+     * "新代次复用旧操作ID"那条是给战略战斗那种同一目标反复打的情形准备的，这里碰不到。
+     *
+     * <p><b>写后独立回读</b>：与 {@link #recordStrategicKills} 同一形状 —— 只信写返回的那一份不够，
+     * 还要单独 {@code scopedIncrementOf} 读回来比对。两处都对上才算这一人投递完成。
+     *
+     * @return 实际进账人数；{@code active()==false} 的计划返回 0 且不产生任何写入
+     */
+    public int deliverWarSeasonAward(WarAwardPlan plan) {
+        if (plan == null) {
+            throw new IllegalArgumentException("国战奖分投递必须有已定格计划：null 是「还没算过」，不是「不发」");
+        }
+        if (!plan.active()) {
             return 0;
         }
-        // 名字一次批量读回（只取投影，不搬整档）：这条路一发奖就是整国成员，
-        // 每人一次 findByPlayerId 会把"花名册那一跳已经批量"这件事在下一跳原样还回去。
-        Map<String, PlayerBrief> briefs = players.findBriefs(humans);
+        String sourceId = WarStore.documentIdOf(plan.warStartedAt());
         int applied = 0;
-        for (String playerId : humans) {
-            long score = pending.get(playerId);
-            boards.accumulate(seasonId, SeasonSettlement.Board.WAR,
-                    new SeasonSettlement.Entry(playerId,
-                            briefs.get(playerId) == null ? null : briefs.get(playerId).nickName(),
-                            score),
-                    score);
+        for (WarAwardPlan.Member member : plan.members()) {
+            SeasonBoardStore.ScopedIncrement increment = new SeasonBoardStore.ScopedIncrement(
+                    sourceId, 1L, sourceId,
+                    member.playerId(), member.displayName(), member.score());
+            SeasonBoardStore.ScopedIncrement recorded =
+                    boards.recordScopedIncrement(plan.seasonId(), SeasonSettlement.Board.WAR, increment);
+            if (!increment.equals(recorded)) {
+                throw new IllegalStateException("国战赛季分增量回执载荷不一致：战事主键="
+                        + sourceId + " 玩家=" + member.playerId());
+            }
+            SeasonBoardStore.ScopedIncrement readback = boards.scopedIncrementOf(
+                            plan.seasonId(), SeasonSettlement.Board.WAR, member.playerId(), sourceId)
+                    .orElseThrow(() -> new IllegalStateException("国战赛季分增量写后独立回执缺失：战事主键="
+                            + sourceId + " 玩家=" + member.playerId()));
+            if (!increment.equals(readback)) {
+                throw new IllegalStateException("国战赛季分增量独立回执与冻结计划不一致：战事主键="
+                        + sourceId + " 玩家=" + member.playerId());
+            }
             applied++;
         }
         return applied;

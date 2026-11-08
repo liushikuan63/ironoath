@@ -305,6 +305,12 @@ class SocialStoreEquivalenceTest {
                             new SocialStore.AllianceMembershipEpoch("AL-EPOCH",T0+300L,T0+400L));
             assertThat(store.allianceMembershipEpochs("P-1")).as("%s closes founder epoch at disband",label)
                     .containsExactly(new SocialStore.AllianceMembershipEpoch("AL-EPOCH",T0,T0+400L));
+            assertThat(store.allianceMemberEpochs("AL-EPOCH"))
+                    .as("%s reverse lookup includes every closed epoch from the disbanded archive",label)
+                    .containsExactly(
+                            new SocialStore.AllianceMemberEpoch("P-1",T0,T0+400L),
+                            new SocialStore.AllianceMemberEpoch("P-2",T0+100L,T0+200L),
+                            new SocialStore.AllianceMemberEpoch("P-2",T0+300L,T0+400L));
             assertThat(store.allianceById("AL-EPOCH")).as("%s hides disbanded alliance",label).isEmpty();
             assertThat(store.allianceOf("P-2")).as("%s removes active member lookup",label).isEmpty();
             assertThat(store.allianceNameTaken("历史盟")).as("%s releases archived name",label).isFalse();
@@ -318,12 +324,18 @@ class SocialStoreEquivalenceTest {
         for(SocialStore store:bothStores()) {
             String label=store.getClass().getSimpleName();
             store.saveAlliance(allianceWith("AL-LEGACY","旧盟","OLD","P-1"),0L);
+            assertThat(store.allianceMemberEpochs("AL-LEGACY"))
+                    .as("%s does not invent a historical roster before a durable legacy baseline exists",label)
+                    .isEmpty();
             var first=store.allianceMembershipEpochs("P-1","AL-LEGACY",T0+500L);
             assertThat(first).as("%s never invents an unknown join time before the first observed baseline",label)
                     .containsExactly(new SocialStore.AllianceMembershipEpoch("AL-LEGACY",T0+500L,Long.MAX_VALUE));
             assertThat(store.allianceMembershipEpochs("P-1","AL-LEGACY",T0+900L))
                     .as("%s keeps the durable baseline across later resource reads",label)
                     .containsExactly(new SocialStore.AllianceMembershipEpoch("AL-LEGACY",T0+500L,Long.MAX_VALUE));
+            assertThat(store.allianceMemberEpochs("AL-LEGACY"))
+                    .as("%s reverse lookup exposes only the defensible baseline and its observed start",label)
+                    .containsExactly(new SocialStore.AllianceMemberEpoch("P-1",T0+500L,Long.MAX_VALUE));
         }
     }
 

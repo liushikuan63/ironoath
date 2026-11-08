@@ -107,6 +107,40 @@ public class WarAppService {
     }
 
     /**
+     * 把一场<b>已经结算</b>的国战的赛季分发出去，并把「发完了」这件事落盘（B13 #2459 / #2461）。
+     *
+     * <p><b>为什么把它抽成一个方法</b>：原先只有面板那一次读会发奖（`settledNow` 为真的那一次）。
+     * 于是"打完仗没人打开面板"和"进程崩在结算与发奖之间"都会让那一场的分永远发不出去 ——
+     * 前者由宣战路径（`declare` 先推进上一场）兜住，后者由上面那段 `seasonAwardedAt == null` 的恢复分支兜住。
+     * 两条路必须发的是<b>同一份</b>账，所以只有这一个出口。
+     *
+     * <p><b>先落计划，再投递</b>：计划一旦算出来就先存档，然后才写赛季榜。反过来（先发再存）会让
+     * "发到第 4 个人时崩了"的那一场在恢复时重算一遍 —— 而重算的输入里含着可改的昵称与可热更的 bonus 档位，
+     * 一旦变脸，赛季榜会把那份新载荷判成「同代次原事件载荷冲突」，这一场就再也发不完了。
+     *
+     * <p><b>投递本身是幂等的</b>（`sourceId` = 战事主键），所以这里的两次 `save` 都不怕重来：
+     * 第二次读面板时若发现 `seasonAwardedAt` 还是 null，会从头再发一遍，已经发过的人不加分。
+     */
+    private void awardSettledWar(WarScoreBoard board, WarScoreBoard.Result result, long now, String trigger) {
+        String warId = WarStore.documentIdOf(board);
+        if (board.abandonedWithoutSiege()) {
+            // 筹备期逾窗口作废的那一场：没人打过仗，没有胜者，也不该产生赛季分。
+            // 这条分支放在最前面 —— 它的 board 也是 SETTLED，别让它掉进下面那条恢复分支。
+            LOG.info("王城战筹备逾窗口作废 战事主键={} 不发赛季分/胜者奖励", warId);
+            return;
+        }
+        if (board.seasonAwardPlan() == null) {
+            board.freezeSeasonAwardPlan(rankBoards.freezeWarSeasonAward(board, result));
+            wars.save(board);
+        }
+        int awarded = rankBoards.reportWarSeasonPoints(board, result);
+        board.markSeasonAwarded(now);
+        wars.save(board);
+        LOG.info("国战赛季分进账 战事主键={} 进账人数={} 胜者={} 榜=WAR（{}）",
+                warId, awarded, result == null ? "无" : result.winnerId(), trigger);
+    }
+
+    /**
      * 国战状态。
      *
      * @param playerId 请求者（{@code X-Player-Id}）。用于算<b>他本人</b>的疲劳与行军闸门 ——
@@ -136,19 +170,16 @@ public class WarAppService {
         }
         WarStore.Settlement progressedOne = progressed.get();
         WarScoreBoard board = progressedOne.board();
-        if (progressedOne.settledNow() && progressedOne.abandonedNow()) {
-            LOG.info("王城战筹备逾窗口作废 战事主键={} 不发赛季分/胜者奖励",
-                    WarStore.documentIdOf(board));
-        } else if (progressedOne.settledNow()) {
-            // 挂在"这一句把它结掉了"，不挂在"它现在是 SETTLED"上 —— 后者每一读都成立，
-            // 而 SeasonBoardStore.accumulate 是累加语义，那样会变成每读一次发一遍赛季分。
-            // 这一跳是本类唯一的经济写入，所以留一行审计（金额与人数都能从这里回查）。
-            // 带 result 进去：那是这一场唯一的胜负来源（内核 settle() 第二次调直接抛），
-            // 而 WINNER 那一档只认它 —— 见 WarStore.Settlement#result。
-            int awarded = rankBoards.reportWarSeasonPoints(board, progressedOne.result());
-            LOG.info("国战赛季分进账 战事主键={} 进账人数={} 胜者={} 榜=WAR（由这一次读触发）",
-                    WarStore.documentIdOf(board), awarded,
-                    progressedOne.result() == null ? "无" : progressedOne.result().winnerId());
+        if (progressedOne.settledNow()) {
+            awardSettledWar(board, progressedOne.result(), now,
+                    progressedOne.abandonedNow() ? "作废" : "由这一次读触发");
+        } else if (board.phase() == WarScoreBoard.Phase.SETTLED
+                && !board.abandonedWithoutSiege()
+                && board.seasonAwardedAt() == null) {
+            // 走到这里说明「结算已落盘、奖分没发完」：进程崩在两次写之间，或是上一次投递抛了。
+            // 结算那一刻的 Result 早就随栈一起没了，但它可以从存档重建（WarScoreBoard#settledResult）——
+            // 原先没有这条路，于是那一场的分再也发不出去、且不报错（B13 #2459）。
+            awardSettledWar(board, board.settledResult(), now, "恢复上一次未完成的投递");
         }
         Map<String, WarScoreBoard.Score> scores = board.snapshot();
         List<WarNationScoreView> rows = new ArrayList<>(scores.size());
@@ -335,7 +366,21 @@ public class WarAppService {
                 // insertIfNoneActive 读的是存储里的 phase 字面值，而一场打满 90 分钟的仗在有人打开面板之前
                 // phase 仍然是 SIEGE —— 于是"仗早打完了却再也宣不了战"，解锁条件落在别人的那一次读上。
                 // 结算与插入各自收在自己的临界区里，这里没有把判断搬到服务层（见 WarStore#insertIfNoneActive）
-                wars.settleIfExpired(now);
+                //
+                // ⚠️ 返回值**必须用**（B13 #2461）：这一句就是"上一场该结账"的唯一时机之一。
+                // 原先把它丢掉，于是"打完仗没人开面板，直接宣下一场"这条路会把上一场的赛季分吞掉 ——
+                // 而面板那一次读永远看不到那一场了（latest 已经是新的一场）。
+                wars.settleIfExpired(now).ifPresent(settled -> {
+                    if (settled.settledNow()) {
+                        awardSettledWar(settled.board(), settled.result(), now,
+                                settled.abandonedNow() ? "作废" : "由这一次宣战触发");
+                    } else if (settled.board().phase() == WarScoreBoard.Phase.SETTLED
+                            && !settled.board().abandonedWithoutSiege()
+                            && settled.board().seasonAwardedAt() == null) {
+                        awardSettledWar(settled.board(), settled.board().settledResult(), now,
+                                "恢复上一次未完成的投递（宣战触发）");
+                    }
+                });
                 // 发起国作为第三个参数交给板子：结算是另一次请求（面板那一次读），届时只能从档里读
                 // "谁先动的手"，而 WAR_SEASON_INITIATOR_BONUS 是 V18 那节的主钩子。
                 // 顺序仍然是 attacker 先 target 后 —— 内核 settle() 的平分判定按登记顺序遍历，

@@ -82,8 +82,8 @@
         "server/game-web/src/test/java/com/ironoath/web/SocialEndpointTest.java"
       ],
       "proposed_new_paths": [
-        "server/game-web/src/main/java/com/ironoath/web/nation/WarAwardPlan.java",
-        "server/game-web/src/test/java/com/ironoath/web/nation/WarAwardPlanTest.java"
+        "server/game-core/src/main/java/com/ironoath/core/nation/WarAwardPlan.java",
+        "server/game-core/src/test/java/com/ironoath/core/nation/WarAwardPlanTest.java"
       ],
       "shared_change_requests": [
         "国家历史反查接口及Mongo持久语义",

@@ -316,6 +316,25 @@ public final class InMemorySocialStore implements SocialStore {
     }
 
     @Override
+    public synchronized List<AllianceMemberEpoch> allianceMemberEpochs(String allianceId) {
+        if (allianceId == null || allianceId.isBlank()) {
+            return List.of();
+        }
+        List<AllianceMemberEpoch> out = new ArrayList<>();
+        for (Map.Entry<String, List<AllianceMembershipEpoch>> row : allianceMembershipByPlayer.entrySet()) {
+            for (AllianceMembershipEpoch epoch : row.getValue()) {
+                if (allianceId.equals(epoch.allianceId())) {
+                    out.add(new AllianceMemberEpoch(row.getKey(), epoch.fromAt(), epoch.untilAt()));
+                }
+            }
+        }
+        out.sort(Comparator.comparingLong(AllianceMemberEpoch::fromAt)
+                .thenComparing(AllianceMemberEpoch::playerId)
+                .thenComparingLong(AllianceMemberEpoch::untilAt));
+        return List.copyOf(out);
+    }
+
+    @Override
     public synchronized boolean allianceNameTaken(String name) {
         return allianceIdByName.containsKey(name);
     }
