@@ -26,6 +26,9 @@ import java.util.List;
 @Component
 public class ProductionReadiness implements InitializingBean {
 
+    private static final org.slf4j.Logger LOG =
+            org.slf4j.LoggerFactory.getLogger(ProductionReadiness.class);
+
     /** 需要显式配置的部署参数：id → 「不配会怎样」。 */
     private static final String[][] REQUIRED_PARAMS = {
             {"SERVER_OPEN_AT", "开服天数门槛（联盟 D3 / 国家 D14 等）会全部放行"},
@@ -41,6 +44,9 @@ public class ProductionReadiness implements InitializingBean {
     private final com.ironoath.web.service.PayAppService.SignatureVerifier paySignature;
     private final com.ironoath.web.pay.MidasGameItemSigner gameItemSigner;
     private final com.ironoath.web.release.SupportConfig support;
+    /** legacy 回调政策 —— 与 {@code PayController} 同一个 bean，见 {@link #problems()} 里那一条读数。 */
+    private final PayBeansConfig.LegacyCallbackPolicy legacyCallback;
+    /** 仅用于 {@link #isProd()} 委托时的兜底：{@code legacyCallback} 为 null 时按它判。 */
     private final String activeProfiles;
 
     @Autowired
@@ -52,6 +58,7 @@ public class ProductionReadiness implements InitializingBean {
                                com.ironoath.web.service.PayAppService.SignatureVerifier paySignature,
                                com.ironoath.web.pay.MidasGameItemSigner gameItemSigner,
                                com.ironoath.web.release.SupportConfig support,
+                               PayBeansConfig.LegacyCallbackPolicy legacyCallback,
                                @Value("${spring.profiles.active:}") String activeProfiles) {
         this.configs = configs;
         this.properties = properties;
@@ -62,10 +69,38 @@ public class ProductionReadiness implements InitializingBean {
         this.paySignature = paySignature;
         this.gameItemSigner = gameItemSigner;
         this.support = support;
+        this.legacyCallback = legacyCallback;
         this.activeProfiles = activeProfiles == null ? "" : activeProfiles;
     }
 
-    /** Compatibility constructor for isolated readiness tests predating the GameItem signer gate. */
+    /**
+     * Compatibility constructor for readiness tests that predate the legacy-callback policy bean.
+     *
+     * <p>它们的调用方给出的是 profile 字符串（且带 GameItem signer），
+     * 这里用 {@link PayBeansConfig.LegacyCallbackPolicy#forProfiles(String)} 就地折一个 ——
+     * 走的仍是<b>同一个判定函数</b>，不是另写一套。保留它是因为这类用例验的是
+     * 「GameItem signer 未就绪要拦 prod」，与被删掉的 10 参构造器是同一条断言链。
+     */
+    public ProductionReadiness(ConfigRegistry configs, GameProperties properties,
+                               com.ironoath.web.ops.OpsTokenGuard ops,
+                               com.ironoath.web.security.PlayerIdentityVerifier identity,
+                               com.ironoath.web.security.WeChatCodeExchanger weChat,
+                               com.ironoath.web.security.ContentSecurityClient contentSecurity,
+                               com.ironoath.web.service.PayAppService.SignatureVerifier paySignature,
+                               com.ironoath.web.pay.MidasGameItemSigner gameItemSigner,
+                               com.ironoath.web.release.SupportConfig support,
+                               String activeProfiles) {
+        this(configs, properties, ops, identity, weChat, contentSecurity, paySignature, gameItemSigner, support,
+                PayBeansConfig.LegacyCallbackPolicy.forProfiles(activeProfiles), activeProfiles);
+    }
+
+    /**
+     * Compatibility constructor for isolated readiness tests predating the GameItem signer gate.
+     *
+     * <p>不注入 {@code legacyCallback} bean：调用方给出的是 profile 字符串，
+     * 这里用 {@link PayBeansConfig.LegacyCallbackPolicy#forProfiles(String)} 就地折一个，
+     * 走的仍是<b>同一个判定函数</b>，不是另写一套。
+     */
     public ProductionReadiness(ConfigRegistry configs, GameProperties properties,
                                com.ironoath.web.ops.OpsTokenGuard ops,
                                com.ironoath.web.security.PlayerIdentityVerifier identity,
@@ -74,11 +109,16 @@ public class ProductionReadiness implements InitializingBean {
                                com.ironoath.web.service.PayAppService.SignatureVerifier paySignature,
                                com.ironoath.web.release.SupportConfig support,
                                String activeProfiles) {
-        this(configs, properties, ops, identity, weChat, contentSecurity, paySignature, null, support, activeProfiles);
+        this(configs, properties, ops, identity, weChat, contentSecurity, paySignature, null, support,
+                PayBeansConfig.LegacyCallbackPolicy.forProfiles(activeProfiles), activeProfiles);
     }
 
     @Override
     public void afterPropertiesSet() {
+        // 每次启动都打一条权威读数：生产里 legacy 端点是被禁的，而「被禁」这件事
+        // 只体现在 PayController 的一个 if 上 —— 运维读日志时应该能直接看到结论，
+        // 而不是去翻代码确认「这个环境到底还收不收 legacy 回调」。
+        LOG.info("legacy /pay/callback 状态：{}", legacyCallbackReading());
         if (!isProd()) {
             return;
         }
@@ -91,14 +131,49 @@ public class ProductionReadiness implements InitializingBean {
                 + String.join("\n  ", problems));
     }
 
-    /** 是否按生产环境对待。profile 列表以逗号分隔（Spring 的注入形式）。 */
+    /**
+     * 是否按生产环境对待。
+     *
+     * <p><b>判据不在这里</b>：委托给 {@link PayBeansConfig.LegacyCallbackPolicy}——
+     * 全仓唯一一处「什么算生产」的实现在 {@code LegacyCallbackPolicy.forProfiles}。
+     * 此前这里自己切一遍 {@code activeProfiles}，与装配层那份是两份同样的代码，
+     * 任何一边改口径都会让「闸门按生产拒绝、回调端点却放行」这种半生产状态悄悄成立。
+     *
+     * <p>注入的 policy 为 null（老的单测构造路径）时才就地折一个，折的仍是同一个函数。
+     */
     boolean isProd() {
-        for (String profile : activeProfiles.split(",")) {
-            if ("prod".equals(profile.trim())) {
-                return true;
-            }
+        if (legacyCallback != null) {
+            return legacyCallback.prod();
         }
-        return false;
+        return PayBeansConfig.LegacyCallbackPolicy.forProfiles(activeProfiles).prod();
+    }
+
+    /**
+     * legacy {@code /pay/callback} 在本环境的真实状态 —— 读数，不是阻塞项。
+     *
+     * <p>为什么要单独给一条：生产环境里这个端点<b>已经被禁用</b>，
+     * 所以「验签实现没生产就绪」不再是一条阻塞（那段代码在生产根本不会被调用）。
+     * 但「不阻塞」不等于「不用管」—— 有人会问「那 /pay/callback 现在到底能不能用」，
+     * 答案必须有一处权威读数，否则只能靠读 {@code PayController} 的 if 去猜。
+     */
+    String legacyCallbackReading() {
+        if (legacyCallback == null || legacyCallback.enabled()) {
+            return "legacy /pay/callback 在本环境启用：它不核验渠道签名的生产就绪性，只允许存在于开发/测试";
+        }
+        return legacyCallback.rejectionReason();
+    }
+
+    /**
+     * legacy 回调在本环境是否仍是一门活能力（包内可见：闸门测试要钉住「判据只有一份」）。
+     *
+     * <p>注入的 policy 为 null（老的单测构造路径）时按 profile 字符串折一个 ——
+     * 折的仍是 {@link PayBeansConfig.LegacyCallbackPolicy#forProfiles(String)}，不是另写一套。
+     */
+    boolean legacyCallbackEnabled() {
+        if (legacyCallback != null) {
+            return legacyCallback.enabled();
+        }
+        return PayBeansConfig.LegacyCallbackPolicy.forProfiles(activeProfiles).enabled();
     }
 
     /**
@@ -151,9 +226,22 @@ public class ProductionReadiness implements InitializingBean {
                     + "（productionReady=false）：昵称/小队名/联盟名/聊天都不会真的送检，"
                     + "必须配置 WECHAT_APP_ID / WECHAT_APP_SECRET 并切到真实 msg_sec_check 实现之后才能启动");
         }
-        if (!paySignature.productionReady()) {
+        // 这一条历史上是「验签实现 productionReady=false ⇒ 当前 /pay/callback 不能核验渠道签名，
+        // 必须接入正式米大师验签后才能启动」。当时成立：legacy /pay/callback 在生产是活的，
+        // 验签桩等于「任何人 POST 一下就能给自己发货」。
+        //
+        // 裁决（2026-10-25 07:26:45.713Z）之后，生产由 PayController 整体拒绝该端点，
+        // 判据是 {@link PayBeansConfig.LegacyCallbackPolicy}（本类的 isProd() 也委托它，
+        // 所以闸门与端点在结构上不可能各说各话）。于是 prod 下这条阻塞项成了**假阻塞**：
+        // 它逼着部署的人去给一个生产根本到不了的端点接验签，而真正的防线（端点已拒绝）没人看。
+        //
+        // 但它不能直接删：判据挂在策略上，而不是挂在「现在是 prod」上 ——
+        // 只要那个环境里 legacy 还是一门活能力，未就绪的验签就仍然是「POST 一下就发货」。
+        // 这样将来若有人放开策略，这条阻塞会自动回来，不需要谁记得来改这里。
+        if (legacyCallbackEnabled() && !paySignature.productionReady()) {
             problems.add("支付回调验签实现是 " + paySignature.getClass().getSimpleName()
-                    + "（productionReady=false）：当前 /pay/callback 不能核验渠道签名，必须接入正式米大师验签后才能启动");
+                    + "（productionReady=false）：legacy /pay/callback 在本环境启用却不能核验渠道签名，"
+                    + "必须接入正式米大师验签后才能启动");
         }
         if (gameItemSigner != null && !gameItemSigner.productionReady()) {
             problems.add("GameItem 支付配置未就绪（productionReady=false）：需要正式与沙箱 AppKey、TC-Signature 加密密钥、SAS ApplicationID、正式/沙箱 BackendConfigID 及加密 session_key 共享存储后才能启动");

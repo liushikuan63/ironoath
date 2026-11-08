@@ -140,6 +140,12 @@ class PayEndpointTest {
     @Autowired private com.ironoath.core.player.PlayerRepository players;
     /** 发货替身：见 {@link StubFulfilment} 为什么必须存在。 */
     @Autowired private StubPlan plan;
+    /** 装配层给出的 legacy 政策 —— 与 {@code PayController} / {@code ProductionReadiness} 同一个 bean。 */
+    @Autowired private com.ironoath.web.config.PayBeansConfig.LegacyCallbackPolicy legacyCallbackPolicy;
+    /** 真 service，供下面「换个 profile 重装同一条端点」的两条用例使用。 */
+    @Autowired private PayAppService payments;
+    @Autowired private com.ironoath.web.pay.PaidClaimsAppService claims;
+    @Autowired private com.ironoath.web.service.MidasGameItemWebhookService gameItemWebhook;
 
     /** 上下文是全类共享的，替身的计数与开关必须每条用例归零一次。 */
     @BeforeEach
@@ -580,6 +586,89 @@ class PayEndpointTest {
         JsonNode root = postJson("/pay/callback", null,
                 new PayCallbackReq("order_nobody_" + UUID.randomUUID(), "txn-1", "sign-1", true));
         assertThat(root.get("code").asInt()).isEqualTo(ErrorCode.PAY_ORDER_DUPLICATE.code());
+    }
+
+    @Test
+    @DisplayName("prod profile 下 legacy 回调必须真拒绝：200 + 明确业务码，不是 500，也不是静默放行")
+    void prodProfileRejectsLegacyCallback() throws Exception {
+        // 这一条<b>不能</b>用本类的 @SpringBootTest 上下文跑：prod 下 ProductionReadiness
+        // 会在 afterPropertiesSet 里拒绝启动，整个上下文根本起不来（那正是它存在的理由）。
+        // 所以只把那一段单独装配：真 PayController + 真 GlobalExceptionHandler + 真策略 + 真 service。
+        // 用真 service 而非 mock，是为了让断言落在<b>业务可观察结果</b>上 ——
+        // 「订单还是 PENDING」比「mock 没被调用」更接近事故本身长什么样
+        // （顺带：MidasGameItemWebhookService 是 final 类，本来也 mock 不了）。
+        var prodEnvironment = new org.springframework.mock.env.MockEnvironment();
+        prodEnvironment.setActiveProfiles("prod");
+        var prodPolicy = new com.ironoath.web.config.PayBeansConfig().legacyCallbackPolicy(prodEnvironment);
+        assertThat(prodPolicy.enabled()).as("prod 下策略必须是禁用，否则下面测的就不是拒绝路径").isFalse();
+        String orderId = okData(postJson("/pay/order", newPlayer(),
+                new CreateOrderReq(newRequestId(), "first_charge", 1, "hero_sr_01"))).get("orderId").asText();
+        assertThat(orders.get(orderId).status()).isEqualTo(PayOrder.Status.PENDING);
+
+        MvcResult result = standaloneMvc(prodPolicy).perform(post("/pay/callback")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(JsonUtils.toJson(new PayCallbackReq(orderId, "txn-x", "sign-x", true))))
+                // 5xx 会让渠道把「这条通道不存在」理解成「对方挂了，待会儿重试」，于是被禁的端点
+                // 会被反复打；而业务拒绝在渠道侧是该停的
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode root = JsonUtils.readTree(result.getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertThat(root.get("code").asInt())
+                .as("必须是明确的业务拒绝码：0 是静默放行，SYSTEM_ERROR 是 500 崩，都不合格；实际响应=%s", root)
+                .isEqualTo(ErrorCode.NOT_IMPLEMENTED.code());
+        assertThat(orders.get(orderId).status())
+                .as("拒绝必须发生在改单与发货之前：只断言响应码会漏掉「先发了货再回错误」那种实现")
+                .isEqualTo(PayOrder.Status.PENDING);
+    }
+
+    @Test
+    @DisplayName("dev/test 下 legacy 回调照旧放行：生产禁用不能把联调路径一起关掉")
+    void nonProdProfileStillAcceptsLegacyCallback() throws Exception {
+        // 与上一条配对的正向断言，且落在同一处业务可观察结果（订单被推进）上。
+        // 少了它，「拒绝」那条在「端点被无条件拒绝」的错误实现下照样会绿 —— 那是个永远通过的假断言。
+        var devPolicy = com.ironoath.web.config.PayBeansConfig.LegacyCallbackPolicy.forProfiles("dev");
+        assertThat(devPolicy.enabled()).as("dev 下策略必须放行").isTrue();
+        String orderId = okData(postJson("/pay/order", newPlayer(),
+                new CreateOrderReq(newRequestId(), "first_charge", 1, "hero_sr_01"))).get("orderId").asText();
+
+        MvcResult result = standaloneMvc(devPolicy).perform(post("/pay/callback")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(JsonUtils.toJson(new PayCallbackReq(orderId, "txn-y", "sign-y", true))))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode root = JsonUtils.readTree(result.getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertThat(root.get("code").asInt()).as("dev 下必须真的走到业务逻辑，实际响应=%s", root).isZero();
+        assertThat(orders.get(orderId).status())
+                .as("放行意味着订单真被推进了（发货桩默认失败，所以停在 PAID_UNFULFILLED）")
+                .isEqualTo(PayOrder.Status.PAID_UNFULFILLED);
+    }
+
+    @Test
+    @DisplayName("本测试上下文自己走的是放行那一支：否则本类的回调用例测的就不是真实路径")
+    void testProfileRunsWithLegacyCallbackEnabled() {
+        // 元断言：整套 @SpringBootTest 用的都是 test profile。若策略在这里返回禁用，
+        // 本类所有 callback 用例都会落到拒绝分支 —— 它们会红，但红的原因会指向错误的地方。
+        // 钉住这一条，把「环境配错了」与「功能坏了」分开。
+        assertThat(environment.getActiveProfiles()).contains("test");
+        assertThat(legacyCallbackPolicy.enabled())
+                .as("test profile 下装配层必须给出放行，否则本类的回调用例全部打在拒绝分支上")
+                .isTrue();
+        assertThat(legacyCallbackPolicy.prod()).isFalse();
+    }
+
+    /**
+     * 只装 {@code /pay/callback} 那一段的最小 MVC：真 Controller + 真异常处理器 + 指定策略。
+     *
+     * <p>用它而不是另起一套 Spring 上下文，是因为 prod 上下文起不来（见上一条用例的说明），
+     * 而这里要验的恰是「同一个 Controller 在两种策略下的两种行为」——
+     * 换掉唯一那个自变量，其余全部复用本上下文的真 bean。
+     */
+    private MockMvc standaloneMvc(com.ironoath.web.config.PayBeansConfig.LegacyCallbackPolicy policy) {
+        return org.springframework.test.web.servlet.setup.MockMvcBuilders
+                .standaloneSetup(new com.ironoath.web.controller.PayController(
+                        payments, claims, gameItemWebhook, policy))
+                .setControllerAdvice(new com.ironoath.web.web.GlobalExceptionHandler())
+                .build();
     }
 
     @Test

@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.Result;
+import com.ironoath.web.config.PayBeansConfig;
 import com.ironoath.web.dto.generated.CardClaimReq;
 import com.ironoath.web.dto.generated.CardClaimResp;
 import com.ironoath.web.dto.generated.CardStatusResp;
@@ -42,15 +43,21 @@ import com.ironoath.web.service.PayAppService;
 @RequestMapping("/pay")
 public class PayController {
 
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(PayController.class);
+
     private final PayAppService pay;
     private final com.ironoath.web.pay.PaidClaimsAppService claims;
     private final com.ironoath.web.service.MidasGameItemWebhookService gameItemWebhook;
+    /** legacy 回调能不能用，由装配层那一个 bean 说了算 —— 这里不自己判 profile。 */
+    private final PayBeansConfig.LegacyCallbackPolicy legacyCallback;
 
     public PayController(PayAppService pay, com.ironoath.web.pay.PaidClaimsAppService claims,
-                         com.ironoath.web.service.MidasGameItemWebhookService gameItemWebhook) {
+                         com.ironoath.web.service.MidasGameItemWebhookService gameItemWebhook,
+                         PayBeansConfig.LegacyCallbackPolicy legacyCallback) {
         this.pay = pay;
         this.claims = claims;
         this.gameItemWebhook = gameItemWebhook;
+        this.legacyCallback = legacyCallback;
     }
 
     /** 价格表。**客户端不得内置任何价格**，否则调价必须发版，而发版前的旧客户端会显示旧价却按新价扣款。 */
@@ -72,9 +79,25 @@ public class PayController {
      *
      * <p><b>验签 → 改状态 → 落库，然后才发货</b>：回调有时限，
      * 超时会微信判失败并重试，于是「发货慢」会变成「重复发货的诱因」。
+     *
+     * <p><b>生产 profile 下这个端点整体拒绝</b>（裁决 2026-10-25 07:26:45.713Z）。
+     * 判据来自 {@link PayBeansConfig.LegacyCallbackPolicy} 这个 bean，不在这里写
+     * {@code if (prod)} —— 判据只有一个真源，而 {@code ProductionReadiness} 问的是同一个对象，
+     * 所以「读数说禁用、代码却放行」在结构上不会发生。
+     *
+     * <p><b>拒绝要给出明确结果，不能是 500</b>：抛 {@link BizException} 走
+     * {@code GlobalExceptionHandler} 的 200 + 业务码分支。5xx 在渠道侧会被理解成
+     * 「我们暂时挂了，待会儿重试」，于是被禁用的端点会被反复打；而这里的意思是
+     * 「这条通道在这个环境不存在」，重试没有意义。
      */
     @PostMapping("/callback")
     public Result<OrderStatusResp> callback(@RequestBody PayCallbackReq req) {
+        if (!legacyCallback.enabled()) {
+            // WARN 而不是 ERROR：这是被设计好的拒绝，不是故障。日志里带上原因，
+            // 因为 detail 在生产会被 ResultBodyAdvice 剥离，发出去之后只剩一句通用提示。
+            LOG.warn("拒绝 legacy /pay/callback：{}", legacyCallback.rejectionReason());
+            throw new BizException(ErrorCode.NOT_IMPLEMENTED, legacyCallback.rejectionReason());
+        }
         return Result.ok(pay.callback(req));
     }
 

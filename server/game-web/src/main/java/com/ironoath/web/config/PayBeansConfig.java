@@ -40,6 +40,90 @@ public class PayBeansConfig {
 
     private static final Logger LOG = LoggerFactory.getLogger(PayBeansConfig.class);
 
+    /**
+     * legacy {@code /pay/callback} 的启用政策 —— <b>生产 profile 一律禁用</b>。
+     *
+     * <p><b>为什么这是一段代码而不是一个配置项</b>：裁决（2026-10-25 07:26:45.713Z）
+     * 是「生产禁用 legacy {@code /pay/callback}（推荐）」，而一个能被配置项重新打开的开关
+     * 迟早会在某次部署里被打开 —— 打开后的表现是「任何人 POST 一下就能给自己发货」，
+     * 且没有任何一处会报错。所以这里只认 profile：{@code prod} 一律禁用，不留后门。
+     *
+     * <p><b>为什么放在装配层而不是 Controller 里写 {@code if (prod)}</b>：
+     * 与回调验签同一个理由（见 {@link #paySignatureVerifier()}）——判据只有一个真源，
+     * 而 {@code PayController} 与 {@code ProductionReadiness} 都问同一个对象，
+     * 那样「读数说禁用、代码却放行」这种漂移在结构上就不可能出现。
+     */
+    public static final class LegacyCallbackPolicy {
+
+        private final boolean prod;
+        private final boolean enabled;
+
+        private LegacyCallbackPolicy(boolean prod, boolean enabled) {
+            this.prod = prod;
+            this.enabled = enabled;
+        }
+
+        /**
+         * 按 Spring 的 profile 列表（逗号分隔）判定。只认 {@code prod} 这一个字面量
+         * （{@code production} / {@code prod-like} 这类名字不算）。
+         *
+         * <p><b>这是全仓唯一一处「什么算生产」的判定</b>：{@code ProductionReadiness.isProd()}
+         * 不再自己切字符串，而是委托到这里。此前两处各写一遍同样的 split/equals，
+         * 任何一处改口径（比如加了 {@code prod-eu}）都会让「启动闸门按生产拒绝、回调端点却放行」
+         * 这种半生产状态悄悄成立。
+         */
+        public static LegacyCallbackPolicy forProfiles(String activeProfiles) {
+            boolean prod = false;
+            if (activeProfiles != null) {
+                for (String profile : activeProfiles.split(",")) {
+                    if ("prod".equals(profile.trim())) {
+                        prod = true;
+                        break;
+                    }
+                }
+            }
+            return new LegacyCallbackPolicy(prod, !prod);
+        }
+
+        /** 该环境下 legacy 回调是否作为一条真实能力存在。 */
+        public boolean enabled() {
+            return enabled;
+        }
+
+        /** 是否按生产环境对待。 */
+        public boolean prod() {
+            return prod;
+        }
+
+        /** 拒绝时写进日志与 detail 的原因（detail 在生产会被 ResultBodyAdvice 剥离，日志不会）。 */
+        public String rejectionReason() {
+            return "legacy /pay/callback 已在生产禁用：生产支付履约只走 GameItem 回调"
+                    + "（/pay/midas/game-item-callback）";
+        }
+    }
+
+    /**
+     * 把"这个环境里 legacy 回调能不能用"定成一个 bean。
+     *
+     * <p>注入的是 {@link org.springframework.core.env.Environment#getActiveProfiles()}
+     * 而不是 {@code spring.profiles.active} 属性：后者只反映显式设置的那一个，
+     * 而 {@code spring.profiles.include} 带进来的 profile 不在其中 ——
+     * 用属性判定的话，「dev + include: prod」这种部署会把 legacy 放回生产。
+     */
+    @Bean
+    public LegacyCallbackPolicy legacyCallbackPolicy(org.springframework.core.env.Environment environment) {
+        String active = String.join(",", environment.getActiveProfiles());
+        LegacyCallbackPolicy policy = LegacyCallbackPolicy.forProfiles(active);
+        if (policy.enabled()) {
+            LOG.warn("legacy /pay/callback 在 profile=[{}] 下仍启用：它不核验渠道签名实现是否生产就绪，"
+                    + "只允许存在于开发/测试；生产 profile 下本端点会由 PayController 直接拒绝", active);
+        } else {
+            LOG.warn("legacy /pay/callback 已按政策在生产 profile=[{}] 禁用：本端点会直接拒绝，"
+                    + "生产支付履约只走 GameItem 回调", active);
+        }
+        return policy;
+    }
+
     @Bean
     @ConditionalOnProperty(name = "ironoath.storage",
             havingValue = GameProperties.STORAGE_MEMORY, matchIfMissing = true)

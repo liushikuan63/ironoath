@@ -201,20 +201,84 @@ class ProductionReadinessTest {
     }
 
     @Test
-    @DisplayName("prod 不能只告警而继续使用本地支付回调验签桩")
-    void nonProductionPaySignatureVerifierIsReportedAsAProdBlocker() {
+    @DisplayName("生产禁用 legacy 回调后，「验签桩」不再是生产阻塞项 —— 但读数必须明说端点已禁")
+    void prodNoLongerBlocksOnLegacySignatureBecauseTheEndpointIsGone() {
+        // 这条用例是旧断言的<b>更正</b>，不是削弱：原来的断言（prod + 验签桩 ⇒ 拒绝启动）当时是对的 ——
+        // legacy /pay/callback 在生产是活的，验签桩等于「任何人 POST 一下就发货」。
+        // 裁决（2026-10-25 07:26:45.713Z）之后生产由 PayController 整体拒绝该端点，
+        // 那段代码在生产根本到不了，再拦着就是逼部署的人去给一个不存在的入口接验签。
+        //
+        // 关键：这条不是「删掉断言」，是<b>把断言换到真正的防线上去</b> ——
+        // 原来验的是「验签就绪」，现在验「端点已禁」这个事实本身有权威读数。
         ConfigRegistry configured = ConfigRegistry.loadFromDirectory(locateConfigDir());
         configured.reload("global", com.ironoath.config.model.GlobalCfg.class, withDeploymentParams());
         var paymentVerifier = new PayBeansConfig().paySignatureVerifier();
         assertThat(paymentVerifier.productionReady()).isFalse();
+        var prodPolicy = PayBeansConfig.LegacyCallbackPolicy.forProfiles("prod");
         ProductionReadiness gate = new ProductionReadiness(configured,
                 new GameProperties(null, GameProperties.STORAGE_MONGO, false),
-                opsConfigured(), identityReady(), weChatReady(), contentSecurityReady(), paymentVerifier, supportReady(), "prod");
+                opsConfigured(), identityReady(), weChatReady(), contentSecurityReady(), paymentVerifier,
+                supportReady(), "prod");
 
-        assertThat(gate.problems()).anySatisfy(problem->assertThat(problem)
+        assertThat(gate.problems())
+                .as("生产下 legacy 端点已禁，验签桩不能再当阻塞项；实际 problems=%s", gate.problems())
+                .noneSatisfy(problem -> assertThat(problem).contains("支付回调验签"));
+        assertThatCode(gate::afterPropertiesSet)
+                .as("除了这一条之外全部配齐，闸门必须开绿灯 —— 否则生产会被一个到不了的端点卡住")
+                .doesNotThrowAnyException();
+        assertThat(gate.legacyCallbackReading())
+                .as("「不阻塞」不等于「不用管」：必须有一处权威读数说清端点在生产已禁")
+                .isEqualTo(prodPolicy.rejectionReason())
+                .contains("已在生产禁用");
+    }
+
+    @Test
+    @DisplayName("只要 legacy 回调在那个环境还是活能力，验签桩就仍然是阻塞项（判据挂策略，不挂 prod）")
+    void legacySignatureStaysABlockerWhereverTheEndpointIsStillLive() {
+        // 上一条的<b>配对反证</b>：如果只留「prod 不报」那一条，把 problems() 里整段删掉也能全绿 ——
+        // 那是假绿。这一条把同一个验签桩放到 dev 上：legacy 在那里还启用着，
+        // 「POST 一下就发货」的风险是真实存在的，所以必须仍然报出来。
+        // 两条合起来才证明判据落在 LegacyCallbackPolicy 上，而不是落在「现在是 prod」上。
+        ConfigRegistry configured = ConfigRegistry.loadFromDirectory(locateConfigDir());
+        configured.reload("global", com.ironoath.config.model.GlobalCfg.class, withDeploymentParams());
+        var paymentVerifier = new PayBeansConfig().paySignatureVerifier();
+        assertThat(PayBeansConfig.LegacyCallbackPolicy.forProfiles("dev").enabled())
+                .as("前提：dev 下 legacy 必须还是启用的，否则这条用例测的东西不存在")
+                .isTrue();
+        ProductionReadiness gate = new ProductionReadiness(configured,
+                new GameProperties(null, GameProperties.STORAGE_MONGO, false),
+                opsConfigured(), identityReady(), weChatReady(), contentSecurityReady(), paymentVerifier,
+                supportReady(), "dev");
+
+        assertThat(gate.problems()).anySatisfy(problem -> assertThat(problem)
                 .contains("支付回调验签")
-                .contains("productionReady=false"));
-        assertThatThrownBy(gate::afterPropertiesSet).isInstanceOf(IllegalStateException.class);
+                .contains("productionReady=false")
+                .contains("在本环境启用"));
+        // 非 prod 仍然放行启动（部署参数本来就缺），阻塞项的语义只在 prod 生效 —— 这条一起钉住，
+        // 免得有人为了让上面那条报错而把「非 prod 直接 return」那行删掉
+        assertThatCode(gate::afterPropertiesSet).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("prod 判定只有一份实现：闸门与装配层问的是同一个策略对象")
+    void prodVerdictComesFromTheSamePolicyAsTheAssembler() {
+        // isProd() 曾经自己切一遍 activeProfiles，与 LegacyCallbackPolicy.forProfiles 是两份同样的代码。
+        // 两份代码的口径只要有一边变了（比如有人加 prod-eu），就会出现
+        // 「闸门按生产拒绝、回调端点却放行」这种半生产状态 —— 那是最坏的形状：
+        // 启动检查说这是生产，端点行为说这不是。
+        for (String profiles : new String[]{"prod", "prod, mongo", " mongo , prod ", "dev", "test", "", "production"}) {
+            var policy = PayBeansConfig.LegacyCallbackPolicy.forProfiles(profiles);
+            ProductionReadiness gate = new ProductionReadiness(plain, new GameProperties(null, "memory", false),
+                    opsMissing(), identityLenient(), weChatReady(), contentSecurityReady(),
+                    paySignatureReady(), supportReady(), profiles);
+            assertThat(gate.isProd())
+                    .as("profile=[%s] 时闸门的 prod 判定必须与策略一致", profiles)
+                    .isEqualTo(policy.prod());
+            assertThat(gate.legacyCallbackEnabled()).as("profile=[%s]", profiles).isEqualTo(policy.enabled());
+        }
+        // 只认 prod 这一个字面量：production / prod-like 这类名字不算（否则「像生产」就成了生产）
+        assertThat(PayBeansConfig.LegacyCallbackPolicy.forProfiles("production").prod()).isFalse();
+        assertThat(PayBeansConfig.LegacyCallbackPolicy.forProfiles("prod-eu").prod()).isFalse();
     }
 
     @Test
