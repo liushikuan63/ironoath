@@ -8,15 +8,16 @@ import org.junit.jupiter.api.AfterAll;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import com.mongodb.client.MongoClients;
+import com.ironoath.web.store.TestMongo;
 
 /** Same real service/error/competition cases, using only this marked Mongo fixture namespace. */
 class CitySelectedUpgradeMongoTest extends CitySelectedUpgradeTest {
     private static final String OWNER=UUID.randomUUID().toString().replace("-","");
     private static final String DATABASE="ironoath_city_selected_"+OWNER;
-    private static final String URI="mongodb://127.0.0.1:27017/?serverSelectionTimeoutMS=3000";
+    private static final String URI=TestMongo.uri();
     @DynamicPropertySource static void mongo(DynamicPropertyRegistry properties) {
         properties.add("ironoath.storage",()->"mongo");
-        properties.add("spring.data.mongodb.uri",()->"mongodb://127.0.0.1:27017/"+DATABASE+"?serverSelectionTimeoutMS=3000");
+        properties.add("spring.data.mongodb.uri",()->TestMongo.uriForDatabase(DATABASE));
     }
     @BeforeAll static void markOwned() {
         try(var client=MongoClients.create(URI)){client.getDatabase(DATABASE).getCollection("__owned_run").insertOne(new Document("_id",OWNER));}

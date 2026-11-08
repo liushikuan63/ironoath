@@ -1,6 +1,8 @@
 package com.ironoath.web.store;
 
 import java.util.UUID;
+import java.net.URI;
+import java.net.URISyntaxException;
 
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
@@ -20,7 +22,7 @@ import org.springframework.data.mongodb.core.MongoTemplate;
  *
  * <p>索引同样在这里确保：跑的是生产的 {@link MongoIndexes#ensure}，不是测试自己抄的一份。
  */
-final class TestMongo implements AutoCloseable {
+public final class TestMongo implements AutoCloseable {
 
     /** 默认打本机；CI 上没有 Mongo 时这些用例会以「跳过即未验证」的形式报出来。 */
     private static final String URI = System.getProperty("ironoath.test.mongo.uri",
@@ -57,8 +59,34 @@ final class TestMongo implements AutoCloseable {
         }
     }
 
-    static String uri() {
+    public static String uri() {
         return URI;
+    }
+
+    /** Build a per-test database URI while preserving the explicitly selected isolated server and options. */
+    public static String uriForDatabase(String serverUri, String databaseName) {
+        if (serverUri == null || databaseName == null || !databaseName.matches("[A-Za-z0-9_-]+")) {
+            throw new IllegalArgumentException("Mongo测试URI或数据库名无效");
+        }
+        try {
+            URI parsed = new URI(serverUri);
+            String scheme = parsed.getScheme();
+            if (scheme == null || !(scheme.equalsIgnoreCase("mongodb")
+                    || scheme.equalsIgnoreCase("mongodb+srv"))
+                    || parsed.getRawAuthority() == null || parsed.getRawAuthority().isBlank()
+                    || (parsed.getRawPath() != null && !parsed.getRawPath().isEmpty()
+                    && !parsed.getRawPath().equals("/")) || parsed.getRawFragment() != null) {
+                throw new IllegalArgumentException("Mongo测试URI必须指向未指定数据库的服务器");
+            }
+            return scheme + "://" + parsed.getRawAuthority() + "/" + databaseName
+                    + (parsed.getRawQuery() == null ? "" : "?" + parsed.getRawQuery());
+        } catch (URISyntaxException invalidUri) {
+            throw new IllegalArgumentException("Mongo测试URI无效", invalidUri);
+        }
+    }
+
+    public static String uriForDatabase(String databaseName) {
+        return uriForDatabase(URI, databaseName);
     }
 
     MongoTemplate template() {

@@ -57,6 +57,7 @@ import com.ironoath.web.world.TargetOccupationStore;
 import com.ironoath.web.tech.TechEffects;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
+import com.ironoath.web.store.TestMongo;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -96,7 +97,7 @@ import org.mockito.ArgumentMatchers;
 class NationRallyFortressMongoEndpointTest {
     private static final String OWNER=UUID.randomUUID().toString().replace("-","");
     private static final String DATABASE="ironoath_b13_fortress_http_"+OWNER;
-    private static final String BASE_URI="mongodb://127.0.0.1:27017/?serverSelectionTimeoutMS=3000";
+    private static final String BASE_URI=TestMongo.uri();
 
     @TestConfiguration(proxyBeanMethods=false)
     static class DeterministicSeed {
@@ -108,7 +109,7 @@ class NationRallyFortressMongoEndpointTest {
     @DynamicPropertySource
     static void mongo(DynamicPropertyRegistry properties) {
         properties.add("ironoath.storage",()->"mongo");
-        properties.add("spring.data.mongodb.uri",()->"mongodb://127.0.0.1:27017/"+DATABASE+"?serverSelectionTimeoutMS=3000");
+        properties.add("spring.data.mongodb.uri",()->TestMongo.uriForDatabase(DATABASE));
     }
 
     @BeforeAll static void markOwnedDatabase() {
