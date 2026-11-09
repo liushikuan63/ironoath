@@ -303,6 +303,15 @@ public final class StrategicGarrisonWithdrawal {
         return withTarget(id,publication);
     }
 
+    /**
+     * Hold the same target critical section used by COMBAT publication, March arrival, and garrison recall.
+     * Capital migration and March dispatch use this to serialize a dynamic CAPITAL coordinate change.
+     */
+    public <T> T runTargetOperationLocked(String id,Supplier<T> action) {
+        if(id==null || id.isBlank() || action==null)throw new IllegalArgumentException("战略目标锁上下文不得为空");
+        return withTarget(id,action);
+    }
+
     private <T> T withTarget(String id,Supplier<T> action){
         var prior=targetScope.get();
         if(prior!=null && !prior.equals(id))throw new IllegalStateException("目标锁内禁止转入另一目标");

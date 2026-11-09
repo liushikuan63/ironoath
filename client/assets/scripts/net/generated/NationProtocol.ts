@@ -153,6 +153,18 @@ export interface NationFoundReq {
 }
 
 /**
+ * POST /nation/capital/migrate 请求体：迁都免费且无冷却。坐标范围、权限、国王离线代行和驻军状态由服务端按当前状态校验。
+ */
+export interface NationCapitalMigrationReq {
+  /** 幂等键。 */
+  requestId: string
+  /** 意向都城横坐标；世界范围和目标格冲突由服务端检查。 */
+  x: number
+  /** 意向都城纵坐标；世界范围和目标格冲突由服务端检查。 */
+  y: number
+}
+
+/**
  * POST /nation/appoint 请求体：任命官职。
  *
  * **权限走 role_permission 表**（perm_nation_appoint_office：只有国王能任命）。被任命者必须属于某个已入籍的联盟 —— 个人不能脱离联盟单独入籍，所以也不能被单独任命。
@@ -172,6 +184,20 @@ export interface NationAppointReq {
 export interface NationResp {
   /** 操作后的国家视图。 */
   nation: NationView
+  /** 服务端时间戳。 */
+  serverNow: number
+}
+
+/**
+ * POST /nation/capital/migrate 的结果：服务端确认保存后的国家都城坐标。
+ */
+export interface NationCapitalMigrationResp {
+  /** 迁都所属国家标识。 */
+  nationId: string
+  /** 服务端确认后的都城横坐标。 */
+  capitalX: number
+  /** 服务端确认后的都城纵坐标。 */
+  capitalY: number
   /** 服务端时间戳。 */
   serverNow: number
 }

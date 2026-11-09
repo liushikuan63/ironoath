@@ -217,9 +217,18 @@ public class MarchAppService {
     }
 
     private MarchResp doSend(String playerId, MarchReq req, long now) {
+        // Settle the player's due work before taking a world-cell lock. Target resolution, validation, and
+        // durable March creation then share the same per-cell critical section used by capital migration.
         processDue(playerId, now);
+        com.ironoath.core.player.PlayerSave knownSave = players.findByPlayerId(playerId).orElse(null);
         Coord home = worldAppService.homeOf(playerId);
         Coord target = requireCoord(req.toX(), req.toY());
+        return CapitalMigrationService.runCoordinateLocked(playerLock, target,
+                () -> doSendAtCoordinate(playerId, req, now, home, target, knownSave));
+    }
+
+    private MarchResp doSendAtCoordinate(String playerId, MarchReq req, long now, Coord home, Coord target,
+                                         com.ironoath.core.player.PlayerSave knownSave) {
         if (target.equals(home)) {
             throw new BizException(ErrorCode.WORLD_TARGET_INVALID, "不能向自己的城行军");
         }
@@ -253,14 +262,25 @@ public class MarchAppService {
         WorldGenerator.Cell cell = worldAppService.cellAt(target);
         March.Action action = March.Action.valueOf(req.action().name());
         March.TargetType targetType = resolveTargetType(cell, target);
+        String targetId = targetEntityId(cell, target);
+        java.util.function.Supplier<MarchResp> create = () -> doSendAtResolvedTarget(
+                playerId, req, now, home, target, cell, action, targetType, targetId, knownSave);
+        return targetType == March.TargetType.STRATEGIC_TARGET
+                ? garrisonWithdrawal.runTargetOperationLocked(targetId, create)
+                : create.get();
+    }
+
+    private MarchResp doSendAtResolvedTarget(String playerId, MarchReq req, long now, Coord home, Coord target,
+                                             WorldGenerator.Cell cell, March.Action action,
+                                             March.TargetType targetType, String targetId,
+                                             com.ironoath.core.player.PlayerSave knownSave) {
         // 玩家自身状态的禁令排在目标校验之前：闭城期间换任何目标都没用，
         // 先说「目标不是资源点」会让人以为换个格子就能采 —— 那是句会误导人的真话
         // 这一次读取供两处共用：闭城判定（pvp().closedUntil()）与行军装配（tech()）。
         // ⚠ 必须放在 processDue **之后**：它在行军到点时会写玩家档，读在前面就拿到结算前的旧快照。
         // 这份档**只读**，绝不进任何写路径。
-        com.ironoath.core.player.PlayerSave knownSave = players.findByPlayerId(playerId).orElse(null);
         requireNotClosedForGather(playerId, action, now, knownSave);
-        validateAction(target, action, targetType, playerId, now, targetEntityId(cell, target));
+        validateAction(target, action, targetType, playerId, now, targetId);
 
         // 武将校验必须在扣兵之前：非法 heroId 若放到战斗结算时才炸，
         // 那是在到期扫描里抛 IllegalStateException，行军会永久卡在目标前（理由见 requireOnMarch）
@@ -311,7 +331,7 @@ public class MarchAppService {
         }
 
         March march = createMarch(playerId, home, target, byUnitId, heroes, targetType,
-                targetEntityId(cell, target), action, slowest, loadCap, now,
+                targetId, action, slowest, loadCap, now,
                 null,     // 个人出征不属于任何集结；到家时按普通行军全额归队
                 () -> armies.save(playerId, army, armyVersion),
                 () -> refundTroops(playerId, army, armyVersion, byUnitId),
@@ -753,6 +773,31 @@ public class MarchAppService {
     }
 
     private boolean consumeRallyDeparture(com.ironoath.web.social.SocialStore.RallyDeparturePlan plan, long now) {
+        com.ironoath.core.social.Rally actual = socialStore.rallyOf(plan.rallyId()).orElse(null);
+        if (actual == null) return false;
+        Coord target = requireCoord(Math.toIntExact(actual.targetX()), Math.toIntExact(actual.targetY()));
+        return CapitalMigrationService.runCoordinateLocked(playerLock, target, () -> {
+            March.TargetType requestedType;
+            try {
+                requestedType = rallyTargetType(actual.targetType(), actual.scope());
+            } catch (BizException invalidTarget) {
+                return consumeRallyDepartureLocked(plan, now);
+            }
+            WorldGenerator.Cell cell = worldAppService.cellAt(target);
+            String targetId = targetEntityId(cell, target);
+            March.TargetType currentType = resolveTargetType(cell, target);
+            if (capitalTargetTypeChanged(requestedType, currentType, targetId)) {
+                return consumeRallyDepartureLocked(plan, now);
+            }
+            java.util.function.Supplier<Boolean> consume = () -> consumeRallyDepartureLocked(plan, now);
+            return requestedType == March.TargetType.STRATEGIC_TARGET
+                    ? garrisonWithdrawal.runTargetOperationLocked(targetId, consume)
+                    : consume.get();
+        });
+    }
+
+    private boolean consumeRallyDepartureLocked(com.ironoath.web.social.SocialStore.RallyDeparturePlan plan,
+                                                long now) {
         com.ironoath.core.social.Rally actual = socialStore.rallyOf(plan.rallyId()).orElseThrow();
         if (actual.status() != com.ironoath.core.social.Rally.Status.DEPARTED) {
             // 到达/取消等终态不能因为日志删除响应丢失而重建旧行军。
@@ -847,6 +892,10 @@ public class MarchAppService {
         March.TargetType targetType = rallyTargetType(rally.targetType(),rally.scope());
         WorldGenerator.Cell cell = worldAppService.cellAt(target);
         String targetId = targetEntityId(cell, target);
+        if (capitalTargetTypeChanged(targetType, resolveTargetType(cell, target), targetId)) {
+            throw new BizException(ErrorCode.RALLY_PREPARE_INVALID,
+                    "集结出发前地图目标已变化，请重新发起集结");
+        }
         requireTargetOutsideRally(rally, targetType, target, targetId);
 
         Map<String, Integer> speeds = new LinkedHashMap<>();
@@ -864,6 +913,19 @@ public class MarchAppService {
         return assembleMarch(marchId, initiatorId, worldAppService.homeOf(initiatorId), target, troops,
                 heroes, targetType, targetId, March.Action.ATTACK,
                 teamSpeed, loadCap, departure.departAt(), rally.rallyId(), null);
+    }
+
+    private boolean capitalTargetTypeChanged(March.TargetType requested, March.TargetType current,
+                                             String currentTargetId) {
+        if (requested == March.TargetType.STRATEGIC_TARGET && current != March.TargetType.STRATEGIC_TARGET) {
+            return true;
+        }
+        if (current != March.TargetType.STRATEGIC_TARGET || requested == March.TargetType.STRATEGIC_TARGET) {
+            return false;
+        }
+        return WorldTargets.from(configs).targets().stream()
+                .anyMatch(target -> target.definition().kind() == com.ironoath.config.cfg.WorldTargetCfg.Kind.CAPITAL
+                        && target.definition().id().equals(currentTargetId));
     }
 
     /**

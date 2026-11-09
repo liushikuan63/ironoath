@@ -1,5 +1,8 @@
 package com.ironoath.web.controller;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -16,6 +19,8 @@ import com.ironoath.web.dto.generated.NationDiplomacyResp;
 import com.ironoath.web.dto.generated.NationDisbandReq;
 import com.ironoath.web.dto.generated.NationDisbandResp;
 import com.ironoath.web.dto.generated.NationFoundReq;
+import com.ironoath.web.dto.generated.NationCapitalMigrationReq;
+import com.ironoath.web.dto.generated.NationCapitalMigrationResp;
 import com.ironoath.web.dto.generated.NationRelationsResp;
 import com.ironoath.web.dto.generated.NationJoinReq;
 import com.ironoath.web.dto.generated.NationLeaveReq;
@@ -39,6 +44,7 @@ import com.ironoath.web.dto.generated.WarGoalClaimResp;
 import com.ironoath.web.dto.generated.WarStatusResp;
 import com.ironoath.web.service.NationAppService;
 import com.ironoath.web.service.WarAppService;
+import com.ironoath.web.service.CapitalMigrationService;
 
 /**
  * 职责：国家域 HTTP 入口（B13）—— 建国、联盟入籍与退出国、解散国家、任命官职、外交、查看本国与国库流水、国策、国战状态。
@@ -63,10 +69,15 @@ public class NationController {
 
     private final NationAppService nations;
     private final WarAppService wars;
+    private final CapitalMigrationService capitalMigration;
+    private final ObjectMapper objectMapper;
 
-    public NationController(NationAppService nations, WarAppService wars) {
+    public NationController(NationAppService nations, WarAppService wars,
+                            CapitalMigrationService capitalMigration, ObjectMapper objectMapper) {
         this.nations = nations;
         this.wars = wars;
+        this.capitalMigration = capitalMigration;
+        this.objectMapper = objectMapper;
     }
 
     /** 建国。前置（主城 16 级 / 开服 D14 / 在联盟中）全部由服务端校验。 */
@@ -75,6 +86,41 @@ public class NationController {
                                     @RequestBody NationFoundReq req) {
         requirePlayer(playerId);
         return Result.ok(nations.found(playerId, req));
+    }
+
+    /** 迁都免费且无冷却；国王按既有权限操作，官员代行与驻军/行军限制由服务端核验。 */
+    @PostMapping("/capital/migrate")
+    public Result<NationCapitalMigrationResp> migrateCapital(
+            @RequestHeader(CityController.PLAYER_HEADER) String playerId,
+            @RequestBody JsonNode body) {
+        requirePlayer(playerId);
+        return Result.ok(capitalMigration.move(playerId, migrationRequest(body)));
+    }
+
+    private NationCapitalMigrationReq migrationRequest(JsonNode body) {
+        if (body == null || !body.isObject()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "迁都请求体必须是JSON对象");
+        }
+        var fields = body.fieldNames();
+        while (fields.hasNext()) {
+            String field = fields.next();
+            if (!field.equals("requestId") && !field.equals("x") && !field.equals("y")) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "迁都请求含未声明字段");
+            }
+        }
+        JsonNode requestId = body.get("requestId");
+        JsonNode x = body.get("x");
+        JsonNode y = body.get("y");
+        if (requestId == null || !requestId.isTextual()
+                || x == null || !x.isIntegralNumber() || !x.canConvertToLong()
+                || y == null || !y.isIntegralNumber() || !y.canConvertToLong()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "迁都请求必须包含字符串requestId和整数坐标x/y");
+        }
+        try {
+            return objectMapper.treeToValue(body, NationCapitalMigrationReq.class);
+        } catch (JsonProcessingException invalidRequest) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "迁都请求格式无效", invalidRequest);
+        }
     }
 
     /**

@@ -4,11 +4,17 @@ import com.ironoath.core.army.ArmyRepository;
 import com.ironoath.core.army.ArmyState;
 import com.ironoath.core.march.March;
 import com.ironoath.core.march.MarchRepository;
+import com.ironoath.core.nation.Nation;
 import com.ironoath.core.social.Rally;
 import com.ironoath.core.world.Coord;
 import com.ironoath.core.world.WorldGenerator;
 import com.ironoath.web.dto.generated.MarchIdReq;
+import com.ironoath.web.dto.generated.NationCapitalMigrationReq;
+import com.ironoath.web.nation.NationRulesAssembler;
+import com.ironoath.web.nation.NationStore;
+import com.ironoath.web.service.CapitalMigrationService;
 import com.ironoath.web.service.MarchAppService;
+import com.ironoath.web.service.WorldTargets;
 import com.ironoath.web.social.SocialStore;
 import com.ironoath.web.world.TargetOccupationStore;
 import com.ironoath.web.world.TargetOperationStore;
@@ -30,6 +36,11 @@ import static org.mockito.Mockito.*;
 @ActiveProfiles("test") @DirtiesContext(classMode=DirtiesContext.ClassMode.AFTER_CLASS)
 class StrategicWithdrawalEndpointFlowTest {
     @Autowired MarchAppService service;
+    @Autowired CapitalMigrationService capitalMigration;
+    @Autowired NationStore nations;
+    @Autowired NationRulesAssembler nationRules;
+    @Autowired com.ironoath.config.ConfigRegistry configs;
+    @Autowired com.ironoath.core.world.WorldRepository world;
     @Autowired MarchRepository marches;
     @Autowired ArmyRepository armies;
     @Autowired TargetOccupationStore owners;
@@ -75,5 +86,72 @@ class StrategicWithdrawalEndpointFlowTest {
         doCallRealMethod().when(operations).compareAndSet(any(),anyLong());
         service.processDue(m.playerId(),at+200);
         assertThat(marches.findById(m.id())).isEmpty();assertThat(armies.findByPlayerId(m.playerId()).orElseThrow().totalTroops()).isEqualTo(2L);
+    }
+
+    @Test void oldCapitalGarrisonMustActuallyReturnHomeBeforeMigration(){
+        String suffix=UUID.randomUUID().toString();String king="owned-capital-king-"+suffix;
+        long now=System.currentTimeMillis();
+        var capital=WorldTargets.from(configs).targets().stream()
+                .filter(t->t.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.CAPITAL)
+                .findFirst().orElseThrow();
+        String allianceId="owned-capital-alliance-"+suffix;
+        String nationId="owned-capital-nation-"+suffix;
+        Nation nation=Nation.found(nationId,"返城后迁都国",king,allianceId,
+                capital.coord().x(),capital.coord().y(),now,nationRules.rules());
+        assertThat(nations.insertIfAbsent(nation)).isTrue();
+
+        String rallyId="owned-capital-rally-"+suffix;
+        String marchId="owned-capital-march-"+suffix;
+        Map<String,Long> units=Map.of("unit_infantry_t4",2L);
+        Coord home=Coord.of(Math.max(0,capital.coord().x()-1),capital.coord().y());
+        var march=new March(marchId,king,home,capital.coord(),now,now+1L,units,List.of(),
+                100L,1,March.TargetType.STRATEGIC_TARGET,capital.definition().id(),March.Action.ATTACK);
+        march.attachToRally(rallyId);march.arrive(now+1L);march.holdStrategicVictory(Map.of(king,units));
+        var rally=Rally.restore(rallyId,Rally.Scope.NATION,nationId,king,2,1,now,now+1L,
+                Map.of(king,new Rally.Participant(king,units,List.of())),Rally.Status.PREPARING,null,
+                capital.coord().x(),capital.coord().y(),"STRATEGIC_TARGET",1);
+        rally.depart(now+1L);rally.arrive();social.saveRally(rally,0);
+        armies.insertIfAbsent(king,new ArmyState());marches.insertIfAbsent(march);
+        var prior=owners.findByTargetIds(List.of(capital.definition().id())).get(capital.definition().id());
+        long expected=prior==null?0:prior.version();
+        assertThat(owners.compareAndSet(new TargetOccupationStore.Snapshot(capital.definition().id(),
+                WorldGenerator.EntityType.CAPITAL,capital.coord().x(),capital.coord().y(),nationId,nation.name(),
+                now,"owned-capture-"+suffix,expected+1,TargetOccupationStore.Garrison.stationed(marchId)),expected)).isTrue();
+
+        assertMigrationBlocked(king,nationId);
+        var recall=service.recall(king,new MarchIdReq(UUID.randomUUID().toString(),marchId));
+        assertThat(marches.findById(marchId).orElseThrow().status()).isEqualTo(March.Status.RETURNING);
+        assertMigrationBlocked(king,nationId);
+
+        service.processDue(king,recall.returnArriveAt()+100L);
+        assertThat(marches.findById(marchId)).isEmpty();
+        var completedWithdrawal=operations.findByTargetId(capital.definition().id()).orElseThrow();
+        Coord destination=freeMigrationCoord();
+        capitalMigration.move(king,new NationCapitalMigrationReq(UUID.randomUUID().toString(),destination.x(),destination.y()));
+        var moved=nations.findById(nationId).orElseThrow();
+        assertThat(moved.capitalX()).isEqualTo(destination.x());
+        assertThat(moved.capitalY()).isEqualTo(destination.y());
+        assertThat(operations.findByTargetId(capital.definition().id()).orElseThrow())
+                .as("迁都不改已冻结的撤防/COMBAT目标锚点").isEqualTo(completedWithdrawal);
+    }
+
+    private void assertMigrationBlocked(String king,String nationId){
+        Coord probe=freeMigrationCoord();
+        var failure=catchThrowable(()->capitalMigration.move(king,
+                new NationCapitalMigrationReq(UUID.randomUUID().toString(),probe.x(),probe.y())));
+        assertThat(failure).isInstanceOf(com.ironoath.common.BizException.class);
+        assertThat(((com.ironoath.common.BizException)failure).code())
+                .isEqualTo(com.ironoath.common.ErrorCode.MARCH_STATE_INVALID.code());
+        assertThat(nations.findById(nationId).orElseThrow().capitalX())
+                .isEqualTo(WorldTargets.from(configs).targets().stream()
+                        .filter(t->t.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.CAPITAL)
+                        .findFirst().orElseThrow().coord().x());
+    }
+
+    private Coord freeMigrationCoord(){
+        int edge=Math.toIntExact(configs.longParam("WORLD_SIZE")-1L);
+        return List.of(Coord.of(0,0),Coord.of(edge,edge),Coord.of(0,edge),Coord.of(edge,0))
+                .stream().filter(coord->!WorldTargets.from(configs).reserved(coord))
+                .filter(coord->world.cityAt(coord).isEmpty()).findFirst().orElseThrow();
     }
 }
