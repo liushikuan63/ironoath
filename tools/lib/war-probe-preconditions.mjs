@@ -17,3 +17,18 @@ export function fatigueWarAction(response) {
   if(response.data?.hasWar===true && response.data.phase==='SETTLED')return 'DECLARE';
   return 'UNVERIFIED';
 }
+
+/**
+ * A strategic March can expose FIGHTING while its persisted COMBAT recovery is
+ * still pending. The War gate-count receipt plus a non-active March state is
+ * the completion boundary; a return without a War-count change is a terminal
+ * no-capture result. Unknown/missing state stays pending.
+ */
+export function gateBattleOutcome({marchStatus,previousGateCount,currentGateCount}={}) {
+  if(!Number.isInteger(previousGateCount) || previousGateCount<0
+      || !Number.isInteger(currentGateCount) || currentGateCount<previousGateCount)return 'UNVERIFIED';
+  if(marchStatus==='MARCHING' || marchStatus==='FIGHTING')return 'PENDING';
+  if(currentGateCount>previousGateCount)return 'CAPTURED';
+  if(marchStatus==='RETURNING' || marchStatus==='ANNIHILATED')return 'NO_CAPTURE';
+  return 'PENDING';
+}

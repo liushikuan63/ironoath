@@ -1,7 +1,7 @@
 # A线：国战奖分恢复与有效时长分摊
 
 **目标**：让所有惰性结算入口都能从持久计划恢复奖分，重复投递不重复入榜；固定bonus依已裁的历史有效成员时长比例分摊。
-**当前状态**：A1/A3/A4恢复链路已集成；A2历史有效时长比例分摊已有内存反例和新的Mongo跨存储串联用例。新用例从Mongo Alliance/Nation成员区间计算13/10/3/5冻结奖分，首个WAR回执落盘后故障，再用全新War/Season Store恢复且禁止重读历史；定向1/0/0/0，见开发包§四 #2497。全量test/build通过；A2独立Q复核和真实SIEGE后榜分仍未通过，A线不标整批完成。
+**当前状态**：A1–A4定向实现与Mongo恢复证据已集成；A2由持久Alliance/Nation成员区间计算冻结分配`13/10/3/5`，首个WAR回执落盘后故障，再由全新War/Season Store恢复且不重读成员历史，定向1/0/0/0。独立Q1-A复核PASS。隔离Mongo/Redis真实HTTP链路现已完成四关、进入SIEGE并结算，50/50合成参战成员读回正数WAR榜分；这只证明本机dev候选，不代表生产服、设备或真实渠道。整批状态仍按B线未完成交叉并发审查和Q总验收记录。
 **规格**：[B13](../../B13_国家与国战.md) #2459/#2461/#2473、[开发包§零](../../待完善收口_VibeCoding开发包.md#current-execution)。技术栈沿当前Java17/Maven与内存/Mongo双实现。
 
 ## 写入边界
@@ -20,10 +20,10 @@
 
 ## 分格与可失败判据
 
-- [ ] **A1 复现首红**：现跑`WarEndpointTest.settledWarRetriesFailedSeasonAwardFromDurableState`和`declaringSettlesTheExpiredWarWithoutAPanelRead`。保留真实断言及最终退出码；2026-10-25历史RED不是本轮结果。
-- [ ] **A2 历史区间与分配（用户已确认基数）**：覆盖加入/退出/重入、联盟退国/解散、区间交集、零有效时长、同一事实不同读取顺序。每名成员按其本人在该国的有效时长折算自己的全战期bonus；有效区间先按玩家合并，再按`floor(bonus × memberMillis / warDurationMillis)`向下取整，小数余数不转给其他成员；不改变每人全战期额度。源码和反例测试已编辑，尚未编译/执行；无Mongo URI不能运行集成测试。
-- [ ] **A3 持久恢复**：在SETTLED落盘后、首人落榜后、部分成功后故障；换新Store实例重读可继续。旧赛季和受益人不漂移；重复请求/并发重试不给双份分。不能用重放`accumulate`代替幂等凭证。
-- [ ] **A4 生产接线**：读面板和再次宣战都进入同一恢复机制；计数所有`settleIfExpired`生产调用点，拒绝只修一个入口。关联Rank/War/Season与历史存储测试通过后交COORD集成。
+- [x] **A1 复现首红**：`WarEndpointTest.settledWarRetriesFailedSeasonAwardFromDurableState`和`declaringSettlesTheExpiredWarWithoutAPanelRead`均在集成全量套件实际执行；历史RED不代替本轮GREEN。
+- [x] **A2 历史区间与分配（用户已确认基数）**：覆盖加入/退出/重入、联盟退国/解散、区间交集、零有效时长、同一事实不同读取顺序。每名成员按其本人在该国的有效时长折算自己的全战期bonus；有效区间先按玩家合并，再按`floor(bonus × memberMillis / warDurationMillis)`向下取整，小数余数不转给其他成员；不改变每人全战期额度。Mongo service级串联用例计算`13/10/3/5`并经首回执故障、新Store恢复验证。
+- [x] **A3 持久恢复**：SETTLED落盘、首人WAR回执真实写入后注入故障；换新Store实例重读继续。旧赛季和受益人不漂移；重复恢复不重复加分。`WarAwardMongoRecoveryEndpointTest`目标用例1/0/0/0。
+- [x] **A4 生产接线**：`WarAppService.settleIfExpired`现有生产调用点`WarAppService.java:158,373`均进入统一恢复出口；WAR面板读取与再次宣战两路径均复核。
 
 ## 验证入口与停止条件
 
@@ -45,5 +45,5 @@ mvn -Dmaven.repo.local="${IRONOATH_TASK_M2:?}" -Dironoath.test.mongo.uri="${IRON
 | 格 | 状态 | 基线/候选 | 验证与证据 | 未做/下一步 |
 |---|---|---|---|---|
 | A-R0 | IN_PROGRESS | 文档基线5fbf4e4c；代码提交f401fdae | `SocialStore.allianceMemberEpochs`已接内存/Mongo历史反查；`SocialStoreEquivalenceTest`现跑30/0/0/0，Mongo与内存用例全执行；A轮测试资源已登记为专属M2与自有临时Mongo | 仍待整批集成及Q独立验收；历史成员计算的Mongo服务级联动未与War投递放在同一测试中 |
-| A1/A3/A4 | A1/A4 TARGETED_GREEN；A3 CROSS_MONGO_RECOVERY_GREEN | 提交f401fdae；新增`WarAwardMongoRecoveryEndpointTest` | 生产`settleIfExpired`仅有`WarAppService.java:158,373`两处，均进入统一恢复出口；`WarEndpointTest` 28/0/0/0、`RankEndpointTest` 20/0/0/0；新增Mongo故障用例在首个WAR回执真实写入后注入中断，用全新War/Season Store及WarAppService恢复，保留原计划且逐人只入账一次，1/0/0/0；随机owned数据库标记删除并读回为空 | 仍需Q独立复核冻结候选；A2跨国家历史与奖分分配的组合验收仍由分层测试证明，不据此标B13完整 |
-| A2 | MONGO_INTEGRATED_GREEN; Q_REVIEW_PENDING | #2473/#2477用户裁决；集成候选树`58a808207d4b7607e52380612ea593620e26fdfe`；每名成员自己的全战期额度按持久有效时长折算 | `RankEndpointTest`现跑20/0/0/0覆盖区间交集、重入合并取整、跨国间断、战后成员排除、零时长及重叠拒绝；新增`WarAwardMongoRecoveryEndpointTest.persistedMongoMembershipHistoryFreezesProratedAwardsBeforeRestartRecovery`在真实Mongo SocialStore/NationStore历史上产生13/10/3/5，首回执后中断再由新Store恢复1/0/0/0；临时history DB drop并admin枚举为空 | Q须独立复核跨国家历史/重启；实时战斗探针仍未进入SIEGE，完整线上战斗与榜单奖励仍为PREREQ，不能据分层/测试库证据标B13全闭 |
+| A1/A3/A4 | Q1_A_PASS; TARGETED_GREEN; CROSS_MONGO_RECOVERY_GREEN | 集成源码树`c94253ef`及后续文档提交；新增`WarAwardMongoRecoveryEndpointTest` | 生产`settleIfExpired`仅`WarAppService.java:158,373`两处且均进入统一恢复出口；`WarEndpointTest`28/0/0/0、`RankEndpointTest`20/0/0/0；首个WAR回执真实写入后故障，用新War/Season Store与WarAppService恢复原计划且不重复入账，1/0/0/0；Mongo owner库删除并读回为空 | Q独立复核已覆盖本线；生产服、设备和真实渠道仍保持未验 |
+| A2 | MONGO_INTEGRATED_GREEN; Q1_A_PASS; LIVE_SIEGE_RANK_PASS | #2473/#2477用户裁决；集成源码树`c94253ef`；每名成员自己的全战期额度按持久有效时长折算 | `RankEndpointTest`20/0/0/0覆盖区间交集、重入合并取整、跨国间断、战后成员排除、零时长及重叠拒绝；新增`WarAwardMongoRecoveryEndpointTest.persistedMongoMembershipHistoryFreezesProratedAwardsBeforeRestartRecovery`以真实Mongo SocialStore/NationStore历史产生13/10/3/5，首回执后中断再由新Store恢复1/0/0/0，history DB drop并枚举为空；隔离live真实四关、SIEGE结算后50/50合成成员WAR榜正分 | live仅本机dev、合成账号和隔离Mongo/Redis；微信release、设备和真实玩家数据不在本证据范围 |

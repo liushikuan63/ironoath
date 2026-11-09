@@ -1,6 +1,6 @@
-# 多任务协同入口（2026-10-31）
+# 多任务协同入口（2026-11-10）
 
-目标：把当前已明确的工作分成可单独领取、验证和交接的任务包，避免同文件、生成物、数据库和运行实例发生并发写入。源码范围以基线 `5fbf4e4c8f3a74db596206292e1c2ae2dd52f81a` 为准；当前只是分工文档，**没有启动 A/B/C/Q 或转移旧源码写入权**。
+目标：把当前已明确的工作分成可单独验证和交接的任务包，避免同文件、生成物、数据库和运行实例发生并发写入。路径分工基线仍为`5fbf4e4c8f3a74db596206292e1c2ae2dd52f81a`；A/B/C已由COORD在主树串行集成，当前B13协调批次的唯一实现持有人为`.qoder-work-queue.md`登记的thread `01a1c0e0-a0f5-78e1-ae57-fb170c3d4bb4`，Q只保留独立验收角色。R0接口与锁顺序已冻结；各线当期证据见各自任务卡与队列，不把本分工文档当运行锁或验收结论。
 
 总状态沿用 [开发包 §零](../../待完善收口_VibeCoding开发包.md#current-execution)，原始产品规格仍在 Bxx。这里保存分工和交接规则；实际 owner、进度、资源和下一步只由协调者写入既有 `.qoder-work-queue.md`。本文件与 [ownership.json](./ownership.json) 是声明，不是自动锁；路径无冲突也不等于业务语义无冲突。
 
@@ -18,10 +18,10 @@
 
 ## 2. 开工前的 R0（短而必须完成）
 
-- [ ] COORD 核对主树/候选SHA、dirty与暂存区、原B13及支付文件owner。旧队列中的“active”和旧线程ID只作线索；没有释放或当前归属证据时，相关线只能只读准备，其他已明确归属的线可继续。
-- [ ] A/B 提交最小共享接口提案。A复用已有两层成员历史；B复用合法撤防返城链。COORD 确定接口/字段/错误边界和锁顺序，按需要实现最小共享前置，单独验证、落档、提交。
-- [ ] 用真实提交SHA发布接口基线，A/B按该基线开始依赖代码；接口尚未冻结时只能做已有接口范围内的反证、案例和设计，不能各自假定签名后并行接线。C只需本线归属确认即可开始。
-- [ ] COORD 为每线登记真实 `thread_id / worktree / branch / base_sha / allowed_paths / changed_interface / resource_owner / next_step / evidence`。未运行标 `NOT_STARTED`，前提不足标 `PREREQ`；不写虚假的owner或测试通过。
+- [x] COORD 核对主树/候选SHA、dirty与暂存区、原B13及支付文件owner。旧队列中的“active”和旧线程ID只作线索；当前任务持有人与保护边界已登记。
+- [x] A/B 提交最小共享接口提案。A复用两层成员历史；B复用合法撤防返城链。COORD已冻结接口/字段/错误边界与锁顺序，必要共享前置已单独验证、落档、提交。
+- [x] 用真实提交SHA发布接口基线，A/B从该基线继续；不从未提交签名或文档假设派生兼容实现。C本线归属已确认。
+- [x] COORD为当前批次登记真实`thread_id / worktree / branch / base_sha / allowed_paths / changed_interface / resource_owner / next_step / evidence`于既有队列；未执行项仍标`NOT_STARTED`，外部前提仍标`PREREQ`。
 
 | 冻结项 | A提供 | B提供 | COORD交付 |
 |---|---|---|---|

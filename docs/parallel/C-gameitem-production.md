@@ -1,7 +1,7 @@
 # C线：生产GameItem-only与旧回调兼容
 
 **目标**：落实已确认政策：生产拒绝legacy `/pay/callback`履约，仅开发/测试保留；production readiness按真实GameItem要求判断。
-**当前状态**：C候选`37c8c1f3`已集成；生产`/pay/callback`直接拒绝，不产生履约副作用，dev/test仍保留旧合同。当前合并候选的`PayEndpointTest`30/0/0/0、`ProductionReadinessTest`14/0/0/0，完整服务端/客户端测试与构建均通过。未读真实商户凭据、未下真实订单或扣款；C4沙箱/设备和Q独立复审仍未验证。
+**当前状态**：C候选`37c8c1f3`已集成；生产`/pay/callback`在履约服务前明确拒绝且不产生订单/资源副作用，dev/test仍保留兼容合同；GameItem readiness负控保留。独立Q1-C复核PASS，`PayEndpointTest`30/0/0/0、`ProductionReadinessTest`14/0/0/0，整批全量门禁和构建已有通过报告。未读真实商户凭据，未下真实订单、扣款或退款；这些外部支付与设备流程仍未验。
 **规格**：[B19 #2473](../../B19_付费发货与礼包弹窗.md)、[开发包§零](../../待完善收口_VibeCoding开发包.md#current-execution)；当前渠道是`wx.requestMidasPaymentGameItem`，不另起支付集成。
 
 ## 写入边界
@@ -12,10 +12,10 @@
 
 ## 分格与可失败判据
 
-- [ ] **C1 生产拒绝RED**：以实际生产路径选择条件发送legacy回调，证明当前会到旧处理器；期望修后明确拒绝且没有订单履约/资源发放副作用。只mock readiness的方法调用不足以证明路由隔离。
-- [ ] **C2 最小政策实现**：生产旧route不可履约，开发/测试继续原合同；GameItem必需配置缺失、错误签名/应用/环境身份仍拒绝。不能仅移除旧verifier门禁后宣布生产ready。
-- [ ] **C3 兼容回归**：覆盖生产与非生产profile组合、重复回调、缺头ACK/requestId、签名/金额/玩家/环境错误及未知渠道结果。保留当前GameItem合同，不猜取消码，不改订单金额。
-- [ ] **C4 交付边界**：本地测试证明代码政策和fail-closed；真实商户、商品、沙箱交易/回调/退款及设备另交Q列前提，不能用测试密钥证据替代。
+- [x] **C1 生产拒绝**：真实`PayController`生产策略在调用履约服务前拒绝legacy回调，订单与资源无履约副作用；有效拒绝和保持`PENDING`均有端点断言。
+- [x] **C2 最小政策实现**：生产旧route不可履约，开发/测试保留原合同；GameItem必要配置缺失、签名/应用/环境身份错误仍拒绝。未因关闭旧route而放宽production readiness。
+- [x] **C3 兼容回归**：覆盖生产与非生产profile组合、重复回调、缺头ACK/requestId、签名/金额/玩家/环境错误及未知渠道结果。保留当前GameItem合同，不猜取消码、不改订单金额。
+- [x] **C4 本地交付边界**：本地测试证明政策和fail-closed，Q1-C独立复核通过；真实商户、商品注册、沙箱交易/回调/退款及设备流程明确留作Q5外部前提，未以测试密钥代替。
 
 ## 验证入口
 
@@ -37,4 +37,4 @@ mvn -Dmaven.repo.local="${IRONOATH_TASK_M2:?}" -Dironoath.test.mongo.uri="${IRON
 | 格 | 状态 | 基线/候选 | 验证与证据 | 未做/下一步 |
 |---|---|---|---|---|
 | C-R0 | IN_PROGRESS | 来源分支提交37c8c1f3；主树集成提交e6faa312 | ownership限定的五文件差异，`git diff --check` EXIT=0；专属M2=`D:/Java/maven/m2-ironoath-c-20261109`、Mongo `127.0.0.1:27029`、Redis `redis://127.0.0.1:6381`均为本线资源 | 已集成并在主树重跑目标套件；仍需Q独立复核；真实渠道保持未验 |
-| C1-C3 | TARGETED_GREEN; Q_REVIEW_PENDING | 合并候选树`58a808207d4b7607e52380612ea593620e26fdfe`；隔离Mongo/Redis、JDK17 | `PayEndpointTest`30/0/0/0与`ProductionReadinessTest`14/0/0/0复跑；同一合并候选完整`test.sh` game-web2729/0/0/0、balance-sim18/0/0/0、客户端1424/1424，`build.sh`EXIT=0。生产策略经真实Controller拒绝legacy回调，dev/test仍走兼容路径 | 全prod启动、真实AppKey/商品注册、沙箱支付/渠道回调/退款/设备与独立Q复审未做；不触真实订单/玩家库 |
+| C1-C4 | TARGETED_GREEN; Q1_C_PASS | 集成源码`c94253ef`；隔离Mongo/Redis、JDK17 | `PayEndpointTest`30/0/0/0、`ProductionReadinessTest`14/0/0/0；真实Controller生产拒绝legacy回调且订单保持PENDING、dev/test兼容；独立Q1-C复核PASS。整批`test.sh`game-web2729/0/0/0、balance-sim18/0/0/0、客户端1424/1424及`build.sh`EXIT=0已有报告 | 全prod启动、真实AppKey/商品注册、沙箱交易/渠道回调/退款/设备不在本机验收范围；不触真实订单/玩家库 |
