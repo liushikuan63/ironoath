@@ -116,6 +116,7 @@
         "server/game-web/src/test/java/com/ironoath/web/CapitalMigrationEndpointTest.java",
         "server/game-web/src/test/java/com/ironoath/web/CapitalMigrationMongoEndpointTest.java",
         "server/game-web/src/test/java/com/ironoath/web/CapitalMigrationRedissonMongoProbe.java",
+        "server/game-web/src/test/java/com/ironoath/web/store/CapitalMigrationRedissonMongoRaceProbe.java",
         "server/game-web/src/test/java/com/ironoath/web/service/CapitalMigrationServicePolicyTest.java"
       ],
       "shared_change_requests": [
