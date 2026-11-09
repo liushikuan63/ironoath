@@ -11,6 +11,8 @@ import com.ironoath.web.dto.generated.ViewportReq;
 import com.ironoath.common.time.TimeService;
 import com.ironoath.web.service.PowerService;
 import com.ironoath.web.service.PublicEnemyBroadcaster;
+import com.ironoath.web.service.WarCapitalTargetResolver;
+import com.ironoath.web.service.WorldTargets;
 import com.ironoath.web.bot.BotSpawnService;
 import com.ironoath.web.ws.PushGateway;
 import com.ironoath.web.store.memory.InMemoryTargetOccupationStore;
@@ -28,6 +30,41 @@ import static org.mockito.Mockito.*;
 
 /** Map reads must project the frozen pre-COMBAT owner while a multi-store recovery is still pending. */
 class StrategicCombatPendingMapProjectionTest {
+    @Test void completedCombatKeepsItsFrozenOldCapitalAnchorAfterDynamicTargetMoves() {
+        var configs=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
+        var resolver=mock(WarCapitalTargetResolver.class);
+        var oldCoord=Coord.of(100,200);var newCoord=Coord.of(300,301);
+        var oldTargets=WorldTargets.from(configs).withCapitalCoord(oldCoord);
+        var newTargets=WorldTargets.from(configs).withCapitalCoord(newCoord);
+        var oldDirectory=new WarCapitalTargetResolver.Directory(
+                oldTargets,1L,"n_target",1L,1_700_000_000_000L);
+        doReturn(oldDirectory).when(resolver).resolve(any(ConfigRegistry.class));
+        var frozenBattle=StrategicCombatSlotTest.dynamicCapitalBattle(2405,oldCoord,resolver);
+        assertThat(frozenBattle.target().x()).isEqualTo(oldCoord.x());
+        assertThat(frozenBattle.target().y()).isEqualTo(oldCoord.y());
+        var operations=new InMemoryTargetOperationStore();
+        var pending=TargetOperationStore.Snapshot.combat(1,false,
+                TargetOperationStore.CombatPlan.create(frozenBattle,1L));
+        assertThat(operations.compareAndSet(pending,0L)).isTrue();
+        var completed=TargetOperationStore.Snapshot.combat(2,true,pending.combatPlan());
+        assertThat(operations.compareAndSet(completed,1L)).isTrue();
+        var newDirectory=new WarCapitalTargetResolver.Directory(
+                newTargets,2L,"n_target",2L,1_700_000_000_000L);
+        doReturn(newDirectory).when(resolver).resolve(any(ConfigRegistry.class));
+
+        var app=new WorldAppService(configs,mock(WorldRepository.class),mock(PlayerRepository.class),
+                mock(TimeService.class),mock(PowerService.class),mock(PublicEnemyBroadcaster.class),
+                mock(BotSpawnService.class),mock(PushGateway.class),new InMemoryTargetOccupationStore(),
+                operations,resolver);
+
+        assertThat(app).isNotNull();
+        assertThat(operations.findByTargetId("capital_center")).contains(completed);
+        assertThat(operations.findByTargetId("capital_center").orElseThrow().combatPlan().battle().target().x())
+                .isEqualTo(oldCoord.x());
+        assertThat(operations.findByTargetId("capital_center").orElseThrow().combatPlan().battle().target().y())
+                .isEqualTo(oldCoord.y());
+    }
+
     @Test void mapDoesNotExposePartiallyWrittenCombatOwnershipBeforeOperationCompletion() {
         var configs=ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
         var battle=StrategicCombatSlotTest.battle(2402,true,true);var plan=TargetOperationStore.CombatPlan.create(battle,1);

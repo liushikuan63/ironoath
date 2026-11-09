@@ -109,6 +109,24 @@ public interface TargetOccupationStore {
      */
     boolean compareAndSet(Snapshot next, long expectedVersion);
 
+    /**
+     * Move the dynamic capital slot after a Nation capital migration while preserving its current owner,
+     * capture time, operation provenance, known-empty garrison and ownership history. This is not an ownership
+     * transfer. The expected snapshot is the CAS anchor, and the version advances once.
+     */
+    boolean reanchorEmptyCapital(Snapshot expected, int x, int y);
+
+    static Snapshot reanchoredEmptyCapital(Snapshot expected, int x, int y) {
+        if (expected == null || expected.kind() != WorldGenerator.EntityType.CAPITAL
+                || expected.garrison() == null || expected.garrison().kind() != Garrison.Kind.EMPTY
+                || x < 0 || y < 0 || (expected.x() == x && expected.y() == y)) {
+            throw new IllegalArgumentException("王城归属锚点仅可从已知空驻军状态迁移到不同的合法坐标");
+        }
+        return new Snapshot(expected.targetId(), expected.kind(), x, y, expected.nationId(),
+                expected.nationName(), expected.capturedAt(), expected.operationId(),
+                Math.addExact(expected.version(), 1L), expected.garrison(), expected.ownershipHistory());
+    }
+
     static void validateWrite(Snapshot next, long expectedVersion) {
         if (next==null || expectedVersion<0 || next.version()!=Math.addExact(expectedVersion,1L)) {
             throw new IllegalArgumentException("归属版本必须等于期望版本加一");

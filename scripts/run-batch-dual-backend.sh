@@ -49,6 +49,9 @@ JDK="/d/Java/jdk/microsoft-jdk-17/bin/java.exe"
 # "那一列静默不存在"的假红，实测见 收口清单 #773），而它同时是另一条会话活 JVM 的文件句柄 ——
 # 不能为了换新就把它覆盖掉。
 JAR="${GAME_WEB_JAR:-server/game-web/target/game-web.jar}"
+JAR_NAME="$(basename "$JAR")"
+# A unique marker distinguishes this batch's JVMs from another local server. Do not use Bash `$!` as a Win32 PID.
+RUN_OWNER="ironoath-batch-$(date +%Y%m%d%H%M%S)-$$-$RANDOM"
 # 本地批跑自 mint 的运维令牌：不是凭据，是**这一批自己发的临时值**，与 `scripts/verify-runtime.sh:18`
 # 用的是同一个变量名与同一个默认串（取证与三段判据见 run-runtime-probes.sh 的 token 注释、收口清单 #776）。
 # ⚠️ 只在"后端是本脚本起的"时成立 —— 打到别人的后端时我们无从知道它的令牌，那时探针会记 NO-RUN 而不是红。
@@ -66,26 +69,39 @@ wait_up() {
 # 端口是否还有人听 —— 用 /dev/tcp 秒级探一下（`wait_up` 那条要 70 秒，不能拿来复验清理）
 port_open() { (echo > "/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 
-# 只杀真正占口的进程：按 -State Listen 的 OwningProcess 杀（TimeWait 的 OwningProcess=0）
-# ⚠️ 判据必须是 `":<端口>$"`（端口在 local-address 字段的**末尾**，后面没有冒号）——
-#    原先写的是 `$2 ~ "8199:"`，netstat 给的是 `0.0.0.0:8199` / `[::]:8199`，**永远匹配不上**，
-#    于是这个函数一直是空转、日志却照样打"[dual] 后端已收"（2026-10-07 实测：一轮批跑后
-#    三台 JVM 全活着，旧判据命中 0 条、新判据命中 3 条 PID ⇒ 同刻对照）。
-#    后果就是本文件上面自己写过的那条：活 JVM 持着 game-web.jar ⇒ `scripts/build.sh` 报
-#    'Unable to rename …' ⇒ 下一位会以为是自己编译坏了。
-kill_listen() {
-  local p="$1" pids
-  pids="$(netstat -ano 2>/dev/null | awk -v re=":${p}\$" '$2 ~ re && $4 == "LISTENING" {print $5}' | sort -u)"
-  for q in $pids; do
-    [ "$q" != "0" ] && taskkill //F //PID "$q" >/dev/null 2>&1 || true
+# Resolve Windows PIDs by the unique owner marker, jar, and port. This is deliberately independent of netstat's
+# localized state column and does not rely on MSYS `$!`, which is not the Win32 PID accepted by taskkill.
+game_web_pids_for_port() {
+  local p="$1"
+  powershell.exe -NoProfile -NonInteractive -File scripts/runtime-batch-owner.ps1 \
+    -Action find -Port "$p" -Owner "$RUN_OWNER" -JarName "$JAR_NAME" 2>/dev/null | tr -d '\r'
+}
+
+stop_owned_backends() {
+  local failed=0 p pids pid remaining
+  for p in "$BACKEND_PORT" "$BOOST_PORT" "$WAR_PORT"; do
+    pids="$(game_web_pids_for_port "$p")"
+    for pid in $pids; do
+      if ! powershell.exe -NoProfile -NonInteractive -File scripts/runtime-batch-owner.ps1 \
+          -Action stop -Port "$p" -Owner "$RUN_OWNER" -JarName "$JAR_NAME" -ProcessId "$pid" \
+          >/dev/null 2>&1; then
+        echo "[dual] ⚠️ 无法确认/停止本批后端 PID=$pid port=$p；拒绝终止其他进程" >> "$LOG"
+        failed=1
+      fi
+    done
   done
-  # 收完必须**复验**：不验的话"清理"这件事本身就是一个不可失败的断言（上面那个空转判据就是这么活下来的）
   sleep 2
-  if port_open "$p"; then
-    echo "[dual] ⚠️ 端口 $p 仍有后端在听（清理没生效）：PID=$(netstat -ano 2>/dev/null | awk -v re=":${p}\$" '$2 ~ re && $4 == "LISTENING" {print $5}' | sort -u | tr '\n' ' ')" >> "$LOG"
-    return 1
-  fi
-  return 0
+  for p in "$BACKEND_PORT" "$BOOST_PORT" "$WAR_PORT"; do
+    remaining="$(game_web_pids_for_port "$p")"
+    if [ -n "$remaining" ]; then
+      echo "[dual] ⚠️ 本批后端仍持有 game-web.jar：port=$p pid=$(echo "$remaining" | tr '\n' ' ')" >> "$LOG"
+      failed=1
+    elif port_open "$p"; then
+      echo "[dual] ⚠️ port=$p 仍被占用；进程不属于本批，未终止" >> "$LOG"
+      failed=1
+    fi
+  done
+  return "$failed"
 }
 
 # 2026-10-05 17:20x 补：**报告**那些「在跑 game-web 但不占本脚本两个端口」的后端 JVM。
@@ -103,7 +119,9 @@ report_stray_backends() {
     echo "[dual] ⚠️ 另有 game-web 后端在跑（pid: $(echo "$stray" | tr '\n' ' ')）——不是本脚本起的，不代杀" >> "$LOG"
     echo "[dual] ⚠️ 它们会占着 server/game-web/target/game-web.jar ⇒ 之后跑 scripts/build.sh 会报" >> "$LOG"
     echo "[dual]    'Unable to rename …' ⇒ 需要先自己停掉它们" >> "$LOG"
+    return 1
   fi
+  return 0
 }
 
 run_probe_batch() {
@@ -117,13 +135,11 @@ run_probe_batch() {
 }
 
 finish_probe_batch() {
-  local batch_exit
+  local batch_exit left=''
   if run_probe_batch "$@"; then batch_exit=0; else batch_exit=$?; fi
   echo "BATCH_EXIT=$batch_exit" >> "$LOG"
-  local left=''
-  for p in "$BACKEND_PORT" "$BOOST_PORT" "$WAR_PORT"; do
-    kill_listen "$p" || left="$left $p"
-  done
+  stop_owned_backends || left=' owned JVM cleanup'
+  trap - EXIT
   # "后端已收"这句话**必须由复验说了算**：原先它是无条件打印的，而清理函数其实一直在空转
   if [ -z "$left" ]; then
     echo "[dual] 后端已收（三台端口复验过：$BACKEND_PORT / $BOOST_PORT / $WAR_PORT 都不再监听）" >> "$LOG"
@@ -143,7 +159,8 @@ if [ "${1:-}" = "--self-test-exit-propagation" ]; then
   selftest_batch="$2"; selftest_cleanup="$3"; LOG="$4"
   mkdir -p "$(dirname "$LOG")"; : > "$LOG"
   run_probe_batch() { return "$selftest_batch"; }
-  kill_listen() { return "$selftest_cleanup"; }
+  stop_owned_backends() { return "$selftest_cleanup"; }
+  port_open() { return 1; }
   finish_probe_batch
   exit $?
 fi
@@ -155,12 +172,21 @@ mkdir -p "$(dirname "$LOG")"
 mkdir -p "$LOGDIR" "$BACKEND_TMP_DIR"
 : > "$LOG"
 
-echo "[dual] 收掉旧后端（$BACKEND_PORT / $BOOST_PORT / $WAR_PORT）" >> "$LOG"
-kill_listen "$BACKEND_PORT"
-kill_listen "$BOOST_PORT"
-kill_listen "$WAR_PORT"
-report_stray_backends
+echo "[dual] 检查端口与JAR持有者（$BACKEND_PORT / $BOOST_PORT / $WAR_PORT）" >> "$LOG"
+for p in "$BACKEND_PORT" "$BOOST_PORT" "$WAR_PORT"; do
+  if port_open "$p"; then
+    echo "[dual] 端口 $p 已被占用；保护现有进程，本批停止且不尝试清理" >> "$LOG"
+    echo "[dual] DONE" >> "$LOG"
+    exit 2
+  fi
+done
+if ! report_stray_backends; then
+  echo "[dual] 已有game-web JVM持有构建产物；先由其owner结束后再启动本批" >> "$LOG"
+  echo "[dual] DONE" >> "$LOG"
+  exit 2
+fi
 sleep 3
+trap 'stop_owned_backends >/dev/null 2>&1 || true' EXIT
 
 echo "[dual] 起普通后端 $BACKEND_PORT" >> "$LOG"
 # ⚠️ **必须给后端进程也指一个可写的 java.io.tmpdir**：
@@ -170,7 +196,8 @@ echo "[dual] 起普通后端 $BACKEND_PORT" >> "$LOG"
 # C:\windows\tomcat.<port>.<随机> ⇒ **后端根本起不来**（症状：探活失败，
 # 而日志里那一行藏在栈底，不看日志会以为是端口或 jar 的问题）。
 # 与 pom 里 surefire 那条同根同解（一个给测试 JVM，一个给后端 JVM）。
-"$JDK" -Djava.io.tmpdir="$BACKEND_TMP_DIR" -jar "$JAR" --server.port="$BACKEND_PORT" --ironoath.ops.token="$OPS_TOK" >> "$LOGDIR/dual-backend.log" 2>&1 &
+"$JDK" -Djava.io.tmpdir="$BACKEND_TMP_DIR" -Dcodex.runtime.owner="$RUN_OWNER" \
+  -jar "$JAR" --server.port="$BACKEND_PORT" --ironoath.ops.token="$OPS_TOK" >> "$LOGDIR/dual-backend.log" 2>&1 &
 if ! wait_up "$BACKEND_PORT"; then
   echo "[dual] 普通后端没起来（探活失败）" >> "$LOG"
   echo "[dual] DONE" >> "$LOG"
@@ -182,7 +209,8 @@ echo "[dual] 起提速档后端 $BOOST_PORT" >> "$LOG"
 IRONOATH_DEV_CITY_LEVEL=16 \
 IRONOATH_DEV_START_AMOUNT=2000000 \
 SPRING_PROFILES_ACTIVE=dev \
-  "$JDK" -Djava.io.tmpdir="$BACKEND_TMP_DIR" -jar "$JAR" --server.port="$BOOST_PORT" --ironoath.ops.token="$OPS_TOK" >> "$LOGDIR/dual-boost.log" 2>&1 &
+  "$JDK" -Djava.io.tmpdir="$BACKEND_TMP_DIR" -Dcodex.runtime.owner="$RUN_OWNER" \
+    -jar "$JAR" --server.port="$BOOST_PORT" --ironoath.ops.token="$OPS_TOK" >> "$LOGDIR/dual-boost.log" 2>&1 &
 if wait_up "$BOOST_PORT"; then
   echo "[dual] 提速档后端就绪" >> "$LOG"
 else
@@ -202,7 +230,8 @@ IRONOATH_DEV_CITY_LEVEL=16 \
 IRONOATH_DEV_START_AMOUNT=2000000 \
 IRONOATH_DEV_TIME_SPEED="${WAR_TIME_SPEED:-100}" \
 SPRING_PROFILES_ACTIVE=dev \
-  "$JDK" -Djava.io.tmpdir="$BACKEND_TMP_DIR" -jar "$JAR" --server.port="$WAR_PORT" --ironoath.ops.token="$OPS_TOK" >> "$LOGDIR/dual-war.log" 2>&1 &
+  "$JDK" -Djava.io.tmpdir="$BACKEND_TMP_DIR" -Dcodex.runtime.owner="$RUN_OWNER" \
+    -jar "$JAR" --server.port="$WAR_PORT" --ironoath.ops.token="$OPS_TOK" >> "$LOGDIR/dual-war.log" 2>&1 &
 if wait_up "$WAR_PORT"; then
   echo "[dual] 真仗档后端就绪" >> "$LOG"
 else

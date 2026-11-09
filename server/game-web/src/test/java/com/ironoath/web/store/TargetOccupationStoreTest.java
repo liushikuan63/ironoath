@@ -167,4 +167,41 @@ class TargetOccupationStoreTest {
         assertThat(read.ownershipHistory()).containsExactly(
                 new TargetOccupationStore.OwnershipPeriod("N1",100,200,"capture-1"));
     }
+
+    @ParameterizedTest @EnumSource(Backend.class)
+    void emptyCapitalAnchorMovesWithoutChangingOwnerOrHistory(Backend backend) {
+        var store=store(backend);
+        var before=new TargetOccupationStore.Snapshot("capital_center",WorldGenerator.EntityType.CAPITAL,
+                100,200,"N1","国家N1",100,"capture-capital",1,
+                TargetOccupationStore.Garrison.empty(),
+                List.of(new TargetOccupationStore.OwnershipPeriod("N0",10,100,"capture-previous")));
+        assertThat(store.compareAndSet(before,0L)).isTrue();
+
+        var expected=TargetOccupationStore.reanchoredEmptyCapital(before,300,301);
+        assertThat(store.reanchorEmptyCapital(before,300,301)).isTrue();
+        assertThat(store.reanchorEmptyCapital(before,300,301))
+                .as("未知写回执的原样重放确认同一锚点迁移").isTrue();
+        assertThat(store.reanchorEmptyCapital(before,302,303))
+                .as("旧版本不能覆盖后续目标坐标").isFalse();
+
+        TargetOccupationStore afterStore=backend==Backend.MONGO
+                ?new MongoTargetOccupationStore(db.template()):store;
+        var after=afterStore.findByTargetIds(List.of("capital_center")).get("capital_center");
+        assertThat(after).isEqualTo(expected);
+        assertThat(after.nationId()).isEqualTo(before.nationId());
+        assertThat(after.capturedAt()).isEqualTo(before.capturedAt());
+        assertThat(after.operationId()).isEqualTo(before.operationId());
+        assertThat(after.garrison()).isEqualTo(before.garrison());
+        assertThat(after.ownershipHistory()).isEqualTo(before.ownershipHistory());
+
+        var stationed=new TargetOccupationStore.Snapshot("capital_center",WorldGenerator.EntityType.CAPITAL,
+                100,200,"N1","国家N1",100,"capture-capital",1,
+                TargetOccupationStore.Garrison.stationed("old-march"),before.ownershipHistory());
+        assertThatThrownBy(()->afterStore.reanchorEmptyCapital(stationed,300,301))
+                .isInstanceOf(IllegalArgumentException.class);
+        var unknown=new TargetOccupationStore.Snapshot("capital_center",WorldGenerator.EntityType.CAPITAL,
+                100,200,"N1","国家N1",100,"capture-capital",1,null,before.ownershipHistory());
+        assertThatThrownBy(()->afterStore.reanchorEmptyCapital(unknown,300,301))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

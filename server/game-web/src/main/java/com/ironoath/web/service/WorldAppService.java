@@ -121,6 +121,7 @@ public class WorldAppService {
         this.targetOperations=targetOperations;
         this.capitalTargets=capitalTargets;
         var initialTargets=targetDirectory(configs).targets();
+        recoverMovedEmptyCapitalOwner(initialTargets);
         validateOccupationCatalog(initialTargets,occupations.findAll(initialTargets.targets().size()+1));
         validateOperationCatalog(initialTargets,targetOperations);
         configs.addReloadGuard("world_target","occupation-and-operations",candidate -> {
@@ -731,6 +732,9 @@ public class WorldAppService {
             var slot=batch.get(id);
             if(slot==null)throw new IllegalStateException("目标操作目录快照缺档");
             if(!id.equals(slot.targetId()))throw new IllegalStateException("目标操作主键与快照目标不一致");
+            // A completed operation is immutable history. Migration moves the dynamic CAPITAL slot, but must not
+            // rewrite the old coordinates inside its completed withdrawal/COMBAT payload.
+            if(slot.completed()) { snapshots.put(id,slot); continue; }
             var anchor=slot.anchor();var configured=targets.at(Coord.of(anchor.x(),anchor.y()));
             if(configured==null || !configured.definition().id().equals(id)
                     || !configured.definition().kind().name().equals(anchor.kind().name()))
@@ -738,6 +742,38 @@ public class WorldAppService {
             snapshots.put(id,slot);
         }
         return Map.copyOf(snapshots);
+    }
+
+    /**
+     * Nation is the durable source of the dynamic capital coordinate. If the process stopped after its CAS but
+     * before the owner-slot CAS, repair only a known-empty CAPITAL owner; unknown or stationed garrisons stay closed.
+     */
+    private void recoverMovedEmptyCapitalOwner(WorldTargets targets) {
+        var capitals=targets.targets().stream()
+                .filter(target->target.definition().kind()==com.ironoath.config.cfg.WorldTargetCfg.Kind.CAPITAL)
+                .toList();
+        if(capitals.size()!=1)throw new IllegalStateException("动态王城目录必须恰有一个CAPITAL");
+        var capital=capitals.get(0);
+        var owner=occupations.findByTargetIds(List.of(capital.definition().id())).get(capital.definition().id());
+        if(owner==null || (owner.x()==capital.coord().x() && owner.y()==capital.coord().y()))return;
+        if(owner.kind()!=com.ironoath.core.world.WorldGenerator.EntityType.CAPITAL
+                || owner.garrison()==null
+                || owner.garrison().kind()!=TargetOccupationStore.Garrison.Kind.EMPTY) {
+            throw new IllegalStateException("迁都后的旧CAPITAL归属驻军未知或未返城，拒绝自动迁移锚点");
+        }
+        var operation=targetOperations.findByTargetId(capital.definition().id()).orElse(null);
+        if(operation!=null && !operation.completed()) {
+            throw new IllegalStateException("迁都后的旧CAPITAL仍有未完成操作，拒绝自动迁移锚点");
+        }
+        if(!occupations.reanchorEmptyCapital(owner,capital.coord().x(),capital.coord().y())) {
+            var readback=occupations.findByTargetIds(List.of(capital.definition().id()))
+                    .get(capital.definition().id());
+            if(readback==null || readback.x()!=capital.coord().x() || readback.y()!=capital.coord().y()
+                    || !owner.nationId().equals(readback.nationId())
+                    || !owner.ownershipHistory().equals(readback.ownershipHistory())) {
+                throw new IllegalStateException("迁都后的CAPITAL归属锚点恢复未确认");
+            }
+        }
     }
 
     private static void validateOccupationCatalog(WorldTargets targets,
@@ -754,6 +790,7 @@ public class WorldAppService {
     private static void validateOperationCatalog(WorldTargets targets,TargetOperationStore operations) {
         for(String id:operations.findAllTargetIds(targets.targets().size()+1)) {
             var slot=operations.findByTargetId(id).orElseThrow(()->new IllegalStateException("目标操作目录缺档"));
+            if(slot.completed())continue;
             var anchor=slot.anchor();var target=targets.at(Coord.of(anchor.x(),anchor.y()));
             if(target==null || !target.definition().id().equals(id)
                     || !target.definition().kind().name().equals(anchor.kind().name()))

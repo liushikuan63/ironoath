@@ -30,6 +30,17 @@ public final class InMemoryTargetOccupationStore implements TargetOccupationStor
         return applied.get();
     }
 
+    @Override public boolean reanchorEmptyCapital(Snapshot expected,int x,int y) {
+        Snapshot next=TargetOccupationStore.reanchoredEmptyCapital(expected,x,y);
+        var applied=new AtomicBoolean();
+        states.compute(expected.targetId(),(id,current)->{
+            if(next.equals(current)) { applied.set(true); return current; }
+            if(!expected.equals(current))return current;
+            applied.set(true);return next;
+        });
+        return applied.get();
+    }
+
     @Override public Map<String,Snapshot> findAll(int limit) {
         if(limit<1)throw new IllegalArgumentException("归属扫描上限必须为正");
         Map<String,Snapshot> found=new LinkedHashMap<>();

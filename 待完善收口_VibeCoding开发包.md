@@ -8538,3 +8538,21 @@ TEST_EXIT=0
 | #2491 B-R0规则与测试隔离解阻 | 用户确认免费/无冷却；坐标范围沿现有WORLD_SIZE与Coord判据；修复5个Mongo集成类对共享27017的硬编码 | TestMongoUriTest RED为缺失uriForDatabase编译错误（摘要记录D:/tmp/ironoath-runtime-e6faa-20261109/b13-testmongo-uri-red-transcript.json），随后2/0/0/0；五类Mongo HTTP/存储测试67/0/0/0；tmpfs集成Mongo/Redis健康、临时库清理复核为空、M2和日志目录写入成功 | D:/tmp/ironoath-runtime-e6faa-20261109/b13-integration-preflight-20261109.log；b13-testmongo-uri-green.log；b13-hardcoded-mongo-isolation-green.log | B服务/Schema和双存储迁都闭环尚未实现；当前e6faa312双后端探针仍运行，Q独立验收、整批最终结果及全量门未完成；未推送、未访问真实玩家库 |
 | #2492 B迁都服务、返城守卫与Mongo恢复 | 候选基线`bd54648c`；新增迁都Schema/Java/TS生成物、生产Controller、CAS/格锁服务、行军/集结目标锁和有效期守卫 | B目标组合122/0/0/0；Mongo新Store读回国家坐标、联盟成员区间与原WarAwardPlan，resolver切至新CAPITAL坐标；隔离B M2/tmpfs Mongo/Redis；最终`check.sh`静态51/client1420/0/Node76/0/Python28；`npm run gen`0 | D:/tmp/ironoath-runtime-e6faa-20261109/b13-capital-final-integrated-122-20261109.log；b13-capital-war-plan-mongo-cross-test-verify-20261109.log；b13-check-final-code-20261109.log；b13-nation-capital-migration-gen-final-20261109.log | B旧COMBAT同场冻结快照与Q独立review待补；`scripts/test.sh`首轮2556/29，已修B相关27项并回归，剩余2项是主树预存Activity测试夹具修订，独立通过2/0；集成树全套/构建/运行与现有e6faa探针结尾未完成；未推送 |
 | #2493 全套测试日期脆弱夹具 | `ActivityCampaignClaimTest`把NOW固定在已过期的2026-11-03，当前RuleHistory不接收该时刻的进度；夹具改为解析当前有效活动开放时刻，不改生产规则 | 定向2/0/0/0；集成`935609b3`完整server+tools测试0失败/错误/跳过，Node20客户端1420/0/0/0；剩余外部live Q另列 | D:/tmp/ironoath-runtime-e6faa-20261109/activity-campaign-current-fixture-verify-20261109.log；b13-full-test-integrated-main-20261109.log | 本格只修日期固定测试，不增加玩法；B独立完整构建/HTTP与Q、旧e6faa批次清理和origin同步/发布仍未做 |
+
+### 2026-11-09 · #2494 A3跨Mongo部分投递后重启恢复
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| #2494 A3真实Mongo首回执写入后恢复 | 本轮B13协调批次本地原子提交；暂不推送 | `WarAwardMongoRecoveryEndpointTest`运行1/0/0/0：`WarStore`与`SeasonBoardStore`均为Mongo实现；首名WAR回执真实写入后注入异常，使用新Mongo Store与新`WarAppService`恢复原冻结计划，三人分数保持11/22/33且没有重复增加。随机库owner marker验证后drop并枚举确认为空。第一次首红是测试导入路径错误、未执行测试；修正后本条GREEN。 | `.tmp-logs/b13-a-mongo-service-recovery-red-green-20261109.log`；`.tmp-logs/b13-a-mongo-service-recovery-attempt2-20261109.log`；Maven JDK17.0.12、专属M2与隔离集成Mongo27030 | A2跨国家历史及分摊仍由历史区间与奖分分层测试组合证明；独立Q跨国/重启复核未做，不据本条标B13完整验收 |
+
+### 2026-11-09 · #2495 迁都后动态王城空驻军归属锚点恢复与COMBAT冻结
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| #2495 用户裁定空驻军王城随坐标迁移 | 本轮B13协调批次本地原子提交；暂不推送 | 用户选定`capital_center`随迁都移动，保留国家/历史，不转移所有权。`TargetOccupationStoreTest`内存/Mongo CAS 15项通过；Mongo HTTP迁都后模拟Nation CAS已落、归属锚点CAS未落，重建`WorldAppService`惰性恢复锚点，验证第二次HTTP迁都成功且Nation成员历史、WarAwardPlan、原完成撤防快照不变；`StrategicCombatPendingMapProjectionTest`2项确认已完成COMBAT仍保留旧坐标冻结快照。锚点与COMBAT专项合计18/0/0/0。 | `.tmp-logs/b13-b-capital-anchor-final-targeted-20261109.log`；`.tmp-logs/b13-b-capital-anchor-recovery-attempt4-20261109.log`；`CapitalMigrationMongoEndpointTest`、`TargetOccupationStoreTest`与`StrategicCombatPendingMapProjectionTest` | 当前真实HTTP live探针未完成真实SIEGE/结算；独立Q跨线竞争复审、origin同步与历史提交推送仍未完成 |
+
+### 2026-11-09 · #2496 隔离环境解除、完整门禁与双后端live边界
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| #2496 B13全量测试/构建与owner cleanup | 本轮B13协调批次本地原子提交；暂不推送 | 当前`check.sh` EXIT=0（静态51、客户端1420、Node harness76、Python28）；`test.sh` game-web 2561/0/0/0、tools/balance-sim模块通过、客户端1420/0/0；最终`build.sh` EXIT=0，代码生成、分层、契约同步、Maven package、tsc和测试全绿。双后端owner-cleanup修复后live清单：`verify-nation-live` EXIT=0；`verify-war-real-battle`因phase仍PREPARATION返回PREREQ，批次0失败/1未验证。三台JVM自动清理、端口释放、JAR独占读取通过；临时Mongo owner标记库drop并读回不存在，Redis DB15为0键。 | `.tmp-logs/b13-check-runtime-owner-final-20261109.log`；`.tmp-logs/b13-test-final-verification-20261109.log`；`.tmp-logs/b13-build-final-owner-cleanup-20261109.log`；`.tmp-logs/b13-runtime-owner-batch-20261109.log`；`.tmp-logs/b13-runtime-owner-cleanup-20261109/probe-verify-war-real-battle.mjs.log`；`.tmp-logs/b13-runtime-owner-driver-20261109.log` | 实时王城战尚未进入SIEGE并验证奖分结算；Q独立复审未执行。用户要求优先推送历史变更；`HEAD...origin/master`现为33个远端提交、35个本地提交，须先同步并再次验收。未推送。 |

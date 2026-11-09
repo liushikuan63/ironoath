@@ -59,6 +59,28 @@ public final class MongoTargetOccupationStore implements TargetOccupationStore {
         }
     }
 
+    @Override public boolean reanchorEmptyCapital(Snapshot expected,int x,int y) {
+        Snapshot next=TargetOccupationStore.reanchoredEmptyCapital(expected,x,y);
+        var query=Query.query(Criteria.where("_id").is(expected.targetId())
+                .and("state.version").is(expected.version())
+                .and("state.x").is(expected.x()).and("state.y").is(expected.y())
+                .and("state.operationId").is(expected.operationId())
+                .and("state.garrison.kind").is(TargetOccupationStore.Garrison.Kind.EMPTY.name()));
+        try {
+            var result=mongo.updateFirst(query,new Update().set("state",next),
+                    TargetOccupationDocument.class,TargetOccupationDocument.COLLECTION);
+            if(result.getModifiedCount()==1L)return true;
+            return next.equals(findByTargetIds(java.util.List.of(expected.targetId())).get(expected.targetId()));
+        } catch(RuntimeException unknownWrite) {
+            try {
+                if(next.equals(findByTargetIds(java.util.List.of(expected.targetId())).get(expected.targetId())))return true;
+            } catch(RuntimeException readFailure) {
+                unknownWrite.addSuppressed(readFailure);
+            }
+            throw unknownWrite;
+        }
+    }
+
     private boolean confirmed(Snapshot next) {
         return next.equals(findByTargetIds(java.util.List.of(next.targetId())).get(next.targetId()));
     }

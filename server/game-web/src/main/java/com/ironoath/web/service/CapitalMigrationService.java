@@ -153,21 +153,25 @@ public final class CapitalMigrationService {
         long worldSize = configs.longParam("WORLD_SIZE");
         Coord destination = requireWorldCoordinate(request.x(), request.y(), worldSize);
         Coord oldCapital = requireWorldCoordinate(observed.capitalX(), observed.capitalY(), worldSize);
+        String capitalTargetId = capitalTargetId();
         if (oldCapital.equals(destination)) {
-            return nationLocks.runLocked(observed.id(), () -> {
-                Nation current = nations.findById(observed.id())
-                        .filter(nation -> !nation.isDisbanded())
-                        .map(leaders::bind)
-                        .orElseThrow(() -> new BizException(ErrorCode.NATION_NOT_FOUND, "国家不存在或已解散"));
-                if (!Objects.equals(current.kingId(), observed.kingId())
-                        || current.capitalX() != observed.capitalX()
-                        || current.capitalY() != observed.capitalY()) throw new NationContextChanged();
-                requireCurrentAuthority(playerId, current);
-                return response(current, time.serverNow());
-            });
+            return runCoordinateLocks(playerLocks,List.of(oldCapital),() ->
+                    targetLock.runTargetOperationLocked(capitalTargetId,() ->
+                            nationLocks.runLocked(observed.id(), () -> {
+                                Nation current = nations.findById(observed.id())
+                                        .filter(nation -> !nation.isDisbanded())
+                                        .map(leaders::bind)
+                                        .orElseThrow(() -> new BizException(ErrorCode.NATION_NOT_FOUND,
+                                                "国家不存在或已解散"));
+                                if (!Objects.equals(current.kingId(), observed.kingId())
+                                        || current.capitalX() != observed.capitalX()
+                                        || current.capitalY() != observed.capitalY()) throw new NationContextChanged();
+                                requireCurrentAuthority(playerId, current);
+                                reconcileCapitalOccupationAnchor(capitalTargetId,oldCapital);
+                                return response(current, time.serverNow());
+                            })));
         }
 
-        String capitalTargetId = capitalTargetId();
         List<Coord> coordinates = List.of(oldCapital, destination);
         return runCoordinateLocks(playerLocks, coordinates, () ->
                 targetLock.runTargetOperationLocked(capitalTargetId, () ->
@@ -202,8 +206,40 @@ public final class CapitalMigrationService {
                                 throw new BizException(ErrorCode.NATION_LOCKED,
                                         "国家状态已变化，迁都未覆盖并发修改；请刷新后重试");
                             }
+                            reconcileCapitalOccupationAnchor(capitalTargetId,destination);
                             return response(current, time.serverNow());
                         })));
+    }
+
+    /**
+     * CAPITAL is a dynamic slot. Once the Nation CAS moves its coordinate, an empty-garrison owner follows that
+     * slot. Nation is saved first so a crash can be repaired by WorldAppService on the next startup.
+     */
+    private void reconcileCapitalOccupationAnchor(String targetId,Coord capital) {
+        var directory=capitalTargets.resolve(configs);
+        var target=directory.targets().targets().stream()
+                .filter(candidate->candidate.definition().id().equals(targetId))
+                .findFirst().orElseThrow(()->new IllegalStateException("迁都后的CAPITAL目标目录缺失"));
+        if(!target.coord().equals(capital))return;
+
+        var owner=occupations.findByTargetIds(List.of(targetId)).get(targetId);
+        if(owner==null || (owner.x()==target.coord().x() && owner.y()==target.coord().y()))return;
+        if(owner.kind()!=WorldGenerator.EntityType.CAPITAL || owner.garrison()==null
+                || owner.garrison().kind()!=TargetOccupationStore.Garrison.Kind.EMPTY) {
+            throw migrationBlocked("旧王城仍有未知或未返城的驻军归属，不能迁移王城锚点");
+        }
+        var operation=operations.findByTargetId(targetId).orElse(null);
+        if(operation!=null && !operation.completed()) {
+            throw migrationBlocked("旧王城仍有未完成的冻结操作，不能迁移王城锚点");
+        }
+        if(!occupations.reanchorEmptyCapital(owner,target.coord().x(),target.coord().y())) {
+            var readback=occupations.findByTargetIds(List.of(targetId)).get(targetId);
+            if(readback==null || readback.x()!=target.coord().x() || readback.y()!=target.coord().y()
+                    || !owner.nationId().equals(readback.nationId())
+                    || !owner.ownershipHistory().equals(readback.ownershipHistory())) {
+                throw migrationBlocked("王城归属锚点CAS未确认，保留原坐标并要求重读");
+            }
+        }
     }
 
     private Nation resolveNation(String playerId) {
