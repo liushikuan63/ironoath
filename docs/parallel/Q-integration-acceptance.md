@@ -1,12 +1,14 @@
 # Q线：独立复审与集成验收
 
 **目标**：用冻结的集成SHA和真实证据判断候选，不将各线局部GREEN相加成全项目完成。
-**当前状态**：任务包已编制；只读准备可先行，运行验收尚未启动。Q是独立角色；不得由唯一实现者自述代替独立验收。
+**当前状态**：Q-R1已对冻结候选完成Q0–Q4独立复核：Q0 PASS；Q1-A/C PASS、Q1-B PARTIAL；Q2 PASS；Q3 PASS（现有全套日志与新增Redisson探针报告）；Q4 PASS（仅隔离dev实装范围）。Q5仍NOT_RUN；本记录不代表B13整批完成。
 **入口**：[协同规则](./README.md)、[主开发包当前证据边界](../../待完善收口_VibeCoding开发包.md#current-execution)、[上线清单](../../上线检查清单.md)。
 
 ## 权限与输入
 
 [ownership.json](./ownership.json)中Q没有生产源码/测试写权限，只能维护本卡及自有外部证据。发现失败交回原owner；不能改断言、换输入、取消用例或放宽准入来修绿。Q准备候选摘要时必须拿到：集成SHA、任务补丁/接口SHA、相应产物SHA、实现者与验收者、测试环境和资源owner、预期成功/拒绝判据、历史未完成项。
+
+**本次复核身份与冻结输入**：Reviewer角色为Q（Codex独立只读复核者，非A/B/C实现者）。候选HEAD=`7e6556e16bf0cfa0106eb5f498755786dbecf445`（父提交`454f364601fe68dfb58cc236c72defa9539137c7`）；从父提交到本HEAD的源码差异仅新增测试探针`CapitalMigrationRedissonMongoProbe.java`。集成运行JAR SHA256=`948D7F2066BBD8EBC3A040C5193C8B94AFE735E81098FAEA483BF0E2DD7E6EDC`。本次只读已有报告与源码，没有重跑测试、构建或runtime。
 
 ## 分段验收
 
@@ -45,7 +47,7 @@ env -u ELECTRON_RUN_AS_NODE bash scripts/build-webmobile.sh
 
 构建成功且产物SHA冻结后，再选用项目双后端批跑或对应探针；先核普通/dev档、每份探针实际后端变量与打印地址、账户/库owner及隔离能力。批跑脚本若不能满足这些条件，记PREREQ并由COORD准备自有实例，不盲目启动默认8080/默认数据库。
 
-当前基线的两条War奖分RED是历史未修项；C或B局部成功可以单独记录，但Q3不得把它们排除出全量“全绿”判据。缺少设备/凭据只阻塞相应Q5项，不把整条可做工作停下，也不标项目完成。
+本候选中A1的两条War奖分RED已有当前GREEN报告；历史RED只作问题来源，不当成本轮结果。Q3仍按同一代码候选的完整门禁报告判定。隔离dev实装只支持Q4限定范围，不替代Q5生产服、设备或真实支付证据，也不代表B13整批完成。
 
 ## 资源释放与实装记录
 
@@ -55,4 +57,12 @@ Q输出PASS/FAIL/PREREQ/SKIP/NOT_RUN明细和首红，不直接改主验收勾�
 
 | 格 | 状态 | 冻结输入 | 验证与证据 | 未做/下一步 |
 |---|---|---|---|---|
-| Q-R0 | NOT_STARTED | 无集成候选/运行产物 | 本次只编制验收矩阵，未运行代码/包/设备 | 待COORD提供真实候选、独立验收者和资源窗口 |
+| Q-R0 | PREPARED_HISTORICAL | 当时尚无集成候选 | 原记录仅编制验收矩阵；现由Q-R1冻结HEAD复核覆盖 | 保留为准备阶段历史，不再代表当前状态 |
+| Q0 | PASS | HEAD `7e6556e16bf0cfa0106eb5f498755786dbecf445`；JAR `948D7F2066BBD8EBC3A040C5193C8B94AFE735E81098FAEA483BF0E2DD7E6EDC` | ownership边界清楚；A/C卡标独立Q通过，B卡已同步B3 PARTIAL与三项交错缺口；#2500是候选交接时的历史待办记录，本Q卡现登记当前结果 | 后续批次由COORD按归属追加主台账，不回写历史记录 |
+| Q1-A | PASS | 同上 | `WarEndpointTest` 28/0/0/0；`RankEndpointTest` 20/0/0/0；`WarAwardMongoRecoveryEndpointTest` 2/0/0/0。Mongo历史按持久区间算出13/10/3/5，首个回执后故障并用新Store恢复，不再读成员历史；全量报告中A1两条入口均执行通过 | 生产服、release/设备/真实用户仍未验 |
+| Q1-B | PARTIAL | 同上；B隔离Mongo+Redis | B定向套件130/0/0/0；`CapitalMigrationRedissonMongoProbe` 1/0/0/0。它由测试后端的Redisson客户端外再创建一个独立Redis peer client持有目标坐标锁，真实Mongo迁都等待3秒后拒绝；坐标/成员历史不变、已拿旧格锁释放，解锁后同requestId迁都成功。此为两个Redisson客户端竞争，**不是第二个后端进程** | B3仍缺权限变化交错、`NationStore.save(expectedVersion)`冲突/失败、COMBAT同时完成迁都的受控负控。最小补证：用隔离Mongo与Redis加同步屏障分别触发这三种交错，并独立读回Nation版本/坐标、CAPITAL锚点/驻军/历史、TargetOperation冻结载荷及War事件；证明只出现合法串行结果、失败不留部分写。若声称跨后端进程安全，另需第二后端进程证据 |
+| Q1-C | PASS | 同上 | `PayEndpointTest` 30/0/0/0、`ProductionReadinessTest` 14/0/0/0。真实Controller在prod策略下拒绝legacy `/pay/callback`且订单保持PENDING；dev/test兼容保留；GameItem signer/readiness负控仍有效 | 真实商户/订单/扣款/退款不在本机证据范围 |
+| Q2 | PASS | 同上 | A Mongo恢复用例验证旧赛季/受益区间冻结；B Mongo迁都恢复保留Nation成员历史与WarAwardPlan，COMBAT冻结坐标/投影回归通过；支付闸门测试确认非支付改动没有放宽GameItem readiness | B3三项并发边界仍由Q1-B PARTIAL追踪 |
+| Q3 | PASS | 同上 | 已有`test.sh`：game-web 2729/0/0/0、balance-sim 18/0/0/0、客户端1424/1424，EXIT=0；`build.sh` EXIT=0；`check.sh` EXIT=0（静态51、客户端1424/1424、Node80/80、Python28/28）。新Redisson探针单独1/0/0/0，B套件130/0/0/0 | 全量test/build日志早于HEAD提交；从父提交到HEAD仅新增该测试探针，且有独立目标运行报告；日志未内嵌HEAD哈希，故本PASS以生产源码未变及定向探针报告为输入绑定依据，不声称全套在提交后重跑 |
+| Q4 | PASS（隔离dev） | JAR SHA256 `948D7F2066BBD8EBC3A040C5193C8B94AFE735E81098FAEA483BF0E2DD7E6EDC`；端口8400；Mongo `ironoath_b13_gate_runtime_20261110`；Redis DB15 | 50名合成账号经正常API建号、队长升星与ArmyAppService训练；无army文档种兵；实际B08圈层守卫放行后捕获四关、进入SIEGE并按dev时钟推进到SETTLED，WAR榜50/50为正。Mongo读回4个目标归攻国、4个battle events、0 pending reservations、奖分计划已冻结；owner清理确认Mongo库不存在、Redis DB14/15为0键；容器停止、端口释放 | 仅隔离本机dev，不代表生产服、真实账号或B13整批验收 |
+| Q5 | NOT_RUN | 无生产/微信release/真实支付输入 | 未触真实玩家数据、商户凭据或真实订单；未验release AppID、设备安装/流程及B13-9容量 | 保持未验；需各自合规输入与独立环境验收 |
