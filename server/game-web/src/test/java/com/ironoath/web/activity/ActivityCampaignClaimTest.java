@@ -7,7 +7,6 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 
-import java.time.OffsetDateTime;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,19 +30,27 @@ import com.ironoath.web.service.PlayerInitService;
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class ActivityCampaignClaimTest {
     private static final String ID="activity_theme_major";
-    private static final long NOW=OffsetDateTime.parse("2026-11-03T12:00:00+08:00").toInstant().toEpochMilli();
     @Autowired ActivityAppService activities;
     @Autowired ActivityProgressStore store;
+    @Autowired ActivityRuleHistory history;
     @Autowired PlayerInitService init;
     @Autowired PlayerRepository players;
     @Autowired QuestEvents events;
     @SpyBean TimeService time;
     @SpyBean RewardService rewards;
     private String uid;
+    private long now;
     @BeforeEach void setup() {
-        doReturn(NOW).when(time).serverNow();
-        uid=init.init(new PlayerInitReq(id(),"campaign-"+id(),"主题活动验收",NOW,"")).playerId();
-        for(int i=0;i<40;i++) events.progressOnce(uid,GoalType.KILL_MONSTER,"monster_1",1,NOW,"solo-monster:fixture-"+i);
+        long afterRuleCapture = Math.max(System.currentTimeMillis(), time.serverNow()) + 1_000L;
+        var scheduled = history.resolve(ID, afterRuleCapture, 1L, 1L);
+        assertThat(scheduled).as("固定窗口规则应能为当前时刻或下一轮解析活动实例").isNotNull();
+        now = Math.max(afterRuleCapture, Math.addExact(scheduled.startAt(), 1L));
+        var active = history.resolve(ID, now, 1L, 1L);
+        assertThat(active).as("夹具时刻应位于当前规则修订已生效的活动窗口").isNotNull();
+        assertThat(active.openedAt()).as("主题活动须已实际开放才接收击杀事件").isEqualTo(now);
+        doReturn(now).when(time).serverNow();
+        uid=init.init(new PlayerInitReq(id(),"campaign-"+id(),"主题活动验收",now,"")).playerId();
+        for(int i=0;i<40;i++) events.progressOnce(uid,GoalType.KILL_MONSTER,"monster_1",1,now,"solo-monster:fixture-"+i);
         assertThat(row().goal()).isEqualTo(40);
         assertThat(row().progress()).isEqualTo(40);
     }

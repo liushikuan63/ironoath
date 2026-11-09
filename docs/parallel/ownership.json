@@ -26,6 +26,7 @@
       "server/game-web/src/main/java/com/ironoath/web/store/mongo/MongoNationStore.java",
       "server/game-web/src/main/java/com/ironoath/web/store/mongo/NationDocument.java",
       "server/game-web/src/test/java/com/ironoath/web/NationEndpointTest.java",
+      "server/game-web/src/test/java/com/ironoath/web/activity/ActivityCampaignClaimTest.java",
       "server/game-web/src/test/java/com/ironoath/web/store/NationStoreEquivalenceTest.java",
       "server/game-web/src/test/java/com/ironoath/web/store/TestMongo.java"
     ],
