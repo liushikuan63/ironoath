@@ -34,7 +34,10 @@ public interface BattlePassStore {
         public TierMailWindow { if(createdAt<=0||expireAt<=createdAt)throw new IllegalArgumentException("原季补发邮件保留窗口无效"); }
     }
     record Progress(long points, boolean paidUnlocked, Set<String> claimed, java.util.Map<String,Long> pointClaims,
-                    java.util.Map<String,TierMailWindow> tierMailWindows) {
+                    java.util.Map<String,TierMailWindow> tierMailWindows,java.util.Map<String,BattlePassDeliveryPlan> pendingPlans) {
+        public Progress(long points,boolean paidUnlocked,Set<String> claimed,java.util.Map<String,Long> pointClaims,java.util.Map<String,TierMailWindow> windows) {
+            this(points,paidUnlocked,claimed,pointClaims,windows,java.util.Map.of());
+        }
         public Progress(long points,boolean paidUnlocked,Set<String> claimed,java.util.Map<String,Long> pointClaims){
             this(points,paidUnlocked,claimed,pointClaims,java.util.Map.of());
         }
@@ -49,6 +52,11 @@ public interface BattlePassStore {
             claimed = Set.copyOf(claimed);
             pointClaims = pointClaims==null?java.util.Map.of():java.util.Map.copyOf(pointClaims);
             tierMailWindows=tierMailWindows==null?java.util.Map.of():java.util.Map.copyOf(tierMailWindows);
+            pendingPlans=pendingPlans==null?java.util.Map.of():java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(pendingPlans));
+            for(var entry:pendingPlans.entrySet()) {
+                if(entry.getValue()==null||!entry.getKey().equals(entry.getValue().key()))throw new IllegalArgumentException("战令计划键无效");
+                for(var tier:entry.getValue().tiers())if(!claimed.contains(keyOf(tier.tier(),entry.getValue().track())))throw new IllegalArgumentException("战令计划必须同时保留资格标记");
+            }
             for(var receipt:pointClaims.entrySet())if(receipt.getKey().isBlank()||receipt.getValue()<=0)
                 throw new IllegalArgumentException("战令积分回执键和份额无效");
         }
@@ -63,17 +71,17 @@ public interface BattlePassStore {
         }
 
         public Progress withPoints(long delta) {
-            return new Progress(Math.addExact(points,delta), paidUnlocked, claimed,pointClaims,tierMailWindows);
+            return new Progress(Math.addExact(points,delta), paidUnlocked, claimed,pointClaims,tierMailWindows,pendingPlans);
         }
 
         public Progress withPaidUnlocked() {
-            return new Progress(points, true, claimed,pointClaims,tierMailWindows);
+            return new Progress(points, true, claimed,pointClaims,tierMailWindows,pendingPlans);
         }
 
         public Progress withClaimed(int tier, BattlePassTrack track) {
             Set<String> next = new LinkedHashSet<>(claimed);
             next.add(keyOf(tier, track));
-            return new Progress(points, paidUnlocked, next,pointClaims,tierMailWindows);
+            return new Progress(points, paidUnlocked, next,pointClaims,tierMailWindows,pendingPlans);
         }
 
         public Progress withPointsOnce(String businessKey,long delta) {
@@ -81,13 +89,41 @@ public interface BattlePassStore {
             Long accepted=pointClaims.get(businessKey);
             if(accepted!=null){if(accepted!=delta)throw new IllegalStateException("积分业务键不能改变份额");return this;}
             var receipts=new java.util.LinkedHashMap<>(pointClaims);receipts.put(businessKey,delta);
-            return new Progress(Math.addExact(points,delta),paidUnlocked,claimed,receipts,tierMailWindows);
+            return new Progress(Math.addExact(points,delta),paidUnlocked,claimed,receipts,tierMailWindows,pendingPlans);
         }
         public Progress withTierMailWindow(String key,long createdAt,long expireAt){
             if(key==null||key.isBlank())throw new IllegalArgumentException("原季邮件需要稳定业务键");
             if(tierMailWindows.containsKey(key))return this;
             var windows=new java.util.LinkedHashMap<>(tierMailWindows);windows.put(key,new TierMailWindow(createdAt,expireAt));
-            return new Progress(points,paidUnlocked,claimed,pointClaims,windows);
+            return new Progress(points,paidUnlocked,claimed,pointClaims,windows,pendingPlans);
+        }
+
+        public Progress withDeliveryPlan(BattlePassDeliveryPlan plan) {
+            if(pendingPlans.containsKey(plan.key()))return this;
+            for(var tier:plan.tiers())if(claimed(tier.tier(),plan.track()))throw new IllegalStateException("战令资格已被另一投递接受");
+            var plans=new java.util.LinkedHashMap<>(pendingPlans);plans.put(plan.key(),plan);
+            var marks=new LinkedHashSet<>(claimed);plan.tiers().forEach(tier->marks.add(keyOf(tier.tier(),plan.track())));
+            var windows=new java.util.LinkedHashMap<>(tierMailWindows);
+            // A reservation is not proof that the first mail was actually stored.
+            return new Progress(points,paidUnlocked,marks,pointClaims,windows,plans);
+        }
+        /** Actual first stored mail is authoritative, including a concurrent writer's winning window. */
+        public Progress completeMailDelivery(String key,long createdAt,long expireAt) {
+            var proof=new TierMailWindow(createdAt,expireAt);
+            var previous=tierMailWindows.get(key);
+            if(previous!=null&&!previous.equals(proof))throw new IllegalStateException("战令邮件首窗口冲突，保留待确认计划");
+            var plan=pendingPlans.get(key);
+            if(plan==null)return this;
+            if(!plan.mail()||Math.subtractExact(expireAt,createdAt)!=Math.subtractExact(plan.expireAt(),plan.createdAt()))
+                throw new IllegalStateException("战令邮件保留时长与冻结承诺不一致");
+            var windows=new java.util.LinkedHashMap<>(tierMailWindows);windows.put(key,proof);
+            var plans=new java.util.LinkedHashMap<>(pendingPlans);plans.remove(key);
+            return new Progress(points,paidUnlocked,claimed,pointClaims,windows,plans);
+        }
+        public Progress completeDelivery(String key) {
+            if(!pendingPlans.containsKey(key))return this;
+            var plans=new java.util.LinkedHashMap<>(pendingPlans);plans.remove(key);
+            return new Progress(points,paidUnlocked,claimed,pointClaims,tierMailWindows,plans);
         }
 
         public static String keyOf(int tier, BattlePassTrack track) {
@@ -100,6 +136,10 @@ public interface BattlePassStore {
      * 走榜单枚举不到"打过战令但没上榜"的人，而正是他们最容易留下没领的档位。
      */
     java.util.List<String> playerIdsOf(String seasonId);
+    /** Includes original seasons whose accepted deliveries still need recovery. */
+    default java.util.List<String> pendingSeasonsOf(String playerId) {
+        throw new UnsupportedOperationException("战令存储未实现原季待投递查询");
+    }
 
     /** 没有记录时返回 {@link Progress#empty()}（不是 null、也不是抛：没打过战令是一个正常状态）。 */
     Progress load(String seasonId, String playerId);

@@ -108,7 +108,9 @@ class BotCalibrationParallelTest {
         assertThat(observed).containsExactlyInAnyOrder(first,second);
         assertThat(maxActive.get()).as("实际Runtime的不同玩家校准保存应有界重叠").isEqualTo(2);
         assertThat(active.get()).isZero();
-        assertThat(threads).hasSize(2).allSatisfy(thread->assertThat(thread.isAlive()).as("调用返回后本次worker已退出").isFalse());
+        assertThat(threads).hasSize(2);
+        // Executor termination can precede the worker Thread's final observable exit by a few instructions.
+        for (Thread worker : threads) join(worker);
         assertThat(players.findByPlayerId(first).orElseThrow().lastBotCalibrationAt()).isEqualTo(now);
         assertThat(players.findByPlayerId(second).orElseThrow().lastBotCalibrationAt()).isEqualTo(now);
     }

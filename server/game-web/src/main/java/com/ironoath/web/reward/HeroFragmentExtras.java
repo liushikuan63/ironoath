@@ -56,6 +56,25 @@ public final class HeroFragmentExtras implements RewardPorts.Extras {
     }
 
     @Override
+    public HeroGrant grantQuestHeroOnce(String playerId, com.ironoath.core.reward.FrozenQuestReward reward,
+            com.ironoath.core.reward.RewardContext ctx, long now) {
+        if (ctx == null || !ctx.durableQuest() || reward.reward().type() != RewardType.HERO)
+            throw new IllegalArgumentException("普通任务整卡收据来源无效");
+        var roster = loadOrCreateRoster(playerId);
+        var previous = roster.rewardClaims().get(ctx.traceId());
+        if (previous != null) {
+            if (!previous.reward().equals(reward)) throw new IllegalStateException("武将奖励业务键不能改选");
+            return new HeroGrant(previous, false);
+        }
+        long version = heroes.versionOf(playerId);
+        var receipt = new com.ironoath.core.reward.HeroClaimReceipt(ctx.traceId(), reward,
+                roster.obtain(reward.reward().id()), now);
+        roster.putRewardClaim(receipt);
+        heroes.save(playerId, roster, version);
+        return new HeroGrant(receipt, true);
+    }
+
+    @Override
     public long grant(String playerId, RewardType type, String id, long count, long now) {
         if (type == RewardType.HERO) {
             return grantHero(playerId, id, count);

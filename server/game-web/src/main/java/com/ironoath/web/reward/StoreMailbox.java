@@ -55,25 +55,33 @@ public final class StoreMailbox implements RewardPorts.Mailbox {
     public String sendOverflow(String playerId, List<RewardItem> overflow, RewardContext ctx) {
         long now = timeService.serverNow();
         int days = retentionDays();
-        String mailId = (ctx.durableGold() || ctx.durableItems())
+        if (ctx.durableQuest() || ctx.durableBattlePass() || (ctx.durableMailResources() || ctx.durableMailAttachments())) {
+            String prefix = ctx.durableQuest() ? "quest-mail-" : ctx.durableBattlePass()?"battlepass-overflow-":"mail-overflow-";
+            now = questMailTime(ctx, prefix + "created:");
+            long expires = questMailTime(ctx, prefix + "expires:");
+            long span = Math.subtractExact(expires, now);
+            if (span <= 0 || span % 86_400_000L != 0) throw new IllegalArgumentException("任务邮件期限快照无效");
+            days = Math.toIntExact(span / 86_400_000L);
+        }
+        String mailId = (ctx.durableGold() || ctx.durableItems() || ctx.durableQuest() || ctx.durableBattlePass() || (ctx.durableMailResources() || ctx.durableMailAttachments()))
                 ? "mail_" + UUID.nameUUIDFromBytes((playerId + "\u0000" + ctx.source() + "\u0000" + ctx.traceId())
                         .getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString().replace("-", "")
                 : "mail_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         // Delivery evidence survives config reload and must retain its first expiry/read/claim state.
-        if ((ctx.durableGold() || ctx.durableItems()) && store.findById(playerId, mailId).isPresent()) return mailId;
+        if ((ctx.durableGold() || ctx.durableItems() || ctx.durableQuest() || ctx.durableBattlePass() || (ctx.durableMailResources() || ctx.durableMailAttachments())) && store.findById(playerId, mailId).isPresent()) return mailId;
         List<RewardLine> lines = new ArrayList<>(overflow.size());
         for (RewardItem item : overflow) {
             String name;
             try { name = names.nameOf(item); }
             catch (com.ironoath.config.ConfigException e) {
-                if (!ctx.durableItems() || item.type() != com.ironoath.core.reward.RewardType.ITEM) throw e;
+                if (!ctx.durableQuest() && !ctx.durableBattlePass() && !(ctx.durableMailResources() || ctx.durableMailAttachments()) && (!ctx.durableItems() || item.type() != com.ironoath.core.reward.RewardType.ITEM)) throw e;
                 // This item was already accepted with its receipt; removing a row cannot erase delivery.
-                name = "未知道具";
+                name = (ctx.durableMailResources() || ctx.durableMailAttachments()) ? "资源奖励" : item.type() == com.ironoath.core.reward.RewardType.HERO ? "未知武将" : "未知道具";
             }
             lines.add(new RewardLine(item.type().name(), item.id(), item.count(), name));
         }
         store.save(new MailRecord(mailId, playerId, "OVERFLOW", "奖励放不下，先存进邮箱",
-                bodyOf(lines, ctx, days), lines, ctx.source() + ':' + ctx.sourceRef(), now,
+                bodyOf(lines, ctx, days), lines, (ctx.durableMailResources() || ctx.durableMailAttachments()) ? ctx.sourceRef() : ctx.source() + ':' + ctx.sourceRef(), now,
                 now + days * 86_400_000L, null, null));
         // INFO 而不是旧的 ERROR：溢出转邮件是设计好的路径，不是故障。
         // 真正的故障是「这批东西无处安放」，那会在领取时以 failed 的形式回到玩家面前
@@ -109,11 +117,38 @@ public final class StoreMailbox implements RewardPorts.Mailbox {
         return store.findById(playerId,id).orElseThrow(()->new IllegalStateException("稳定补发邮件未读回，保留活动计划重试"));
     }
 
+    public java.util.Optional<MailRecord> findGrantOnce(String playerId,RewardContext ctx) {
+        String id="mail_"+UUID.nameUUIDFromBytes((playerId+"\u0000"+ctx.source()+"\u0000"+ctx.traceId()).getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString().replace("-","");
+        return store.findById(playerId,id);
+    }
+    /** Original payload and retention duration come from an accepted plan; stored first-mail proof fixes the actual window. */
+    public MailRecord sendFrozenGrantOnce(String playerId,String title,List<RewardLine> lines,String reason,RewardContext ctx,long createdAt,long expireAt) {
+        if(!"battlePassRecovery".equals(ctx.source())||createdAt<=0||expireAt<=createdAt||lines==null||lines.isEmpty())throw new IllegalArgumentException("原季邮件计划无效");
+        var existing=findGrantOnce(playerId,ctx);if(existing.isPresent())return existing.get();
+        // No stored mail means no retention has elapsed: freeze duration, start at the actual first write.
+        long duration=Math.subtractExact(expireAt,createdAt);
+        createdAt=timeService.serverNow();expireAt=Math.addExact(createdAt,duration);
+        String id="mail_"+UUID.nameUUIDFromBytes((playerId+"\u0000"+ctx.source()+"\u0000"+ctx.traceId()).getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString().replace("-","");
+        var text=new StringBuilder(reason);for(var line:lines)text.append("\n· ").append(line.name()).append(" ×").append(line.count());
+        text.append("\n请在 ").append((expireAt-createdAt)/86400000L).append(" 天内领取。");
+        store.save(new MailRecord(id,playerId,"BATTLE_PASS",title,text.toString(),List.copyOf(lines),ctx.source()+":"+ctx.sourceRef(),createdAt,expireAt,null,null));
+        return findGrantOnce(playerId,ctx).orElseThrow(()->new IllegalStateException("战令稳定邮件未落地，保留原计划"));
+    }
+
     private String sendGrantTo(String playerId,String kind,String title,List<RewardItem> items,String reason,RewardContext ctx,String mailId,long now,long expireAt) {
         int days = (int)((expireAt-now)/86_400_000L);
         List<RewardLine> lines = new ArrayList<>(items.size());
         for (RewardItem item : items) {
-            lines.add(new RewardLine(item.type().name(), item.id(), item.count(), names.nameOf(item)));
+            String name;
+            try { name = names.nameOf(item); }
+            catch (com.ironoath.config.ConfigException missing) {
+                // Old accepted tiers keep their item identity/count even if the new season removes its display row.
+                if (!"BATTLE_PASS".equals(kind) || !"battlePassRecovery".equals(ctx.source())
+                        || !ctx.traceId().startsWith("activity-battle-pass:")
+                        || item.type() != com.ironoath.core.reward.RewardType.ITEM) throw missing;
+                name = "未知道具";
+            }
+            lines.add(new RewardLine(item.type().name(), item.id(), item.count(), name));
         }
         // 正文必须逐条写出「什么、多少」：只写"有 N 档没领"的邮件等于让玩家拿着信去问客服 ——
         // 而这封信正是为了"不静默作废"才发的，说不清内容就失败了
@@ -140,13 +175,21 @@ public final class StoreMailbox implements RewardPorts.Mailbox {
                 || ctx.traceId().startsWith("mail_items:");
         boolean battle="battle".equals(ctx.source());
         boolean ordinaryMail="mail".equals(ctx.source());
-        text.append("来源：").append(battle ? "战斗掠夺奖励" : ordinaryMail || mailAttachment && (ctx.durableGold() || ctx.durableItems()) ? "邮件附件奖励"
+        text.append("来源：").append(ctx.durableBattlePass()?"战令奖励":(ctx.durableMailResources() || ctx.durableMailAttachments()) ? "邮件附件奖励" : ctx.durableQuest() || "quest_item".equals(ctx.source()) ? "任务奖励" : battle ? "战斗掠夺奖励" : ordinaryMail || mailAttachment && (ctx.durableGold() || ctx.durableItems() || ctx.durableQuest() || ctx.durableBattlePass() || (ctx.durableMailResources() || ctx.durableMailAttachments())) ? "邮件附件奖励"
                 : ctx.durableItems() ? ("free_item".equals(ctx.source())?"活动材料奖励":"月卡材料奖励") : ctx.durableGold()
                 ? ("paid_gold".equals(ctx.source()) ? "月卡金币奖励" : "签到与成长奖励") : ctx.source());
-        if (!battle && !ordinaryMail && !ctx.durableGold() && !ctx.durableItems() && !ctx.sourceRef().isBlank()) {
+        if (!battle && !ordinaryMail && !ctx.durableGold() && !ctx.durableItems() && !ctx.durableQuest() && !ctx.durableBattlePass() && !(ctx.durableMailResources() || ctx.durableMailAttachments()) && !ctx.sourceRef().isBlank()) {
             text.append('（').append(ctx.sourceRef()).append('）');
         }
         return text.toString().stripTrailing();
+    }
+
+    private static long questMailTime(RewardContext ctx, String prefix) {
+        var values = ctx.claimFacts().stream().filter(f -> f.startsWith(prefix)).toList();
+        if (values.size() != 1) throw new IllegalArgumentException("任务邮件缺少唯一期限快照");
+        long value = Long.parseLong(values.get(0).substring(prefix.length()));
+        if (value <= 0) throw new IllegalArgumentException("任务邮件期限必须为正");
+        return value;
     }
 
     private int retentionDays() {

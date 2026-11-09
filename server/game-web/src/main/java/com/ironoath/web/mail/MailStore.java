@@ -28,7 +28,12 @@ public interface MailStore {
     /** 一封邮件。<b>没领的东西就写在这里</b>，所以 {@code rewards} 是这一记录的一部分而不是另一张表。 */
     record MailRecord(String mailId, String playerId, String kind, String title, String text,
                       List<RewardLine> rewards, String sourceRef, long createdAt, long expireAt,
-                      Long readAt, Long claimedAt) {
+                      Long readAt, Long claimedAt, MailClaimPlan acceptedPlan) {
+        public MailRecord(String mailId, String playerId, String kind, String title, String text,
+                          List<RewardLine> rewards, String sourceRef, long createdAt, long expireAt,
+                          Long readAt, Long claimedAt) {
+            this(mailId,playerId,kind,title,text,rewards,sourceRef,createdAt,expireAt,readAt,claimedAt,null);
+        }
 
         public MailRecord {
             require(mailId, "mailId");
@@ -92,6 +97,20 @@ public interface MailStore {
      * @return true 表示这一次赢得领取权；false 表示它已被领过、已过期或压根不存在
      */
     boolean claim(String playerId, String mailId, long nowMillis);
+
+    /** Atomically accepts claimedAt and frozen plan. Legacy stores must not emulate this with two writes. */
+    default boolean acceptClaim(String playerId, String mailId, long eligibleAt, MailClaimPlan plan) {
+        throw new UnsupportedOperationException("邮件存储未实现原子领取计划");
+    }
+    /** Includes expired accepted promises; old stores cannot accept such plans and safely return empty. */
+    default List<MailRecord> pendingOf(String playerId) { return List.of(); }
+    default boolean completeAccepted(String playerId, String mailId, String businessKey) {
+        throw new UnsupportedOperationException("邮件存储未实现计划结案");
+    }
+    static boolean planMatches(MailRecord mail, MailClaimPlan plan, long eligibleAt) {
+        return plan != null && plan.mailId().equals(mail.mailId()) && plan.acceptedAt() == eligibleAt
+                && plan.attachments().equals(mail.rewards());
+    }
 
     /** 把刚拿到的领取权退回未领（发奖失败时用），返回是否退回成功。 */
     boolean releaseClaim(String playerId, String mailId);

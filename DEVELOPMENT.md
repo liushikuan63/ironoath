@@ -392,3 +392,67 @@ B13原目标赛季增量（#2384）：recordScopedIncrement在原season/board/pl
 B13原战事全成员事件（#2385）：WarScoreBoard.BattleEvent冻原source序号op/战事startedAt/时点/完整成员BattleImpact、原参战资格和本次3项记账系数，freeze口须使用同一捕获配置物化板；不从当前成员或规则重算旧效果，不替产品分配成员击杀。apply先全量校验/算术/复制再变更，晚成员溢出也不改早成员；原伤兵上限只限本次新增，不压低后续已提交高疲劳。recordBattleEvent/findByStartedAt显式原war、不走latest，全成员效果+每目标最近回执同快照CAS；原回执闭战仍可确认，缺war/闭战缺回执拒绝。保旧Snapshot14/12/11构造与BSON缺列不回写、March等所有普通写口/直接旧版本save冲突；未知确认独立精确读回、读回错保原异常。新二进制保字段，旧版降级须迁移。原目标全效果屏障与关战/赛季快照前排空待COMBAT尚待实际producer接线，本格不宣称真实攻占。
 
 B05稳定战报ID及完整读回（#2386）：`BattleReport.idForOperation(operationId,ownerId)`使用长度分帧UTF-8 SHA-256，拒绝无效Unicode，无时钟/随机数/配置；ID区分原操作和owner。新`BattleReportStore.saveExact`严格确认完整`BattleReport`，不覆盖分享字段/原报告，未知Mongo写必须独立读回完整同载荷；错载荷或无读回失败，读回也失败则原异常附加读错。内存路径使用完整equals的putIfAbsent。原`save`与其忽略不同载荷重复的旧契约不变，createdAt/expiresAt不续期；新口目前零生产调用，`BattleReportService.record`仍生成随机UUID并立即调累加side effect，不可声称可重放或接入COMBAT恢复。
+
+
+### 城建前置等级的生产公开提示（B03验收6）
+
+`POST /city/upgrade` 的主城等级不足仍返回既有错误码3000。该城市请求只使用同一次领域校验的所需/当前等级整数构造 `CityMainLevelRequirementException`，由异常处理器输出固定中文 `msg`；客户端沿现有失败分支显示此消息，失败不刷新成功状态。
+
+生产 `expose-detail=false` 继续剥离所有诊断 `detail`。普通 `BizException` 即使使用相同3000码也不公开其 `detail`，不按错误码将其他业务或内部配置ID加入白名单。没有公开核心记录/协议结构/奖励规则变化，原扣费、队列与请求占用释放顺序保持。
+
+回归入口：`CityUpgradePublicMessageTest` 用真实内存CityAppService/Controller和生产脱敏的MVC Advice检查公开等级、普通同码脱敏、无扣费/占队列及同requestId重试；`AppRoot.test.ts` 的“生产脱敏仍显示主城所需和当前等级”只验证消费方，不冒充真实微信/手机显示。整体目标矩阵/命令日志留本任务独立artifact，未写共享队列。
+
+
+### B20 行级研究时长（2026-10-26）
+
+`contract/config/tech.json` 的可空 `timeBaseSec`：缺失/null/0 回退 TECH_TIME，正值为本行一级秒数；所有生产行目前仍为 0。修改契约后运行 `npm run gen`，禁止手改生成类型。真实服务计算在扣款前拒绝定点溢出；热更不回改已开始的队列。
+
+验证入口：`TechTimeBaseTest`（私有 registry、内存存储与固定时钟）、既有 `TechEndpointTest`、`TechTimeCalibrationTest`；`node --test tools/lib/calibrate-tech-time.test.mjs` 已接入 `scripts/check.sh`。统一基数校准命令遇正值覆盖明确拒绝，不能用它证明混合基数整树达标。详见 [B20 行级兼容说明](B20_科技与装备强化.md#行级研究时长兼容能力2026-10-26本地实施)。
+
+
+### 普通任务领奖恢复（2026-10-26）
+
+`QuestClaimRecovery` 使用任务同文档冻结计划；资源/英雄收据与各自资产同次持久化，Inventory 复用 `quest_item` 稳定收据。投影写必须保留 pending，实际恢复只放在 owner→quest 的公开列表/计数/领取入口，不能放进 Guide 的 `entryOf` 或事件回调。异常保留原计划重试，不另开可能重复发放的普通补偿。
+
+验证类：`QuestOrdinaryRecoveryTest`、`QuestOrdinaryMongoRecoveryTest`，连同 `QuestEndpointTest`、`QuestPermanentRewardTest`、`QuestProgressLockReadTest` 回归。Mongo 测试复用 `TestMongo` 的随机 `ironoath_contract_` 库及本机 URI；不是玩家库。通用 `recoverItemClaims` 必须跳过任务计划所有的 `quest_item`，否则部分溢出会被两个恢复入口重复投递。详见 [B12 恢复记录](B12_外围系统.md#普通任务领奖的持久恢复2026-10-26本地交付记录)。旧档缺字段可读不等于任意旧二进制回退写入安全。
+
+本轮补充边界：无奖励且零积分的任务只保存领取投影。稳定原季档位邮件遇已移除的旧道具显示行，保留冻结ID/数量及原共享邮件键，名称回退“未知道具”；不把这种邮件送达称为该旧道具附件已验证可领取。
+
+
+### 普通资源邮件接受计划（2026-10-26）
+
+MailResourceRecovery 仅接入纯非金币资源/体力邮件，保持既有 GOLD、普通 ITEM 和 paid 来源分支；装备/混合附件尚未迁入。MailRecord.acceptedPlan 与 claimedAt 原子接受，Mailbox 期限取已冻结事实，资源收据与 PlayerSave 同次保存。恢复入口为 owner 锁内 list/claimAll，不能让全局过期清理删除 pending，也不能 release 已接受承诺。
+
+验证：MailResourceRecoveryTest、MailResourceRecoveryMongoTest、MailAcceptedPlanStoreTest，并回归 MailGrantRecoveryTest/Mongo、MailEndpointTest、MailStoreEquivalenceTest。随机测试库为 ironoath_mail_resource_<UUID> 或 TestMongo 自有 ironoath_contract_<随机>，不使用玩家库。旧 BSON 缺字段可以读；旧服务会丢失新计划的写入/清理行为不可混部或直接回退。详情见 [B12 普通资源邮件恢复记录](B12_外围系统.md#普通非金币资源邮件的恢复切片2026-10-26)。
+
+
+### 装备/混合邮件恢复（2026-10-26）
+
+MailClaimPlan.frozenAttachments 保存接受时的附件分类/普通道具堆叠限制；null 继续走旧纯资源计划。Inventory.claimMailBagOnce 在同次版本CAS内按附件原序分配背包格子并写材料/实际装备UID收据。重放不能为已消耗的旧UID再铸造，也不能重置强化/穿戴。新增BSON装备收据使用列表，业务键不是Mongo字段名；Mongo旧装备迁移须避开 mail-plan-owned 收据已冻结的普通道具，其他真正旧装备计数仍按原规则迁移；旧字段缺失可读不等于旧二进制安全回退写入。 首次恢复通过 InventoryRepository.findByPlayerIdForFrozenMail 传入原计划分类；已有实例/收据冲突则保留计划明确失败，不能将新增普通 counts 隐藏在同 ID 实例后。
+
+MailResourceRecovery 的新候选必须先被旧Gold/Item收据固定恢复路径；RewardGrantor 的通用Gold/Item恢复跳过 mail-plan-owned，整封计划负责组合溢出。取得 Inventory 版本必须早于对应快照；不能先读旧库存再拿新版本号写回。验证 MailEquipmentRecoveryTest/Mongo，并回归 MailGrantRecoveryTest/Mongo、原资源恢复测试与 PlayerCityAttackEndpointTest 的 mail: 来源合同。所有故障注入仅使用合成账号/随机自有Mongo库；不调用真实支付或玩家库。
+
+
+## 旧战令直接领取与赛季补邮件恢复
+
+`BattlePassService` 的非支付奖励路径使用 `BattlePassDeliveryPlan`：Progress 同次 CAS 保存资格与 pendingPlans（BSON 为可空 list，旧缺字段读为空）；回调只做纯进度转换，资产/邮箱调用在回调外。所有现有积分、解锁位和领取位更新保留 pending；确认投递后只删除 pending，不撤销资格。按 player 查询原季待投递使用 battle_pass 普通索引 idx_battle_pass_player。
+
+直接发奖来源为独立的 battlepass_claim，不能伪装为 mail；复用冻结附件原子收据算法，原 mail_gold/mail_item 身份保持不变。battlepass-plan-owned 的金币/道具收据由完整计划恢复，通用单类恢复不能拆分溢出包。季末按轨合并与迟到旧稳定邮件身份不变；保留时长及附件随计划固定，预约不写送达窗口；首次实际邮件保存后，回读胜出邮件，在同次 Progress CAS 确认其窗口并移除 pending。首写前失败隔日恢复仍享原保留时长，真保存丢响应/已领/已过期重试不得续期。旧 claimed 无计划不猜发。
+
+验证入口：BattlePassLegacyRecoveryTest 及其随机 Mongo 派生类、BattlePassDeliveryStoreTest，连同 BattlePassEndpointTest、BattlePassSweepTest、BattlePassStoreEquivalenceTest、原任务/活动恢复测试。故障由保存真实成功后抛 Error 注入，须区分业务首红和 Spring 测试夹具错误；Mongo 不可达/跳过不能计入已验收。
+
+部署仍需停目标旧写入者并取得应用/配置/数据库一致备份；旧 JAR 的 Progress 写入不保留新 pending，旧通用金币/道具恢复也不认识战令计划所有权，不能混跑或直接回退。应用回退须保留新字段/来源的兼容修复版本；否则停写恢复一致备份并评估之后进度。本次未操作真实库/后端、未执行新索引生产迁移，也未验证旧写入者混跑或整机重启。
+
+
+## B09 离线量具的玩家准入边界
+
+`StageUnitRule.allows(UnitKind)` 是真实 StageAppService 与 `--f2p-stages` 的共用纯判据；配置/协议限制枚举及 UnitCfg.Type 的名称由 StageContractParityTest 校验，未知名称不得默认放行。准入只作用于玩家，不能筛掉守方单位。CLI 仍为显式纯步兵/历史参考诊断，非法编队不模拟、不计胜率，诊断完成不代表B09-4通过。
+
+验证入口：StageUnitRuleTest（16组合+缺类型拒绝）、F2pStagesAdmissionTest（真实打印/内核与私有临时配置）、原 F2pStagesProvenanceTest 和 StageEndpointTest/StageContractParityTest。完整合法七天画像、BOSS/阶级/累计三星和真实平台证据单列；不把旧45天keys或6833标签当作新画像。
+
+
+## B09 BOSS 参数和输入冻结
+
+线上 BattleRulesAssembler 与离线 BattleParamsResolver 都调用 `BossMechanic.from(Type, GlobalParamSource)`；原有 GlobalParamSource 足够，无须扩展 BattleParams 构造器或复制一份CLI参数映射。REINFORCEMENT 读间隔/援军比例，SHIELD_PHASE 读阈值/防御增益，COUNTER_STRIKE 读反射比例；NONE 无参数读取。缺参/非法值保持现有失败方向，不降级为 NONE。参数值与机制规则均未调整。
+
+验证入口：BossMechanicAssemblyTest（字段映射/按类型读取/原记录冻结）、BattleRulesAssemblerBossTest（真实生产适配及私有registry热更）、F2pStagesBossTest（实际回合触发、非法编队不执行、工具真实热更），连同既有 BossMechanicTest 对照战和原Stage/CLI回归。global热更测试使用 ConfigRegistry.reload 与 com.ironoath.config.model.GlobalCfg；不写真实配置文件。完整七天画像、敌方阶级及累计三星依旧分开验收。

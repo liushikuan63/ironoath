@@ -32,16 +32,9 @@ const COLOR_BORDER = new Color(184, 134, 11, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_DIM = new Color(170, 158, 138, 255)
 const COLOR_BUY = new Color(184, 134, 11, 255)
-/** #805 定的置灰机制：贴图路径用 color 乘灰（引擎运行时有 `grayscale`，本仓 headless 的 cc 类型桩里没有）。 */
+/** 状态亮度来自确定性派生素材；Sprite 保持白 tint。 */
 const COLOR_TINT_ON = new Color(255, 255, 255, 255)
-const COLOR_TINT_OFF = new Color(104, 96, 88, 255)
 const COLOR_BUY_OFF = new Color(70, 62, 52, 255)
-/**
- * 贴图路径的置灰：`Sprite.color` 与贴图相乘，白＝原色。
- * 不用 `sprite.grayscale` —— 引擎运行时有，但本仓 headless 的 cc 类型桩里没有这个属性，
- * `check-client-typecheck` 会直接报 TS2339（实测）。
- */
-
 export class StaminaDetailOverlay {
   readonly node: Node
   private readonly titleLabel: Label
@@ -51,12 +44,12 @@ export class StaminaDetailOverlay {
   private readonly noteLabel: Label
   private readonly buyCaption: Label
   /**
-   * 买体力键的两条绘制路径，二选一：素材上来了走 `buySprite`（置灰 = `grayscale`），
+   * 买体力键的两条绘制路径，二选一：素材上来了走 `buySprite`（禁用派生图），
    * 没上来就退回 `buyBackground` 那块实心圆角矩形（置灰 = 换 fillColor）。
    * 两条都留着是因为「置灰而不是隐藏」是协议明写的要求 —— 换成贴图不能把它弄丢。
    */
   private readonly buySprite: Sprite | null
-  private readonly buyBackground: Graphics | null
+  private buyBackground: Graphics | null
   private buyEnabled = false
   private view: StaminaDetailView | null = null
   private readonly layoutDialog: () => void
@@ -117,7 +110,7 @@ export class StaminaDetailOverlay {
     buy.addComponent(UITransform).setContentSize(new Size(BUY_W, BUY_H))
     // C 档铁钮：先试贴图，失败才建 Graphics（`applySlicedSprite` 自己会 addComponent(Sprite)）。
     // 按下换 hover 那一态（更亮更饱和，触屏没有悬停、这张素材的语言就是"这一颗是当前项"）；
-    // **置灰仍走 #805 定的 color 乘灰**（`tools/verify-ui-v25-runtime.mjs` 把那条钉成了判据）。
+    // V25-e：禁用使用同母版派生图，与运行时探针同时验证。
     this.buySprite = applyIronButton(buy, 'normal', BUY_W, BUY_H) ? buy.getComponent(Sprite) : null
     this.buyBackground = this.buySprite === null ? buy.addComponent(Graphics) : null
     this.buyCaption = this.addLabel(buy, 'Caption', 0, 0, COLOR_TEXT, 15, BUY_W - 12)
@@ -130,7 +123,7 @@ export class StaminaDetailOverlay {
     }, this)
     buy.on('touch-end', () => {
       if (this.buySprite !== null) {
-        applyIronButton(buy, 'normal', BUY_W, BUY_H)
+        applyIronButton(buy, this.buyEnabled ? 'normal' : 'disabled', BUY_W, BUY_H)
       }
     }, this)
 
@@ -150,7 +143,7 @@ export class StaminaDetailOverlay {
     buy.setPosition(new Vec3(-20, buy.position.y, 0))
     // 两个操作在下沿并排，短屏仍可取消；说明与恢复节奏完整进入滚动净区。
     buy.getComponent(UITransform)!.setContentSize(BUY_W, BUY_H)
-    applyDialogButton(buy, true, BUY_W, BUY_H)
+    // BuyButton 的状态图与 Graphics 由本类统一持有，避免共用装饰器再建一份兜底。
     this.layoutDialog = fitExistingDialog(this.node, panel,
       [this.titleLabel.node, this.recoverLabel.node, this.nextLabel.node, this.boughtLabel.node, this.noteLabel.node],
       [buy, close], 'ui.panel.iron', PANEL_W, PANEL_H)
@@ -167,11 +160,23 @@ export class StaminaDetailOverlay {
     this.noteLabel.string = view.noteText ?? ''
     this.buyEnabled = view.buyEnabled
     // 置灰而不是隐藏（协议明写理由）：到上限那一天玩家仍看得见「明天还能买」
+    let vectorFallback = this.buySprite === null
     if (this.buySprite !== null) {
-      // 贴图路径：置灰交给 color 乘灰，文字同步压暗 —— 只灰底不灰字会读成"还能点"。
-      this.buySprite.color = view.buyEnabled ? COLOR_TINT_ON : COLOR_TINT_OFF
+      // 同母版派生禁用图保留边形；白 tint 避免重复压暗，文字仍按业务禁用色。
+      const loaded = applyIronButton(this.buySprite.node, view.buyEnabled ? 'normal' : 'disabled', BUY_W, BUY_H)
+      vectorFallback = !loaded
+      if (!loaded) {
+        // 某一状态图缺失也必须可见，不能只在构造时决定是否有兜底。
+        this.buyBackground ??= this.buySprite.node.getComponent(Graphics) ?? this.buySprite.node.addComponent(Graphics)
+      } else if (this.buyBackground !== null) {
+        this.buyBackground.clear()
+        this.buyBackground.enabled = false
+      }
+      this.buySprite.color = COLOR_TINT_ON
       this.buyCaption.color = view.buyEnabled ? COLOR_TEXT : COLOR_BUY_OFF
-    } else if (this.buyBackground !== null) {
+    }
+    if (vectorFallback && this.buyBackground !== null) {
+      this.buyBackground.enabled = true
       this.buyBackground.clear()
       this.buyBackground.fillColor = view.buyEnabled ? COLOR_BUY : COLOR_BUY_OFF
       this.buyBackground.roundRect(-BUY_W / 2, -BUY_H / 2, BUY_W, BUY_H, 8)

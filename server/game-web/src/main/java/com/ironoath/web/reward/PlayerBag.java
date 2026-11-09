@@ -33,6 +33,40 @@ public final class PlayerBag implements RewardPorts.Bag {
     }
 
 
+    @Override public Inventory.MailBagClaim grantMailBagOnce(String playerId,java.util.List<com.ironoath.core.reward.FrozenMailReward> items,
+            com.ironoath.core.reward.RewardContext ctx,long now) {
+        if(ctx==null||!ctx.durableMailAttachments())throw new IllegalArgumentException("邮件计划身份无效");
+        return grantFrozenBagOnce(playerId,items,ctx,now);
+    }
+    @Override public Inventory.MailBagClaim grantBattlePassBagOnce(String playerId,java.util.List<com.ironoath.core.reward.FrozenMailReward> items,
+            com.ironoath.core.reward.RewardContext ctx,long now) {
+        if(ctx==null||!ctx.durableBattlePass())throw new IllegalArgumentException("战令计划身份无效");
+        return grantFrozenBagOnce(playerId,items,ctx,now);
+    }
+    private Inventory.MailBagClaim grantFrozenBagOnce(String playerId,java.util.List<com.ironoath.core.reward.FrozenMailReward> items,
+            com.ironoath.core.reward.RewardContext ctx,long now) {
+        var classification=new java.util.LinkedHashMap<String,Boolean>();
+        for(var item:items) {
+            Boolean prior=classification.putIfAbsent(item.reward().id(),item.equipment());
+            if(prior!=null&&prior!=item.equipment())throw new IllegalArgumentException("同一附件ID的冻结分类冲突");
+        }
+        // The first read is hinted too: unpersisted legacy migration must not reinterpret an accepted promise.
+        if(inventories.findByPlayerIdForFrozenReward(playerId,classification).isEmpty())
+            inventories.insertIfAbsent(playerId,Inventory.empty((int)configs.longParam("BAG_INITIAL_CAPACITY")));
+        long version=inventories.versionOf(playerId);
+        var inventory=inventories.findByPlayerIdForFrozenReward(playerId,classification).orElseThrow();
+        boolean existed=inventory.itemClaims().containsKey(ctx.frozenItemKey())||inventory.equipmentClaims().containsKey(ctx.frozenEquipmentKey());
+        var accepted=ctx.durableBattlePass()?inventory.claimBattlePassBagOnce(items,ctx,now):inventory.claimMailBagOnce(items,ctx,now);
+        if(!existed)inventories.save(playerId,inventory,version);return accepted;
+    }
+    @Override public void completeEquipmentOverflow(String playerId,String key,String mailId) {
+        long version=inventories.versionOf(playerId);
+        var inventory=loadOrCreate(playerId);var receipt=inventory.equipmentClaims().get(key);
+        if(receipt==null)throw new IllegalStateException("装备收据不存在");
+        if(mailId.equals(receipt.overflowMailId()))return;
+        inventory.completeEquipmentOverflow(key,mailId);inventories.save(playerId,inventory,version);
+    }
+
     @Override public ItemGrant grantItemsOnce(String playerId,java.util.Map<String,Long> items,com.ironoath.core.reward.RewardContext ctx,long now) {
         if(ctx==null||!ctx.durableItems()||!ctx.overflowToMail()||ctx.sourceRef().isBlank())throw new IllegalArgumentException("材料持久领取来源无效");
         Inventory inventory=loadOrCreate(playerId);long version=inventories.versionOf(playerId);
@@ -47,11 +81,25 @@ public final class PlayerBag implements RewardPorts.Bag {
         inventories.save(playerId,inventory,version);
         return new ItemGrant(receipt,receipt.credited());
     }
+    @Override public ItemGrant grantQuestItemsOnce(String playerId, java.util.Map<String,Long> items,
+            java.util.Map<String,Long> stackMax, com.ironoath.core.reward.RewardContext ctx, long now) {
+        if (ctx == null || !"quest_item".equals(ctx.source()) || !ctx.overflowToMail()
+                || ctx.sourceRef().isBlank() || !stackMax.keySet().equals(items.keySet()))
+            throw new IllegalArgumentException("任务材料必须有冻结限制和稳定业务键");
+        var inventory = loadOrCreate(playerId);
+        long version = inventories.versionOf(playerId);
+        boolean existed = inventory.itemClaims().containsKey(ctx.traceId());
+        var receipt = inventory.claimItemsOnce(items, stackMax, ctx, now);
+        if (!existed) inventories.save(playerId, inventory, version);
+        return new ItemGrant(receipt, existed ? java.util.Map.of() : receipt.credited());
+    }
+
     @Override public void completeItemOverflow(String playerId,String key,String mailId) {
+        long version=inventories.versionOf(playerId);
         var inventory=loadOrCreate(playerId);var receipt=inventory.itemClaims().get(key);
         if(receipt==null)throw new IllegalStateException("材料回执不存在");
         if(mailId.equals(receipt.overflowMailId()))return;
-        long version=inventories.versionOf(playerId);inventory.completeItemOverflow(key,mailId);inventories.save(playerId,inventory,version);
+        inventory.completeItemOverflow(key,mailId);inventories.save(playerId,inventory,version);
     }
     @Override public java.util.List<com.ironoath.core.bag.ItemClaimReceipt> pendingItemClaims(String playerId) {
         return inventories.findByPlayerId(playerId).map(i->i.itemClaims().values().stream().filter(com.ironoath.core.bag.ItemClaimReceipt::pendingOverflow).toList()).orElse(java.util.List.of());

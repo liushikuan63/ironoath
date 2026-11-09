@@ -628,3 +628,10 @@ NationPanel 的两件顶饰/火漆、SocialCreate 的联盟顶饰、MarchCompose
 - 任务卡：`待完善收口_VibeCoding开发包.md` 的 V25（本规格的索引卡）。
 - 接续：`.qoder-work-queue.md`（未跟踪，主检出与 worktree 两份同写）。
 - 视觉验收的最终判据是**截图**，不是探针退 0：每格至少留 8 屏 1440×900 留帧，与改动前对照。
+
+
+### 2026-10-25 V25-e 禁用状态接入补记
+
+按 §七第8项接入 `ui.button.iron.disabled`，替代历史 #805 的常态图乘灰。以已采用的 v3 `button-iron-v1` 为唯一来源，复用 `derive_button_states.py` 的亮度0.62、饱和度0.25；运行图256×49，四边12/12/4/4，alpha逐像素不变。所有状态图使用白Sprite tint，文字仍随业务禁用；体力购买键在touch-end保留当前禁用状态，状态图缺失时动态进入Graphics兜底，素材恢复后清除兜底。
+
+复跑入口：Node20 `node tools/verify-iron-disabled-material.mjs`，使用本隔离树 `client/build/web-mobile` 和loopback合成响应。对照顺序为常态、派生禁用、旧乘灰，160×32逻辑尺寸；本机证据见开发包§四同日条目。此补记覆盖旧“disabled退草稿/继续乘灰”现状，历史尺寸表保留，不改变AI母版或可选A尺寸裁定。

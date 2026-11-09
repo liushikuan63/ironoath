@@ -50,6 +50,18 @@ public final class PlayerSave {
             goldClaims.put(key, receipt);
         });
     }
+    private final Map<String, com.ironoath.core.reward.ResourceClaimReceipt> resourceClaims = new LinkedHashMap<>();
+    public Map<String, com.ironoath.core.reward.ResourceClaimReceipt> resourceClaims() { return Map.copyOf(resourceClaims); }
+    public void putResourceClaim(com.ironoath.core.reward.ResourceClaimReceipt receipt) {
+        resourceClaims.put(receipt.businessKey(), receipt);
+    }
+    public void restoreResourceClaims(Map<String, com.ironoath.core.reward.ResourceClaimReceipt> stored) {
+        resourceClaims.clear();
+        if (stored != null) stored.forEach((key, receipt) -> {
+            if (!key.equals(receipt.businessKey())) throw new IllegalArgumentException("资源收据键不匹配");
+            resourceClaims.put(key, receipt);
+        });
+    }
     private PlayerPower power;
     /** PVP 侧状态（战力峰值时点 / 暴虐值 / 连续受害护盾），B08 引入。 */
     private PlayerPvp pvp = PlayerPvp.empty();
@@ -493,6 +505,7 @@ public final class PlayerSave {
         this.cityLevel = cityLevel;
         this.resources.clear();
         this.goldClaims.clear();
+        this.resourceClaims.clear();
         this.resources.putAll(restoredResources);
         this.power = restoredPower;
         // 老存档没有这个字段：补空状态而不是抛异常。
@@ -531,6 +544,7 @@ public final class PlayerSave {
                 avatarFrame, ownedAvatarFrames, version);
         copy.restoreHarvestLearning(pendingManualOutput, manuallyCollected);
         copy.restoreGoldClaims(goldClaims);
+        copy.restoreResourceClaims(resourceClaims);
         copy.restoreBotCalibrationAt(lastBotCalibrationAt);
         return copy;
     }

@@ -1,7 +1,7 @@
 # A线：国战奖分恢复与有效时长分摊
 
 **目标**：让所有惰性结算入口都能从持久计划恢复奖分，重复投递不重复入榜；固定bonus依已裁的历史有效成员时长比例分摊。
-**当前状态**：A-R0历史反查与A1/A2/A3/A4实现候选已于本地提交`f401fdae`（未推送）。2026-11-09补充`WarAwardMongoRecoveryEndpointTest`，用Mongo `WarStore`与Mongo季榜模拟首位回执落盘后中断，再由新建`MongoWarStore`、`MongoSeasonBoardStore`和`WarAppService`恢复；本轮定向1/0/0/0。A-R0、A1/A2/A4原有定向读数均在下表；当前完整`test.sh`/`build.sh`与独立Q状态在主开发包§四。
+**当前状态**：A1/A3/A4恢复链路已集成；A2历史有效时长比例分摊已有内存反例和新的Mongo跨存储串联用例。新用例从Mongo Alliance/Nation成员区间计算13/10/3/5冻结奖分，首个WAR回执落盘后故障，再用全新War/Season Store恢复且禁止重读历史；定向1/0/0/0，见开发包§四 #2497。全量test/build通过；A2独立Q复核和真实SIEGE后榜分仍未通过，A线不标整批完成。
 **规格**：[B13](../../B13_国家与国战.md) #2459/#2461/#2473、[开发包§零](../../待完善收口_VibeCoding开发包.md#current-execution)。技术栈沿当前Java17/Maven与内存/Mongo双实现。
 
 ## 写入边界
@@ -46,4 +46,4 @@ mvn -Dmaven.repo.local="${IRONOATH_TASK_M2:?}" -Dironoath.test.mongo.uri="${IRON
 |---|---|---|---|---|
 | A-R0 | IN_PROGRESS | 文档基线5fbf4e4c；代码提交f401fdae | `SocialStore.allianceMemberEpochs`已接内存/Mongo历史反查；`SocialStoreEquivalenceTest`现跑30/0/0/0，Mongo与内存用例全执行；A轮测试资源已登记为专属M2与自有临时Mongo | 仍待整批集成及Q独立验收；历史成员计算的Mongo服务级联动未与War投递放在同一测试中 |
 | A1/A3/A4 | A1/A4 TARGETED_GREEN；A3 CROSS_MONGO_RECOVERY_GREEN | 提交f401fdae；新增`WarAwardMongoRecoveryEndpointTest` | 生产`settleIfExpired`仅有`WarAppService.java:158,373`两处，均进入统一恢复出口；`WarEndpointTest` 28/0/0/0、`RankEndpointTest` 20/0/0/0；新增Mongo故障用例在首个WAR回执真实写入后注入中断，用全新War/Season Store及WarAppService恢复，保留原计划且逐人只入账一次，1/0/0/0；随机owned数据库标记删除并读回为空 | 仍需Q独立复核冻结候选；A2跨国家历史与奖分分配的组合验收仍由分层测试证明，不据此标B13完整 |
-| A2 | IN_PROGRESS | #2473及#2477用户裁决；提交f401fdae；每人全战期额度按本人有效成员时长比例折算 | `RankEndpointTest`现跑20/0/0/0，覆盖历史交集、重入后合并取整、国家归属间断、战后新成员排除、零时长及有效期重叠拒绝；`SocialStoreEquivalenceTest`与Mongo计划往返均通过 | 端到端War结算与Mongo历史读取目前由分层测试组合证明；仍需Q对冻结候选做跨国家历史/重启交叉验收，不能据局部GREEN标完整B13完成 |
+| A2 | MONGO_INTEGRATED_GREEN; Q_REVIEW_PENDING | #2473/#2477用户裁决；集成候选树`58a808207d4b7607e52380612ea593620e26fdfe`；每名成员自己的全战期额度按持久有效时长折算 | `RankEndpointTest`现跑20/0/0/0覆盖区间交集、重入合并取整、跨国间断、战后成员排除、零时长及重叠拒绝；新增`WarAwardMongoRecoveryEndpointTest.persistedMongoMembershipHistoryFreezesProratedAwardsBeforeRestartRecovery`在真实Mongo SocialStore/NationStore历史上产生13/10/3/5，首回执后中断再由新Store恢复1/0/0/0；临时history DB drop并admin枚举为空 | Q须独立复核跨国家历史/重启；实时战斗探针仍未进入SIEGE，完整线上战斗与榜单奖励仍为PREREQ，不能据分层/测试库证据标B13全闭 |

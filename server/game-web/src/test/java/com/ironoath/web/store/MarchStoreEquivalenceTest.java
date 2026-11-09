@@ -262,6 +262,21 @@ class MarchStoreEquivalenceTest {
         return out;
     }
 
+    @Test void strategicTargetLookupMatchesAcrossBackends() {
+        Assumptions.assumeTrue(db != null, "local MongoDB required for backend equivalence");
+        var matching = new March("capital-march", "P-1", Coord.of(10, 10), Coord.of(40, 40), T0, T0 + 60_000,
+                Map.of("unit_infantry_t1", 100L), List.of(), 1_000L, 120,
+                March.TargetType.STRATEGIC_TARGET, "capital_center", March.Action.ATTACK);
+        var other = new March("other-march", "P-1", Coord.of(10, 10), Coord.of(40, 40), T0 + 1, T0 + 60_001,
+                Map.of("unit_infantry_t1", 100L), List.of(), 1_000L, 120,
+                March.TargetType.STRATEGIC_TARGET, "gate_north", March.Action.ATTACK);
+        for (MarchRepository store : List.of(new InMemoryMarchStore(CHUNK_SIZE), newMongoStore())) {
+            store.insertIfAbsent(matching); store.insertIfAbsent(other);
+            assertThat(idsIn(store.findByTargetId("capital_center"))).containsExactly("capital-march");
+            assertThat(store.findByTargetId(" ")).isEmpty();
+        }
+    }
+
     private static March march(String id, long startAt) {
         return marchBetween(id, startAt, Coord.of(10, 10), Coord.of(40, 40));
     }

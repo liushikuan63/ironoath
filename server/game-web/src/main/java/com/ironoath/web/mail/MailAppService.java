@@ -70,6 +70,7 @@ public class MailAppService {
     private final IdempotencyStore idempotency;
     private final PlayerLock playerLock;
     private final RewardNames names;
+    private final MailResourceRecovery resourceClaims;
 
     public MailAppService(MailStore store, TimeService timeService, ConfigRegistry configs,
                           RewardService rewardService, IdempotencyStore idempotency,
@@ -81,6 +82,7 @@ public class MailAppService {
         this.idempotency = idempotency;
         this.playerLock = playerLock;
         this.names = names;
+        this.resourceClaims = new MailResourceRecovery(store, configs, rewardService);
     }
 
     // ---------- 读 ----------
@@ -90,6 +92,12 @@ public class MailAppService {
      * 与战报 {@code purgeExpired}、埋点保留期同一形状。
      */
     public MailListResp list(String playerId) {
+        return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+            resourceClaims.recover(playerId);
+            return listAfterRecovery(playerId);
+        });
+    }
+    private MailListResp listAfterRecovery(String playerId) {
         long now = timeService.serverNow();
         int purged = store.purgeExpired(now);
         if (purged > 0) {
@@ -130,14 +138,16 @@ public class MailAppService {
 
     /** 一键领取全部可领附件。只发一次请求（验收 5），失败的邮件保留并带原因。 */
     public MailClaimAllResp claimAll(String playerId, MailClaimAllReq req) {
-        long now = timeService.serverNow();
-        acquire(req == null ? null : req.requestId(), now);
-        try {
-            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+        return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+            var resumed = resourceClaims.recover(playerId);
+            long now = timeService.serverNow();
+            acquire(req == null ? null : req.requestId(), now);
+            try {
                 List<MailRecord> snapshot = store.listOf(playerId, timeService.serverNow());
-                int claimed = 0;
+                int claimed = resumed.size();
                 Map<String, Long> grantedByLine = new LinkedHashMap<>();
                 Map<String, String> nameOfLine = new LinkedHashMap<>();
+                for (var delivered : resumed) addResourceGrant(delivered.plan(), delivered.result(), grantedByLine, nameOfLine);
                 List<MailClaimFailure> failed = new ArrayList<>();
                 for (MailRecord mail : snapshot) {
                     long eligibleAt = timeService.serverNow();
@@ -153,8 +163,17 @@ public class MailAppService {
                             && !mail.rewards().isEmpty() && mail.rewards().stream().allMatch(line -> "ITEM".equals(line.type()));
                     boolean ordinaryCandidate = !mail.rewards().isEmpty() && mail.rewards().stream().allMatch(line ->
                             "ITEM".equals(line.type()) || ("RESOURCE".equals(line.type()) && "GOLD".equals(line.id())));
-                    boolean durable = durableGold || durableItems || ordinaryCandidate;
+                    boolean resourcePlan = resourceClaims.supports(mail);
+                    boolean durable = durableGold || durableItems || ordinaryCandidate || resourcePlan;
                     try {
+                        if (resourcePlan) {
+                            var plan = resourceClaims.freeze(mail, eligibleAt);
+                            if (!store.acceptClaim(playerId, mail.mailId(), eligibleAt, plan)) continue;
+                            var result = resourceClaims.deliverAndFinish(playerId, plan);
+                            addResourceGrant(plan, result, grantedByLine, nameOfLine);
+                            claimed++;
+                            continue;
+                        }
                         if (ordinaryCandidate && !durableGold && !durableItems)
                             durable = rewardService.hasMailAttachmentClaim(playerId, mail.mailId()) || validateDurableAttachments(mail);
                         if (!durable && !store.claim(playerId, mail.mailId(), eligibleAt)) {
@@ -207,10 +226,20 @@ public class MailAppService {
                 }
                 LOG.info("一键领取邮件 playerId={} 领到 {} 封、失败 {} 封", playerId, claimed, failed.size());
                 return new MailClaimAllResp(claimed, List.copyOf(rewards), List.copyOf(failed));
-            });
-        } catch (RuntimeException e) {
-            idempotency.release(req.requestId());
-            throw e;
+            } catch (RuntimeException e) {
+                idempotency.release(req.requestId());
+                throw e;
+            }
+        });
+    }
+    private static void addResourceGrant(MailClaimPlan plan, com.ironoath.core.reward.GrantResult result,
+            Map<String,Long> counts, Map<String,String> names) {
+        for (var got : result.granted()) {
+            String key = got.type().name() + ':' + got.id();
+            counts.merge(key, got.count(), Math::addExact);
+            String name = plan.attachments().stream().filter(line -> line.type().equals(got.type().name()) && line.id().equals(got.id()))
+                    .map(MailStore.RewardLine::name).filter(n -> !n.isBlank()).findFirst().orElse("资源奖励");
+            names.putIfAbsent(key, name);
         }
     }
 

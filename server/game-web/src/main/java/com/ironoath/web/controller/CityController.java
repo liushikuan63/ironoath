@@ -52,8 +52,8 @@ public class CityController {
     /**
      * 升级或首次建造。
      *
-     * <p>失败时返回结构化错误码 + {@code detail} 里的「需要 X，当前 Y」，
-     * 客户端直接展示，不显示笼统的「条件不足」（B03 验收 6）。
+     * <p>失败时保留结构化错误码；主城等级前置的「需要 X，当前 Y」通过安全公开的
+     * {@code msg} 展示（B03 验收 6）。{@code detail} 仍属诊断信息，生产环境照常剥离。
      */
     @PostMapping("/upgrade")
     public Result<CityUpgradeResp> upgrade(@RequestHeader(PLAYER_HEADER) String playerId,

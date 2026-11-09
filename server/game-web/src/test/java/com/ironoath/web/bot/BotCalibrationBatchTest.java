@@ -21,7 +21,7 @@ class BotCalibrationBatchTest {
         catch(InterruptedException e) { Thread.currentThread().interrupt();throw new AssertionError(e); }
     }
 
-    @Test void differentPlayersOverlapWithinTheBoundAndResultsKeepInputOrder() {
+    @Test void differentPlayersOverlapWithinTheBoundAndResultsKeepInputOrder() throws Exception {
         CountDownLatch firstPair=new CountDownLatch(2);
         AtomicInteger active=new AtomicInteger(),peak=new AtomicInteger();
         Set<Thread> threads=ConcurrentHashMap.newKeySet();
@@ -34,7 +34,10 @@ class BotCalibrationBatchTest {
         assertThat(peak.get()).isEqualTo(2);
         assertThat(active.get()).isZero();
         assertThat(result).containsExactly("0-done","1-done","2-done","3-done","4-done","5-done");
-        assertThat(threads).hasSize(2).allSatisfy(t->assertThat(t.isAlive()).isFalse());
+        assertThat(threads).hasSize(2);
+        // Executor termination may be signalled just before the last worker Thread returns.
+        // Keep the leak assertion bounded, but do not require same-instant Thread death.
+        for (Thread worker : threads) join(worker);
     }
 
     @Test void firstObservedFailureStopsDispatchAndDrainsAcceptedWrites() throws Exception {
@@ -172,7 +175,7 @@ class BotCalibrationBatchTest {
         assertThat(started).containsExactlyInAnyOrder("0","1");
         assertThat(commits.get()).isEqualTo(2);assertThat(returnedTooSoon).isFalse();
         assertThat(flagRestored).isTrue();assertThat(workerInterrupted).isFalse();
-        assertThat(workers).allSatisfy(t->assertThat(t.isAlive()).isFalse());
+        for (Thread worker : workers) join(worker);
     }
 
     @Test void synchronizationAndActualTransactionAlsoStayOnTheCallerThread() {

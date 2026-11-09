@@ -1656,6 +1656,21 @@ test('业务失败没有 detail 时退回 msg：detail 是「差多少」，msg 
   assert.equal(h.errors.at(-1)?.[1], '资源不足')
 })
 
+test('生产脱敏仍显示主城所需和当前等级：仅消费公开msg且失败不刷新', async () => {
+  const h = harness()
+  await h.root.start('dev-city-public-level', '君')
+  const total = h.http.calls.length
+  const cityReads = h.http.countOf('/city/list')
+  const publicMessage = '需要主城 5 级，当前主城 1 级'
+  h.http.bizFailNext = { code: 3000, msg: publicMessage, detail: null }
+
+  await h.root.upgradeBuilding('stable', 1, 2)
+
+  assert.deepEqual(h.errors.at(-1), ['city', publicMessage])
+  assert.equal(h.http.calls.length, total + 1, '拒绝后仅有这条写请求，不做成功重拉')
+  assert.equal(h.http.countOf('/city/list'), cityReads)
+})
+
 test('传输抛错时说的是「网络不通」：玩家看到这句会等，看到「操作失败」只会去重试同一件事', async () => {
   const h = harness({ transportFails: true })
 

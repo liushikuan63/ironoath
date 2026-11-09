@@ -25,6 +25,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import com.fasterxml.jackson.databind.JsonNode;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.json.JsonUtils;
+import com.ironoath.common.time.TimeService;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerResourceState;
 import com.ironoath.core.player.PlayerSave;
@@ -83,6 +84,7 @@ class SocialEndpointTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private PlayerInitService playerInitService;
     @Autowired private PlayerRepository players;
+    @Autowired private TimeService timeService;
     @Autowired private SocialAppService social;
     @Autowired private ReddotTree reddotTree;
     @Autowired private SocialStore socialStore;
@@ -1459,6 +1461,18 @@ class SocialEndpointTest {
         return hits.isEmpty() ? null : hits.get(0);
     }
 
+    /** Membership epochs use milliseconds; advance the actual server clock between join and kick. */
+    private void awaitNextServerMillisecond() {
+        long observedAt = timeService.serverNow();
+        long deadline = System.nanoTime() + 1_000_000_000L;
+        while (timeService.serverNow() <= observedAt && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+        }
+        assertThat(timeService.serverNow())
+                .as("测试必须让加入与移出成员时间段落在不同服务端毫秒")
+                .isGreaterThan(observedAt);
+    }
+
     // ---------- 联盟管理：踢人 / 转让 / 任命（域方法早就有，本轮才接上端点） ----------
 
     @Test
@@ -1467,6 +1481,7 @@ class SocialEndpointTest {
         Quartet q = allianceWithThreeMembers();
         post200("/alliance/setRole", q.leader, new AllianceRoleReq(newRequestId(), q.b,
                 com.ironoath.web.dto.generated.AllianceRole.OFFICER));
+        awaitNextServerMillisecond();
 
         JsonNode afterKick = post200("/alliance/kick", q.b, new AllianceMemberReq(newRequestId(), q.d));
         assertThat(afterKick.get("alliance").get("memberCount").asInt())

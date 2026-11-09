@@ -46,6 +46,21 @@ class StrategicMarchCustodyTest {
         assertThatThrownBy(()->m.applyStrategicSurvivors(before,survivors,happenedAt,false)).isInstanceOfAny(IllegalArgumentException.class,IllegalStateException.class,ArithmeticException.class);
         assertThat(m.snapshot()).isEqualTo(snapshot);
     }
+    @Test void capitalRelocationMovesTheSameStationedGarrisonAndPreservesOwnerShares() {
+        var m=attack();var ownerMap=owners();m.holdStrategicVictory(ownerMap);var before=m.snapshot();
+        var destination=Coord.of(300,280);
+        m.relocateStationedGarrison(destination);
+        assertThat(m.id()).isEqualTo(before.id());assertThat(m.status()).isEqualTo(March.Status.STATIONED);
+        assertThat(m.to()).isEqualTo(destination);assertThat(m.targetId()).isEqualTo("gate_north");
+        assertThat(m.garrisonTroopsByPlayer()).isEqualTo(ownerMap);assertThat(m.units()).isEqualTo(before.units());
+        assertThat(March.fromSnapshot(m.snapshot()).snapshot()).isEqualTo(m.snapshot());
+        assertThatThrownBy(()->m.garrisonTroopsByPlayer().clear()).isInstanceOf(UnsupportedOperationException.class);
+    }
+    @Test void capitalRelocationRefusesAnUnstationedMarchWithoutMutation() {
+        var m=attack();var original=m.snapshot();
+        assertThatThrownBy(()->m.relocateStationedGarrison(Coord.of(300,280))).isInstanceOf(IllegalStateException.class);
+        assertThat(m.snapshot()).isEqualTo(original);
+    }
     @Test void zeroDepartureAndZeroSnapshotStayRejectedWithoutInventingTerminalState() {
         assertThat(March.Status.values()).hasSize(5);
         assertThatThrownBy(()->new March("empty","owned-A",Coord.of(1,1),Coord.of(2,2),100,110,Map.of(),List.of(),0,1,March.TargetType.EMPTY,null,March.Action.ATTACK)).isInstanceOf(IllegalArgumentException.class);

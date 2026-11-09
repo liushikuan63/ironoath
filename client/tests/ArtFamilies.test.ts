@@ -226,10 +226,10 @@ test('原画布与合法裁边同时验：透明边可裁，原图损坏/越界/
   assert.throws(() => assertFrameGeometry({ ...valid, offsetY: 1 }, 52, 52, '错偏移'), /offsetY/)
 })
 
-test('统一v3的13张按钮、条行、提示、导航与整图件逐张核PNG和meta，不留chip/nav豁免', () => {
+test('统一v3的14张按钮、条行、提示、导航与整图件逐张核PNG和meta，不留chip/nav豁免', () => {
   const contracts = [
     { names: ['button-chip-v1', 'button-chip-hover-v1', 'button-chip-disabled-v1',
-      'button-iron-v1', 'button-iron-hover-v1'], width: 256, height: 49, border: BUTTON_BORDER },
+      'button-iron-v1', 'button-iron-hover-v1', 'button-iron-disabled-v1'], width: 256, height: 49, border: BUTTON_BORDER },
     { names: ['plate-band-v1'], width: 512, height: 40, border: BAND_BORDER },
     { names: ['plate-tooltip-v1'], width: 256, height: 50, border: BUTTON_BORDER },
     { names: ['nav-tab-v1', 'nav-tab-selected-v1'], width: 256, height: 100, border: NAV_BORDER },
@@ -238,8 +238,8 @@ test('统一v3的13张按钮、条行、提示、导航与整图件逐张核PNG�
     { names: ['crest-league-v1', 'crest-nation-v1', 'crest-battle-v1'],
       width: 256, height: 256, border: WHOLE_IMAGE_BORDER },
   ]
-  assert.equal(contracts.reduce((sum, row) => sum + row.names.length, 0), 13,
-    '本轮13张资源必须全部进入真实PNG/meta合同，不能漏掉派生态或整图件')
+  assert.equal(contracts.reduce((sum, row) => sum + row.names.length, 0), 14,
+    '本轮14张资源必须全部进入真实PNG/meta合同，不能漏掉派生态或整图件')
   for (const { names, width, height, border } of contracts) {
     for (const name of names) assertDiskFrame(name, width, height, border)
   }
@@ -315,7 +315,7 @@ test('包里的 ui 图逐张点名，多一张少一张都必须更新消费点�
   const pngs = fs.readdirSync(GENERATED_UI).filter((name) => name.endsWith('.png')).sort()
   assert.deepEqual(pngs, [
     'button-chip-disabled-v1.png', 'button-chip-hover-v1.png', 'button-chip-v1.png',
-'button-iron-hover-v1.png', 'button-iron-v1.png',
+    'button-iron-disabled-v1.png', 'button-iron-hover-v1.png', 'button-iron-v1.png',
     'chip-close-v1.png',
     'crest-battle-v1.png', 'crest-league-v1.png', 'crest-nation-v1.png',
     'nav-tab-selected-v1.png', 'nav-tab-v1.png',
@@ -354,6 +354,7 @@ const V25_KEY_TIER: Record<string, Tier> = {
   'ui.panel.iron': 'A',
   'ui.plate.band': 'B',
   'ui.button.iron': 'C',
+  'ui.button.iron.disabled': 'C',
   'ui.chip.close': 'close',
   'ui.plate.tooltip': 'C',
   'ui.panel.parchment': 'A',

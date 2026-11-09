@@ -21,18 +21,22 @@ public record QuestProgressDocument(
         @Id String id,
         List<QuestProgress.Entry> entries,
         String dayKey,
-        String weekKey) {
+        String weekKey,
+        List<com.ironoath.web.quest.QuestClaimPlan> pendingClaims) {
+    public QuestProgressDocument(String id, List<QuestProgress.Entry> entries, String dayKey, String weekKey) {
+        this(id, entries, dayKey, weekKey, List.of());
+    }
 
     /** 集合名。 */
     public static final String COLLECTION = "quest_progress";
 
     static QuestProgressDocument of(QuestProgressStore.State state) {
         return new QuestProgressDocument(state.playerId(), List.copyOf(state.entries()),
-                state.dayKey(), state.weekKey());
+                state.dayKey(), state.weekKey(), state.pendingClaims());
     }
 
     QuestProgressStore.State toState() {
         return new QuestProgressStore.State(id, entries == null ? List.of() : List.copyOf(entries),
-                dayKey, weekKey);
+                dayKey, weekKey, pendingClaims);
     }
 }

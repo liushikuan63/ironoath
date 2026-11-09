@@ -189,7 +189,7 @@ public final class BalanceCli {
             System.err.println("    --train-unit=id       造哪个兵（默认 unit_infantry_t1；单价读 unit 表）");
             System.err.println("    --out-exponent=R      产出随等级的增长指数（默认读 curve.BUILDING_OUTPUT）");
             System.err.println("    --cost-ratio=R        造价随等级的增长比率（默认读 curve.BUILDING_COST）");
-            System.err.println("    --f2p-days=N          零氪天数（--f2p-stages 用）");
+            System.err.println("    --f2p-days=N          展示天数标签（--f2p-stages 用，不计算当日军队）");
             System.err.println();
             System.err.println("【战斗矩阵 / 曲线】");
             System.err.println("  --single --atk=步,骑,弓,器 --def=步,骑,弓,器 --seed=N");
@@ -198,13 +198,14 @@ public final class BalanceCli {
             System.err.println("  --wall   --runs=400 --comp=步,骑,弓,器 --size=1000");
             System.err.println("  --settle-bench --samples=200 --warmup=30 --comp=25000,25000,25000,25000");
             System.err.println("    --type=NAME            战斗类型（PVP_SOLO 等，取 BattleType 枚举名，默认 PVP_SOLO）");
-            System.err.println("    --troops=N            **只**喂「零氪第 7 天能造多少」那个参考值（默认 6833，见 #564）");
+            System.err.println("    --troops=N            诊断用显式纯步兵数量；省略时沿用 #564 历史固定参考 6833");
+            System.err.println("                            不代表当前七天画像；未自动运行七天资源/军队模型。");
         System.err.println("                            #696：**它不是造兵上限** —— 造兵上限由 --population 决定");
         System.err.println("                            （带兵上限 = 统帅值 × TROOP_PER_COMMAND = 46 × 5 = 230），");
         System.err.println("                            两个数**量纲不同**，别混用。");
             System.err.println();
             System.err.println("【其它】");
-            System.err.println("  --f2p-stages --terrain=... --cases=...   零氪分阶段读数");
+            System.err.println("  --f2p-stages --terrain=... --cases=...   历史简化诊断（不构成 B09-4 验收）");
             System.err.println("  --determinism --runs=N --seed-base=N       同输入同输出的确定性自检");
             System.err.println("  --config=PATH                            指定配置目录（默认 contract/config）");
             System.err.println();
@@ -1633,43 +1634,33 @@ public final class BalanceCli {
         return ok;
     }
 
-    // ---------- B09 验收 4：零氪可通前三章（B09 的「充分性脚本」） ----------
+    // ---------- B09 历史简化诊断（不是原验收4的全三星证明） ----------
 
     /**
-     * 零氪第 N 天的军队去打前三章 30 关，逐关报胜率与回合数。
-     *
-     * <p><b>输入全部来自配置表</b>：兵力由 {@code --f2p-days} 天的资源结余除以
-     * {@code unit} 表的 {@code trainCostIron}/{@code trainCostGrain} 得出（粮是瓶颈），
-     * 关卡规模与回合上限读 {@code stage} 表。
-     *
-     * <p><b>这一格真正要回答的不是「能不能赢」</b>：零氪第 7 天能造 3832 个 T1 步兵，
-     * 而前三章最硬的一关（stage_03_10）只有 267 个 T2 敌人 —— <b>力比 14 倍</b>。
-     * 所以它验的是「有没有可失败的对立面」，而不是「能不能过」——
-     * 一个永远赢的关卡不构成证据。
+     * 原B09验收4旁的历史简化战斗诊断；本模式本身不证明当前七天画像或前三章全三星。
+     * 默认6833沿用#564历史固定参考，调用方可用--troops显式提供纯步兵数量。
+     * --f2p-days仅作展示标签：这里没有运行f2p7d，也不从当前资源结余换算军队。
+     * 已共享玩家准入；剩余画像/阶级/三星局限必须随输出公开，不能把诊断完成当验收通过。
      */
     private static boolean printF2pStages(ConfigRegistry configs, BattleParamsResolver resolver,
                                            BattleRules rules, Map<UnitType, UnitStats> stats,
                                            Map<String, String> options, int tier) {
         int days = Integer.parseInt(options.getOrDefault("f2p-days", "7"));
         int runs = Integer.parseInt(options.getOrDefault("runs", "40"));
-        // **不再写死 3832**（#564）：那是 #491 时期「粮 76 640、无 cap」那一版的读数，
-        // **口径变过之后已作废**（#542 账平 / #560 仓库容量修好 / #561 粮认定为设计后果）。
-        // **当前口径下第 7 天的瓶颈是铁不是粮**：粮 30 000（cap 满）÷ 20/100 = 15 000 兵，
-        // 而铁 2 050 ÷ 30/100 = **6 833 兵** ⇒ 铁先见底。
-        // ⇒ 力比从 14 倍变成 **25 倍**，而结论方向不变（仍 100% 胜率、仍没有可失败的对立面）。
-        // `--troops` 可覆盖；若口径再变，改这里的默认值时**必须重跑 `--f2p7d --days=7` 取结余**。
-        int[] troop = {6833, 0, 0, 0};   // 零氪第 7 天能造的数量（铁是瓶颈，见上）
+        // #564的固定参考保留，避免在缺当前合法画像时悄悄改变输入。
+        // 历史费用单位和行为假设不能当作当前七天军队；显式--troops也只是调用方输入。
+        int[] troop = {6833, 0, 0, 0};   // 历史固定参考，非实时画像
         int limit = Integer.parseInt(options.getOrDefault("troops", "6833"));   // #564
         troopsAll: {
             troop = new int[] {limit, 0, 0, 0};
             break troopsAll;
         }
 
-        System.out.printf("=== B09 验收 4：零氪第 %d 天的军队打前三章（%d 局/关）%n", days, runs);
-        System.out.printf("兵力：单兵种 T%d **%d**（资源结余 ÷ trainCost；#564：当前口径下**铁**是瓶颈）%n", tier, troop[0]);
-        System.out.println("**这一格验的是「有没有可失败的对立面」**：零氪第 7 天 " + troop[0]
-            + " 兵 vs 前三章最硬的一关 267 个 T2 敌人 ⇒ **力比 " + (troop[0] / 267)
-            + " 倍**（#564：口径变过，力比从 14 升到 25）。");
+        System.out.printf("=== B09 前三章历史简化战斗诊断（%d 局/关；B09-4 未验）%n", runs);
+        System.out.printf("来源：%s；纯步兵 T%d %d%n",
+                options.containsKey("troops") ? "显式 --troops" : "#564 历史固定参考", tier, troop[0]);
+        System.out.printf("--f2p-days=%d 仅为展示标签；本命令未运行 --f2p7d，固定参考不代表当前七天可用军队。%n", days);
+        System.out.println("B09-4 未验：本输出不证明合法七天参战画像或前三章全三星。");
         System.out.println();
         System.out.printf("%-14s%-8s%-10s%s%n", "关卡", "敌人", "回合上限", "攻方胜率");
         System.out.println("-".repeat(64));
@@ -1691,53 +1682,52 @@ public final class BalanceCli {
             int total = (int) (row.enemyInfantry() + row.enemyCavalry()
                     + row.enemyArcher() + row.enemySiege());
             int roundLimit = (int) row.roundLimit();
-            ArmySide attacker = resolver.bareArmy("攻方",
-                    Map.of(UnitType.INFANTRY, (long) troop[0]), Long.MAX_VALUE / 4);
+            if (total > worstTotal) worstTotal = total;
+            var playerUnits = Map.of(UnitType.INFANTRY, (long) troop[0]);
+            var entryRule = com.ironoath.core.stage.StageUnitRule.valueOf(row.unitRestriction().name());
+            boolean admissible = playerUnits.entrySet().stream().filter(e -> e.getValue() > 0)
+                    .allMatch(e -> entryRule.allows(com.ironoath.core.army.UnitKind.valueOf(e.getKey().name())));
+            if (!admissible) {
+                System.out.printf("%-14s%-8d%-10d%s%n", row.id(), total, roundLimit, "准入不满足：本关不接受该纯步兵输入；未模拟");
+                continue;
+            }
+            ArmySide attacker = resolver.bareArmy("攻方", playerUnits, Long.MAX_VALUE / 4);
+            var mechanic = resolver.bossMechanic(row.bossMechanic());
+            long observedBossTriggers = 0;
             int wins = 0;
             for (int i = 0; i < runs; i++) {
-                // **守方按 stage 表的四兵种铺开**，并应用 unitRestriction ——
-                // 第一版是「uniform 的 T1 步兵 ×N」，那把 NO_SIEGE / CAVALRY_ONLY
-                // 两类编队限制整个抹掉了。限制在这三档规模下对胜率的影响测得出来。
+                // Player entry restrictions must never delete any configured defending units.
                 Map<UnitType, Long> enemy = new EnumMap<>(UnitType.class);
                 enemy.put(UnitType.INFANTRY, row.enemyInfantry());
                 enemy.put(UnitType.CAVALRY, row.enemyCavalry());
                 enemy.put(UnitType.ARCHER, row.enemyArcher());
                 enemy.put(UnitType.SIEGE, row.enemySiege());
-                if (row.unitRestriction() == StageCfg.UnitRestriction.NO_SIEGE) {
-                    enemy.put(UnitType.SIEGE, 0L);
-                } else if (row.unitRestriction() == StageCfg.UnitRestriction.CAVALRY_ONLY) {
-                    enemy.keySet().retainAll(List.of(UnitType.CAVALRY));
-                }
                 ArmySide defender = resolver.bareArmy("守方", enemy, Long.MAX_VALUE / 4);
                 BattleResult r = BattleSimulator.simulate(new BattleInput(attacker, defender,
                         TerrainType.PLAIN, seed + i * 7919L + s, BattleType.PVE,
                         BattleModifier.none(), BattleModifier.none(), stats,
-                        rules, DefenderStore.none()));
+                        rules, DefenderStore.none(), mechanic));
+                observedBossTriggers += r.rounds().stream().flatMap(round -> round.skills().stream())
+                        .filter(trigger -> com.ironoath.battle.BossMechanic.TRIGGER_SOURCE.equals(trigger.heroId())).count();
                 boolean won = r.winner() == Winner.ATTACKER;
                 wins += won ? 1 : 0;
             }
             double rate = wins / (double) runs;
             System.out.printf("%-14s%-8d%-10d%.1f%%%n",
                     row.id(), total, roundLimit, rate * 100);
-            if (total > worstTotal) {
-                worstTotal = total;
-            }
+            if (!mechanic.isNone()) System.out.printf("机制 %s：%s，实际触发 %d 次%n", row.id(), mechanic.type(), observedBossTriggers);
         }
         System.out.println();
-        System.out.println("**诚实交代**：上面 30 行是 **stage 表逐关读出来的规模、回合上限与编队限制**"
-            + "（unitRestriction 已应用），但**不是** StageAppService 的真实装配 —— "
-            + "**bossMechanic 仍未建模**（前三章有 3 关带 REINFORCEMENT / SHIELD_PHASE /"
-            + " COUNTER_STRIKE），所以它给的是**逐关规模下的量级对照**，"
-            + "不是「30 关全过」的证明。");
-        System.out.printf("判定：%s",
-                worstTotal > 0 ? "已逐关量出，最硬一关 " + worstTotal + " 个敌人；可失败性存疑。" : "");
+        System.out.println("边界：准入复用生产规则，非法显式编队未模拟，守方四兵种完整保留；"
+                + "BOSS 按原 global 参数装配；敌方阶级、医院/武将/科技画像和三星仍未验证。"
+                + "不可解释为真实关卡胜率或 B09-4 验收通过。");
+        System.out.printf("诊断状态（不判验收）：%s",
+                worstTotal > 0 ? "旧装配报告最大守方 " + worstTotal + " 人；不构成全三星结论。" : "");
         return true;
     }
 
-    // **没有「平均回合」这一列**：内核的 BattleResult 不返回回合数，
-    // 而一个用 log 拟合出来的回合数是装饰性数字 —— 它不会让任何断言变红，
-    // 却会让人以为「6 回合打 10 个敌人要 32 回合」这种矛盾数字是量出来的。
-    // 真要这一列，得让 BattleResult 暴露 rounds（属内核改动，另开一格）。
+    // BattleResult exposes totalRounds, but this bounded diagnostic still does not calculate or
+    // accumulate real production stars. A later step must reuse StageProgress with a lawful profile.
 
     // ---------- 跨 JVM 确定性（B05 验收 3 缺的那一半） ----------
 

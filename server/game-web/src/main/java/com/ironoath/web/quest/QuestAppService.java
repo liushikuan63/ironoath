@@ -91,6 +91,7 @@ public class QuestAppService {
     private final SocialStore socialStore;
     private final PlayerLock playerLock;
     private final RewardNames names;
+    private final QuestClaimRecovery ordinaryClaims;
 
     public QuestAppService(ConfigRegistry configs, QuestRulesAssembler assembler,
                            QuestProgressStore store, TimeService timeService,
@@ -109,6 +110,7 @@ public class QuestAppService {
         this.socialStore = socialStore;
         this.playerLock = playerLock;
         this.names = names;
+        this.ordinaryClaims = new QuestClaimRecovery(configs, store, rewardService, battlePass);
     }
 
     /** 任务面板。顺带跨期清零与状态型快照刷新（两者都只在真变化时落库）。 */
@@ -132,6 +134,7 @@ public class QuestAppService {
     public QuestListResp list(String playerId, QuestScope scope) {
         long now = timeService.serverNow();
         return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> runProgressLocked(playerId, () -> {
+            ordinaryClaims.recover(playerId);
             QuestProgress progress = loadProgressLocked(playerId, now);
             Map<String, String> names = new LinkedHashMap<>();
             for (QuestRulesAssembler.QuestDef def : assembler.quests()) {
@@ -185,15 +188,20 @@ public class QuestAppService {
     public int claimableCount(String playerId) {
         long now = timeService.serverNow();
         return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS,
-                () -> runProgressLocked(playerId, () -> loadProgressLocked(playerId, now).claimableCount()));
+                () -> runProgressLocked(playerId, () -> {
+                    ordinaryClaims.recover(playerId);
+                    return loadProgressLocked(playerId, now).claimableCount();
+                }));
     }
 
-    /** 领取奖励：普通任务先保存投影；永久金币先原子接受钱包收据，再保存可恢复的已领投影。 */
+    /** 领取奖励：普通任务保存claimed与冻结计划，永久金币保持钱包收据投影。 */
     public QuestClaimResp claim(String playerId, QuestClaimReq req) {
         long now = timeService.serverNow();
-        String requestKey = acquire(playerId, req == null ? null : req.requestId(), now);
-        try {
-            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> runProgressLocked(playerId, () -> {
+        return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> runProgressLocked(playerId, () -> {
+            // Recover an accepted promise even if the HTTP request key remains in Redis after a crash.
+            ordinaryClaims.recover(playerId);
+            String requestKey = acquire(playerId, req == null ? null : req.requestId(), now);
+            try {
                 QuestProgress progress = loadProgressLocked(playerId, now);
                 String questId = req.questId();
                 if (questId == null || questId.isBlank()) {
@@ -219,8 +227,20 @@ public class QuestAppService {
                             ? entry.claimed() ? "该成就奖励已经领取，请刷新查看。"
                             : "该成就尚未满足领取条件：" + entry.current() + "/" + entry.goalValue() : e.getMessage());
                 }
-                // 普通奖励沿用先投影后发奖；永久金币以钱包原子收据防重复，投影丢失由读取修复。
-                if (!permanent) store.save(playerId, stateOf(progress));
+                if (!permanent) {
+                    var ordinaryRewards = new ArrayList<>(assembler.rewardsByQuest().getOrDefault(questId, List.of()));
+                    ordinaryRewards.addAll(choices);
+                    long points = configs.get(com.ironoath.config.cfg.QuestCfg.class, questId).battlePassPoints();
+                    // A guide-only task promises no external assets or points: its projection is the complete operation.
+                    if (ordinaryRewards.isEmpty() && points == 0) {
+                        store.saveProjection(playerId, stateOf(progress));
+                        return new QuestClaimResp(questId, List.of(), progress.claimableCount(), now, null);
+                    }
+                    var plan = ordinaryClaims.accept(playerId, progress, questId, ordinaryRewards, points, now);
+                    var result = ordinaryClaims.deliverAndFinish(playerId, plan);
+                    return new QuestClaimResp(questId, rewardViews(result.granted()), progress.claimableCount(), now, null);
+                }
+                // 永久金币保持原钱包收据及投影恢复路径。
                 List<RewardItem> rewards = permanent ? new ArrayList<>(permanentRewards(entry))
                         : new ArrayList<>(assembler.rewardsByQuest().getOrDefault(questId, List.of()));
                 // 选中的武将是「这次领奖」的一部分，追加在表里那批之后：
@@ -246,18 +266,18 @@ public class QuestAppService {
                 }
                 // 战令积分：**只在领取成功这一下加**，加多少由 quest 表那一列给。
                 // 幂等不必在这里再做一次：重放请求在时 acquire(requestId) 就被挡掉了，走不到这里
-                if (permanent) store.save(playerId, stateOf(progress));
+                if (permanent) store.saveProjection(playerId, stateOf(progress));
                 long points = permanent ? 0 : configs.get(com.ironoath.config.cfg.QuestCfg.class, questId).battlePassPoints();
                 if (points > 0L) {
                     battlePass.addPoints(playerId, points, "quest:" + questId);
                 }
                 LOG.info("任务奖励已领取 playerId={} questId={} 奖励={} 战令积分+{}", playerId, questId, granted, points);
                 return new QuestClaimResp(questId, rewardViews(granted), progress.claimableCount(), now, message);
-            }));
-        } catch (RuntimeException e) {
-            idempotency.release(requestKey);
-            throw e;
-        }
+            } catch (RuntimeException e) {
+                idempotency.release(requestKey);
+                throw e;
+            }
+        }));
     }
 
     // ---------- 进度账本的载入与推进 ----------
@@ -312,7 +332,7 @@ public class QuestAppService {
             dirty = true;
         }
         if (dirty) {
-            store.save(playerId, stateOf(progress));
+            store.saveProjection(playerId, stateOf(progress));
         }
         return progress;
     }

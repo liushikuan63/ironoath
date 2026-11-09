@@ -598,13 +598,8 @@ public class StageAppService {
     }
 
     private boolean complies(StageCfg stage, String unitId) {
-        UnitCfg.Type type = requireUnit(unitId).type();
-        return switch (stage.unitRestriction()) {
-            case NONE -> true;
-            case NO_SIEGE -> type != UnitCfg.Type.SIEGE;
-            case CAVALRY_ONLY -> type == UnitCfg.Type.CAVALRY;
-            case RANGED_ONLY -> type == UnitCfg.Type.ARCHER || type == UnitCfg.Type.SIEGE;
-        };
+        return com.ironoath.core.stage.StageUnitRule.valueOf(stage.unitRestriction().name())
+                .allows(com.ironoath.core.army.UnitKind.valueOf(requireUnit(unitId).type().name()));
     }
 
     private static String describe(StageCfg.UnitRestriction restriction) {

@@ -51,6 +51,11 @@ public final class MongoMarchStore implements MarchRepository {
     }
 
     @Override
+    public List<March> findByTargetId(String targetId) {
+        if (targetId == null || targetId.isBlank()) return List.of();
+        return toDomain(orderedByStart(Query.query(Criteria.where("state.targetId").is(targetId))));
+    }
+    @Override
     public List<March> findByPlayerId(String playerId) {
         if (playerId == null || playerId.isBlank()) {
             throw new IllegalArgumentException("playerId 不得为空");

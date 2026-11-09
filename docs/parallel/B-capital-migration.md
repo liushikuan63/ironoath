@@ -1,7 +1,7 @@
 # B线：驻军回家前拒绝迁都
 
 **目标**：按已有裁决接入迁都；存在旧王城驻军、撤防返城未完成或受约束攻击行军时拒绝，保存坐标和既有国家历史不丢失。
-**当前状态**：B代码已本地提交`935609b3`并快进至主树；R0基线`bd54648c`。B1/B2与原专项122/0/0/0通过。用户于2026-11-09裁定：迁都时已知EMPTY的动态王城归属锚点随王城移动，保留国家与历史；未知/驻军/未完成操作关闭，已完成撤防/COMBAT坐标快照保留。当前新增内存/Mongo锚点CAS、迁都后中断恢复与旧COMBAT快照测试已定向通过。整仓`test.sh`与`build.sh`已通过；live国家真链路通过，真实王城战仍停在PREPARATION而记PREREQ，独立Q和历史提交同步仍待，不推送。
+**当前状态**：B-R0到B4实现均在主树；B4空驻军`capital_center`锚点CAS恢复只移动已裁的动态王城归属锚点，完成COMBAT/撤防快照保持旧坐标。当前合并候选全量`test.sh` game-web2729/0/0/0、balance-sim18/0/0/0、客户端1424/1424及`build.sh`均通过；真实国家HTTP通过。`verify-war-real-battle`仍为PREPARATION，真实SIEGE结算记PREREQ；Q独立竞争复审与推送门未满足。
 **规格**：[B13 #2460及#2473补注](../../B13_国家与国战.md)、[开发包§零](../../待完善收口_VibeCoding开发包.md#current-execution)。沿现有Java17、March和COMBAT恢复架构。
 
 ## 写入边界
@@ -47,4 +47,4 @@ mvn -o -Dmaven.repo.local="${IRONOATH_TASK_M2:?先登记B专属Maven仓}" -Diron
 | B1 | TARGETED_GREEN | `codex/live-b-capital-20261108`，R0基线`bd54648c` | 缺路由RED见D:/tmp/ironoath-runtime-e6faa-20261109/b13-capital-endpoint-route-red-20261109.log；现`CapitalMigrationEndpointTest`覆盖必填/类型/额外字段、身份、坐标边界/城市/战略目标、重复requestId、资源与连续迁都；`CapitalMigrationServicePolicyTest`覆盖King绕过读、缺失/0/未来/未满7天/读异常/精确一周 | API尚无客户端面板调用；微信/真实服流程未验 |
 | B2 | TARGETED_GREEN | 真实March/TargetOccupation/TargetOperation内存闭环 | `StrategicWithdrawalEndpointFlowTest.oldCapitalGarrisonMustActuallyReturnHomeBeforeMigration`：STATIONED拒绝、recall后RETURNING仍拒绝、processDue真实返城并完成槽后迁都成功；冻结撤防锚点保持一致 | 自有测试夹具；生产服/真玩家数据未验 |
 | B3 | PARTIAL | 当前候选；现有Rally/Target操作路径接线 | 活跃旧都攻击行军拒绝；目的格已有行军时不改写其地图意义；单行军与集结出发共享坐标→CAPITAL目标锁；策略单测验证相同坐标锁串行；`MarchSendSinglePlayerReadTest`1/0、`RallyDepartureRecoveryTest`26/0，重复requestId/坐标无副作用覆盖 | 尚缺Q对跨实例竞争、权限变更/保存失败交错与COMBAT同时完成边界的独立审查 |
-| B4 | TARGETED_GREEN; LIVE_WAR_PREREQ | B专属tmpfs Mongo 27031与Redis/集成Mongo 27030、6382 | `CapitalMigrationMongoEndpointTest`模拟Nation CAS后、归属锚点CAS前中断；新`WorldAppService`重建将空驻军CAPITAL锚点迁到新坐标，保留nationId/name/capturedAt/operationId/ownershipHistory，随后第二次HTTP迁都返回新坐标；WarAwardPlan保持不变，完成撤防槽快照仍原样。最新锚点/旧COMBAT专项18/0/0/0；此前迁都路由/撤防回家组合30/0/0/0；最终整仓服务端2561/0/0/0 | 选择性live `verify-nation-live` 通过；`verify-war-real-battle`未进入SIEGE，PREREQ，未声称实时结算奖分验收。独立Q、全量三台双后端批跑全绿和fetch同步仍待 |
+| B4 | TARGETED_MONGO_GREEN; LIVE_WAR_PREREQ | 合并候选树`58a808207d4b7607e52380612ea593620e26fdfe`；B专属隔离Mongo与集成Mongo | `CapitalMigrationMongoEndpointTest`覆盖Nation CAS后锚点CAS中断、重启惰性恢复与二次HTTP迁都；Nation成员史、WarAwardPlan和完成COMBAT/撤防冻结快照保留。`TargetOccupationStoreTest`内存/Mongo15/0/0/0，`StrategicCombatPendingMapProjectionTest`2/0/0/0；全量test/build通过。当前JAR SHA256 `948D7F2066BBD8EBC3A040C5193C8B94AFE735E81098FAEA483BF0E2DD7E6EDC` 的实时国家探针71/0通过 | 实时War探针43通过/0失败/2 NO-RUN，因Phase仍PREPARATION没有进入真实SIEGE，独立Q竞争审查未完成；不据此报告实时War奖分验收，不推送 |

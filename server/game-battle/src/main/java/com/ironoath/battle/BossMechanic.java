@@ -1,6 +1,7 @@
 package com.ironoath.battle;
 
 import com.ironoath.common.num.FixedPoint;
+import com.ironoath.common.config.GlobalParamSource;
 
 /**
  * 职责：BOSS 机制（B09 §二 / 验收 5）—— 让章末 BOSS「有机制而不是纯数值」。
@@ -103,6 +104,19 @@ public record BossMechanic(Type type,
                 requireZero(bonusFixed, "bonusFixed", type);
             }
         }
+    }
+
+    /** Shared production/diagnostic mapping. Read only the selected mechanism's original global keys. */
+    public static BossMechanic from(Type type, GlobalParamSource source) {
+        if (type == null) throw new IllegalArgumentException("type 不得为 null，无机制请用 NONE");
+        return switch (type) {
+            case NONE -> none();
+            case REINFORCEMENT -> reinforcement(source.longParam("BOSS_REINFORCE_INTERVAL_ROUNDS"),
+                    source.fixedParam("BOSS_REINFORCE_RATIO"));
+            case SHIELD_PHASE -> shieldPhase(source.fixedParam("BOSS_SHIELD_HP_THRESHOLD"),
+                    source.fixedParam("BOSS_SHIELD_DEF_BONUS"));
+            case COUNTER_STRIKE -> counterStrike(source.fixedParam("BOSS_COUNTER_REFLECT_RATIO"));
+        };
     }
 
     /** 无机制。绝大多数战斗（野怪、玩家城、普通关卡）都是这个。 */

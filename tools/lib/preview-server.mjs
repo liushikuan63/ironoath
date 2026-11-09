@@ -38,7 +38,7 @@ const MIME = {
  * @param port      本地端口
  * @returns {Promise<{origin: string, rewrites: () => number, close: () => Promise<void>}>}
  */
-export async function startPreviewServer({ root, backend, port }) {
+export async function startPreviewServer({ root, backend, port, host }) {
   const rewrite = backend !== BAKED_HTTP
   const backendWs = backend.replace(/^http/, 'ws') + '/ws'
   // 启动时扫一遍产物：改写点数与"浏览器那一刻请求过哪些文件"无关，判据才不会因时机假红。
@@ -104,10 +104,12 @@ export async function startPreviewServer({ root, backend, port }) {
       res.writeHead(200, { 'content-type': 'text/html' }).end(buf)
     }
   })
-  await new Promise((resolve) => server.listen(port, resolve))
+  await new Promise((resolve) => host
+    ? server.listen(port, host, resolve)
+    : server.listen(port, resolve))
 
   return {
-    origin: `http://localhost:${port}`,
+    origin: `http://${host ?? 'localhost'}:${port}`,
     rewrites: () => rewritten,
     /**
      * 两条能各自失败的判据，都不依赖"浏览器此刻请求过哪些文件"：

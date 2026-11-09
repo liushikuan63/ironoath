@@ -74,7 +74,7 @@ public class QuestEventListener implements GameEventBus.Listener {
             progress.rollover(DayKey.of(now), WeekKey.of(now));
             progress.onEvent(event);
             store.save(playerId, new QuestProgressStore.State(playerId, progress.entries(),
-                    progress.dayKey(), progress.weekKey()));
+                    progress.dayKey(), progress.weekKey(), stored == null ? java.util.List.of() : stored.pendingClaims()));
             return null;
             });
         } catch (RuntimeException e) {

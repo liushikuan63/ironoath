@@ -41,6 +41,7 @@ const EXPECT = [
   { key: 'ui.panel.warning', res: 'ui/generated/ui/panel-warning-v1', w: 512, h: 326, inset: [24, 24, 24, 24] },
   { key: 'ui.panel.gilt', res: 'ui/generated/ui/panel-gilt-v1', w: 512, h: 326, inset: [24, 24, 24, 24] },
   { key: 'ui.button.iron', res: 'ui/generated/ui/button-iron-v1', w: 256, h: 49, inset: [12, 12, 4, 4] },
+  { key: 'ui.button.iron.disabled', res: 'ui/generated/ui/button-iron-disabled-v1', w: 256, h: 49, inset: [12, 12, 4, 4] },
   { key: 'ui.button.iron.hover', res: 'ui/generated/ui/button-iron-hover-v1', w: 256, h: 49, inset: [12, 12, 4, 4] },
   { key: 'ui.chip.close', res: 'ui/generated/ui/chip-close-v1', w: 52, h: 52, inset: [0, 0, 0, 0] },
   { key: 'ui.plate.band', res: 'ui/generated/ui/plate-band-v1', w: 512, h: 40, inset: [16, 16, 4, 4] },
@@ -204,9 +205,9 @@ for (const r of rendered) {
 // 素材与 Graphics 兜底的静态判据继续保留，防止任一分支在换图时丢掉置灰语义。
 const overlaySrc = readFileSync(path.resolve(process.cwd(),
   'client/assets/scripts/scene/StaminaDetailOverlay.ts'), 'utf8')
-push('置灰：贴图路径在（灰态压暗 tint）',
-  /buySprite\.color\s*=\s*[\s\S]{0,80}COLOR_TINT_ON[\s\S]{0,40}COLOR_TINT_OFF/.test(overlaySrc),
-  'render() 里必须有 `buySprite.color = 可点 ? TINT_ON : TINT_OFF`')
+push('disabled material binding',
+  /applyIronButton\(this\.buySprite\.node, view\.buyEnabled \? 'normal' : 'disabled'/.test(overlaySrc),
+  'Production render selects the derived frame')
 push('置灰：兜底路径未被删（Graphics 换色）',
   /buyBackground\.fillColor\s*=\s*[\s\S]{0,60}COLOR_BUY\s*:\s*COLOR_BUY_OFF/.test(overlaySrc),
   '素材加载失败那条路仍要能置灰，否则贴图缺失时灰态消失')
@@ -295,14 +296,15 @@ function readStaminaBuyPaint() {
 }
 const staminaPaintConsumed = row => row.found === true && row.active && row.enabled && row.firstRenderer
   && row.camera && row.opaqueAncestors && row.layer === row.parentLayer && row.type === 1
-  && row.frame === 'button-iron-v1' && row.tint?.[3] > 0
+  && ['button-iron-v1', 'button-iron-disabled-v1'].includes(row.frame) && row.tint?.[3] > 0
   && row.captionActive && row.captionEnabled && row.captionFirstRenderer && row.captionCamera
   && row.captionOpaqueAncestors && row.captionLayer === row.captionParentLayer && row.captionColor?.[3] > 0
 const staminaGrayIssues = row => {
   const issues = []
   if (!staminaPaintConsumed(row)) issues.push('真实按钮首 Sprite/字/相机/层未消费')
   if (row.buyEnabled !== false || row.caption !== '今日已达上限') issues.push('未 render 实际禁用帧')
-  if (row.tint?.join(',') !== '104,96,88,255') issues.push(`首 Sprite 不是灰 tint：${row.tint}`)
+  if (row.frame !== 'button-iron-disabled-v1') issues.push(`disabled-frame-missing:${row.frame}`)
+  if (row.tint?.join(',') !== '255,255,255,255') issues.push(`double-tint:${row.tint}`)
   if (row.captionColor?.join(',') !== '70,62,52,255') issues.push(`禁用字色错误：${row.captionColor}`)
   return issues
 }
@@ -315,7 +317,7 @@ try {
   await page.waitForTimeout(80)
   const gray = await page.evaluate(readStaminaBuyPaint)
   staminaGrayEvidence.gray = gray
-  push('运行时灰态：真实首 Sprite 压暗、字色同步变灰、active 与可见层保留',
+  push('运行时灰态：真实首 Sprite 消费禁用图、字色同步变灰、active 与可见层保留',
     staminaGrayIssues(gray).length === 0, JSON.stringify({ paint: gray, issues: staminaGrayIssues(gray) }))
   await hideGuideOverlay(page)
   const purchasesBefore = staminaRequests.filter(request => /\/stamina\/buy$/.test(request.pathname)).length
@@ -337,7 +339,7 @@ try {
     JSON.stringify({ paint: afterGrayClick, issues: staminaGrayIssues(afterGrayClick) }))
   await page.screenshot({ path: path.join(OUT, 'ui-v25-stamina-disabled.png') })
 
-  // 改实际首 Sprite 的色，不改 readback 或 VM；同一灰态门必须因 tint 变白而红。
+  // 负控换实际 SpriteFrame；白 tint 常态图不能冒充禁用派生图。
   try {
     const changed = await page.evaluate(() => {
       const saved = window.__ui25StaminaProbe
@@ -345,24 +347,25 @@ try {
       const art = buy.getChildByName('DialogButtonArt') ?? buy
       const sprite = art.getComponent('cc.Sprite')
       if (!sprite || art._uiProps?.uiComp !== sprite) return false
-      saved.spriteRestore = { sprite, color: sprite.color.clone() }
-      const color = sprite.color.clone()
-      color.r = 255; color.g = 255; color.b = 255
-      sprite.color = color
+      saved.spriteRestore = { sprite, frame: sprite.spriteFrame }
+      const catalog = Array.from(window.System.entries()).find(([, m]) => typeof m?.applyIronButton === 'function')?.[1]
+      if (!catalog) return false
+      const transform = art.getComponent('cc.UITransform')
+      catalog.applyIronButton(art, 'normal', transform.width, transform.height)
       return true
     })
     await page.waitForTimeout(60)
     const negative = await page.evaluate(readStaminaBuyPaint)
     const issues = staminaGrayIssues(negative)
     staminaGrayEvidence.negative = { changed, paint: negative, issues }
-    push('灰态负控：真实首 Sprite 改白使同一灰态门翻红', changed
-      && staminaPaintConsumed(negative) && issues.some(issue => issue.startsWith('首 Sprite 不是灰 tint：')),
+    push('灰态负控：真实首 Sprite 换常态图使禁用门翻红', changed
+      && staminaPaintConsumed(negative) && issues.some(issue => issue.startsWith('disabled-frame-missing:')),
       JSON.stringify({ paint: negative, issues }))
-    await page.screenshot({ path: path.join(OUT, 'ui-v25-stamina-disabled-white-negative.png') })
+    await page.screenshot({ path: path.join(OUT, 'ui-v25-stamina-disabled-normal-frame-negative.png') })
   } finally {
     await page.evaluate(() => {
       const saved = window.__ui25StaminaProbe
-      if (saved.spriteRestore) saved.spriteRestore.sprite.color = saved.spriteRestore.color
+      if (saved.spriteRestore) saved.spriteRestore.sprite.spriteFrame = saved.spriteRestore.frame
       delete saved.spriteRestore
     })
   }
@@ -379,7 +382,7 @@ try {
   const enabled = await page.evaluate(readStaminaBuyPaint)
   staminaGrayEvidence.enabled = enabled
   push('启用对照：生产 render 恢复白 tint 和原字色（不购买）', staminaPaintConsumed(enabled)
-    && enabled.buyEnabled === true && enabled.tint.join(',') === '255,255,255,255'
+    && enabled.buyEnabled === true && enabled.frame === 'button-iron-v1' && enabled.tint.join(',') === '255,255,255,255'
     && enabled.captionColor.join(',') === '226,214,190,255' && enabled.intents === 0,
     JSON.stringify(enabled))
   const requestsAfterEnabled = staminaRequests.filter(request => /\/stamina\/buy$/.test(request.pathname))

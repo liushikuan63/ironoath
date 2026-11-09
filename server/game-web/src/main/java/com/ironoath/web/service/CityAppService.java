@@ -268,6 +268,10 @@ public class CityAppService {
         Map<String, Long> cost = attempt.cost();
         long durationSeconds = upgradeDuration(player.playerId(), cfg, targetLevel, player.tech());
 
+        if (!attempt.check().passed() && attempt.check().code() == ErrorCode.CITY_MAIN_LEVEL_LOW) {
+            // The public hint uses the exact numeric inputs of this attempt, never arbitrary diagnostic text.
+            throw new CityMainLevelRequirementException(attempt.requiredMainLevel(), attempt.currentMainLevel());
+        }
         attempt.check().orThrow();
 
         // 扣资源：CityState 只告诉我们该扣多少，真正扣减在这里做，
@@ -498,7 +502,8 @@ public class CityAppService {
     }
 
     /** 一次「能不能升」的算式产物。 */
-    private record UpgradeAttempt(int targetLevel, Map<String, Long> cost, UpgradeCheck check) {
+    private record UpgradeAttempt(int targetLevel, Map<String, Long> cost, UpgradeCheck check,
+                                  int requiredMainLevel, int currentMainLevel) {
     }
 
     /**
@@ -513,12 +518,14 @@ public class CityAppService {
         BuildingCfg cfg = configs.get(BuildingCfg.class, instance.configId());
         int targetLevel = instance.level() + 1;
         Map<String, Long> cost = upgradeCost(cfg, targetLevel);
+        int requiredMainLevel = (int) cfg.requireMainLevel();
+        int currentMainLevel = player.cityLevel();
         UpgradeCheck check = city.validateUpgrade(
                 instance.instanceId(), targetLevel, (int) cfg.maxLevel(),
-                (int) cfg.requireMainLevel(), player.cityLevel(),
+                requiredMainLevel, currentMainLevel,
                 firstRequirement(cfg), requirementLevel(cfg),
                 cost, currentResources(player), rules, isInNewbieProtect(player, now), now);
-        return new UpgradeAttempt(targetLevel, cost, check);
+        return new UpgradeAttempt(targetLevel, cost, check, requiredMainLevel, currentMainLevel);
     }
 
     /**

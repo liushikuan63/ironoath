@@ -48,6 +48,10 @@ class TechTimeCalibrationTest {
     @BeforeAll
     static void load() {
         configs = ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
+        // 这些量具证明的是统一基数；正值覆盖需另核整树，不能继续忽略后宣称达标。
+        assertThat(configs.all(TechCfg.class)).allSatisfy(row ->
+                assertThat(row.timeBaseSec()).as("%s timeBaseSec：统一基数校准不支持正值覆盖", row.id())
+                        .isIn(null, 0L));
     }
 
     private CurveCfg techTime() {
@@ -71,7 +75,7 @@ class TechTimeCalibrationTest {
     }
 
     @Test
-    @DisplayName("基数不再是 0：0 会让 evaluateSeconds 直接抛（曲线注释 base=0 = 基数由业务表提供，而科技表没有这一列）")
+    @DisplayName("基数不再是 0：0 会让 evaluateSeconds 直接抛（本轮11行仍用统一基数，TECH_TIME.base 必须可用）")
     void baseIsFilledSoTheCurveCanActuallyBeUsed() {
         CurveCfg curve = techTime();
         assertThat(curve.base())
