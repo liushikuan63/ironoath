@@ -219,6 +219,15 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - **第一个负控是假红**：下限块最初写在 `const failures = []` 之前，`NEGCTL_EXIT=1` 来自 `ReferenceError: Cannot access 'failures' before initialization`，不是判据本身；搬到声明之后重跑才拿到正文。教训：负控要认**错误正文**，不能只认非零退出码。
 - 同批修掉一处文档自相矛盾：`上线检查清单.md` 里「21 条量到 / 128 条仍未量」的现值行与 #2508 的 34/115 打架，已改准并注明旧值属面板巡游之前那一轮。
 - 下一格候选：①写接口的「动作驱动器」（115 条未量的真正堵点）；②`/world/viewport` 11111B；③§四-13 父项其余业务路径。
+
+### 0.27 当前接续（2026-11-13 · #2514）
+
+- 这一格是**运行时验收**，不是改代码：本会话重建的 `client/build/web-mobile`（2026-11-13 1:27:55）此前只有 perf 与 rally 两份量具跑过，其余量具的读数都还停在旧产物上。
+- 跑法用官方双后端入口：`bash scripts/run-batch-dual-backend.sh /d/tmp/probes-2514.txt`，一次起三台（8199 普通 / 8198 提速档 `IRONOATH_DEV_CITY_LEVEL=16` + `IRONOATH_DEV_START_AMOUNT=2000000` / 8197 真仗档再带 `IRONOATH_DEV_TIME_SPEED=100`），令牌由脚本自 mint（`art-verify-local`，非凭据）。
+- 读数（脚本日志 `/d/tmp/probe753/batch-dual.log`，退出码账 `/d/tmp/runtime-probes-exitcodes.txt`）：**尝试=8 已确认通过=8 失败=0 未验证=0**（TIMEOUT=0 PREREQ=0 NO-RUN=0 SKIP=0 无效状态=0）；逐份断言数 rank 58、social-permission 69、social-create 116、march 138、stage-summary 45、hero-empty 7、city-zoom 全绿、shop 全绿 ⇒ 约 433 条断言 0 失败。收尾三台端口复验过都不再监听。
+- 两次都被「产物被占用」挡下，且都**不是功能红**：① 我 01:32 起的 8199 后端还活着，脚本按「保护现有进程」直接停（`端口 8199 已被占用；保护现有进程，本批停止且不尝试清理`）；② 我 06:41 起的 8299 那台不在脚本核对的端口集合里，但占着 `server/game-web/target/game-web.jar`，脚本报「已有 game-web JVM 持有构建产物」。两台都先核对命令行（自己的 jar、dev profile、令牌 `art-verify-local`）才停，不碰别人的进程。
+- 诚实缺口：`verify-stage-summary` 自报「完整挑战路径那一支（A 支八条）**未执行**：dev 号没有武将，补不出主将」；本清单没带需要提速档的 nation 两份、也没跑真仗档那份（入口支持 `BOOST_BACKEND` / `WAR_BACKEND` 分流，本轮没选）；city-zoom / shop 的 SHOT 截图没有做视觉复核，这里只记探针自报路径。
+- **这一格不往 `收口清单.md` 加行**：待修台账只增不删，没有任何待修项却塞一条记录会污染它；证据只落 §四 与本节。
 ---
 
 ## 一、任务装配与完成定义
@@ -8685,3 +8694,4 @@ TEST_EXIT=0
 | #2511 验收矩阵 B13 验收 8「国家集结 50 人门槛」的状态单元格写 ⬜，同一行正文却已记着 2026-10-08 的「⬜ → 🟡」裁决（单元格 vs 自己的裁决记录打架），且正文量具读数停在 38 条判据 | 本笔（本地提交，待推） | 今日复跑 V22-c：`RALLY_EXIT=0`、40 PASS / 0 FAIL（日志 `D:\Java\maven\logs\rally-probe2-064228.log`）；单元格改 🟡、声明行改 266 = 237/18/8/3；`check-doc-status-counts`、`check-checklist-table`、`check-eol-policy` 退 0 | 四张截图 `client/build/nation-rally-verify/nation-rally-{grey,scope-nation,compose,list}.png`，人工看了 compose（集结页签 + 「已发起国家集结：野外怪」吐司） | 不翻 ✅：V24 科技逐级放开未做、V22 验收④ 未裁；本轮未跑全套 `mvn test`；单元格 vs 正文这类矛盾目前仍靠人发现，没有门 |
 | #2512 `上线检查清单.md` §四-13「主线程无同步 IO」缺 WebSocket 一侧：推送回调跑在容器 WS 线程上，心跳每 30 秒每连接一次，注入 Mongo/Redis 就让 5000 在线先在线程池上垮，且症状只会是「连不上/心跳超时」 | 本笔（本地提交，待推） | `scripts/check-layering.sh` 加第 9 条（ws 包禁 store/social/nation/world/rank/service 与 Mongo/Redis 客户端，目录缺失或 .java 少于 3 个判红）；基线 0、五臂负控 0/1/1/1/1；harness 挂 `mk_ws_blocking` 后 43 合格 0 不合格；顺带修掉 `WS_DIR="${LAYERING_WS_DIR:-server/…}"` 让 `check-package-path-predicates.sh` 判红的写法 | 日志 `D:\Java\maven\logs\harness-2512b-20261113.log`；`check-package-path-predicates.sh` 复跑退 0（19 条路径 · 1 mainClass · 1 x-java-package · 源码根 13） | 只锁直接依赖，握手校验不在内；父项仍 `[ ]`（其余业务路径一条一次 IO 未复核）；未跑全套 `mvn test` |
 | #2513 探针的「量到几条接口」没有判据：巡游整段失败或首屏并发读取被拆掉时，被试接口悄悄变少而体积/耗时/堆峰读数反而更漂亮（越退化越绿）；同一段文档还留着 21 条/128 条的旧现值与 #2508 的 34/115 打架 | 本笔（本地提交，待推） | `tools/verify-perf-runtime.mjs` 加 `MIN_COVERED`（`PERF_MIN_COVERED_PATHS`，默认 32）与绑定清单为空两条判红；JSON 增 `coverage.minCoveredPaths`、人读行打「最小 N 条」；文档那条现数改成 34/115 并注明旧值属哪一轮 | 现跑 `A_EXIT=0`、`34 条量到 / 147 条绑定`；负控 `=999` ⇒ `NEGCTL2_EXIT=1` 且正文点名「低于下限 999…覆盖面回退了」；改完重跑绿 `B_EXIT=0`；日志 `perf-floor-a-070822.log` / `perf-floor-negctl2.log` / `perf-floor-b.log` | 下限不代替动作驱动器（115 条多为写接口/需前置状态）；探针不进 CI，下限只在人跑时生效；第一次负控是 ReferenceError 假红，已在台账写明 |
+| #2514 本会话重建的 `client/build/web-mobile`（1:27:55）上只有 perf 与 rally 两份量具跑过，「新产物有没有把核心链路跑挂」没有读数 | 无代码提交，只落证据 | `run-batch-dual-backend.sh` + 8 份探针 ⇒ 尝试=8 通过=8 失败=0 未验证=0（TIMEOUT/PREREQ/NO-RUN/SKIP 全 0）；逐份断言 rank 58 / social-permission 69 / social-create 116 / march 138 / stage-summary 45 / hero-empty 7 / city-zoom 与 shop 全绿，约 433 条 0 失败；三台后端收尾端口复验均不监听 | `/d/tmp/probe753/batch-dual.log`、`/d/tmp/runtime-probes-exitcodes.txt`、`/d/tmp/probe-verify-*-runtime.mjs.log` | stage-summary 的「完整挑战路径 A 支八条」因 dev 号无武将未执行；nation 两份（需提速档）与真仗档那份未纳入本批；city-zoom/shop 的 SHOT 未做视觉复核；本格无待修项故不写 `收口清单.md` |
