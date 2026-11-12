@@ -41,7 +41,7 @@ CO_D=/d/tmp/probe753/gates-clientorphan
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$NC_D" "$DN_D" "$SC_D" "$PC_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$NC_D" "$DN_D" "$SC_D" "$PC_D" "$LR_D"
 }
 trap cleanup EXIT
 
@@ -347,6 +347,24 @@ EOF
 run_prod_config_secrets() { bash scripts/check-prod-config-secrets.sh; }
 three_arg check-prod-config-secrets.sh \
           mk_prod_config_secrets run_prod_config_secrets '生产配置的敏感项必须是环境变量占位（走环境变量口，零污染）'
+LR_D=/d/tmp/probe753/gates-ledgerrefs
+mk_ledger_refs() { # check-ledger-refs：文档里「收口清单 #N」必须真落在台账里
+  # ⚠️ 走**环境变量口**（LEDGER_REF_LEDGER / LEDGER_REF_DOCS）⇒ **零污染**：不碰仓库里那四份文档。
+  # ⚠️ 两个规模下限都压到 1：夹具只有一两条引用，不压就会先被"反空转"那条挡住，
+  #    测不到真正的"引用命中台账"分支（这也是 2026-11-13 手工四臂第一版踩的坑）。
+  rm -rf "$LR_D"; mkdir -p "$LR_D"
+  cp 收口清单.md "$LR_D/ledger.md"
+  if [ "$1" = "1" ]; then
+    printf '修收口清单 #9999 已落地。\n' > "$LR_D/doc.md"
+  else
+    printf '修收口清单 #759 已落地；另见 收口清单 #2304。\n' > "$LR_D/doc.md"
+  fi
+  export LEDGER_REF_LEDGER="$LR_D/ledger.md" LEDGER_REF_DOCS="$LR_D/doc.md" \
+         LEDGER_REF_MIN_REFS=1 LEDGER_REF_MIN_LEDGER_IDS=1
+}
+run_ledger_refs() { bash scripts/check-ledger-refs.sh; }
+three_arg check-ledger-refs.sh \
+          mk_ledger_refs run_ledger_refs '文档里「收口清单 #N」引用必须落在台账里（走环境变量口，零污染）'
 
 mk_pkg_path_predicates() { # check-package-path-predicates：量具里写死的包路径谓词必须命中真实文件/目录
   # ⚠️ 走**环境变量口**（PKGPATH_SCAN_DIRS / PKGPATH_SERVER_DIR，2026-10-06 新加）⇒ **零污染**：

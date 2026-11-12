@@ -152,6 +152,10 @@ bash scripts/check-client-dead-callbacks.sh
 # 生产 AppKey 一旦被顺手粘进 yml，它会跟着 git 历史永久留在仓库里，而没有任何门会红。
 bash scripts/check-doc-status-counts.sh
 bash scripts/check-prod-config-secrets.sh
+# 文档里「收口清单 #N」的引用必须真落在 收口清单.md 里（2026-11-13 开）：
+# 台账是唯一活得过会话的载体，引用一旦指向不存在的编号，下一轮要么找不到依据、要么把同一件事
+# 重新发现一遍。现跑当场抓到一处真实笔误（开发包引 #767，清单里那条是 #759）。
+bash scripts/check-ledger-refs.sh
 # 文档里的门禁道数必须等于本脚本实际调用的道数（2026-10-06 开）：
 # AGENTS.md 写「32 道」而这里实际 40 道是现跑抓到的 —— 计数一漂，后面每次会话都拿旧数当
 # 「门全开」的证据。⚠️ 这道门自己也在被数之内：加/删门禁不改 AGENTS.md 的数字就会红。
