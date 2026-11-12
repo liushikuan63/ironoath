@@ -163,6 +163,13 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 下一格候选（均不依赖生产凭据）：①把「探针份数 87」「GameApi 155 方法」也纳入声明值比对（当前只有就地补注）；②`验收矩阵.md`头部历史「267 行」声明与本门谓词数到的 266 不同源，需一次口径合并；③`/level-reward/list` 11596B 是否该拆分/裁剪；④弱网提示恢复后不收回（属裁决项）；⑤V23-c 双向漂移扫描。
 - 明确未做：`check-gates-can-fail.sh`整份未在本轮跑（三读数用手工同形夹具验过）；Q5 类边界（生产服、微信 release、真机、真实支付、B13-9 容量压测）仍 NOT_RUN，其中 B13-9 量具`tools/run-b13-online-load.mjs`要求外部准入票与 holder 读回，本地无通道、不伪造运行。
 
+### 0.20 当前接续（2026-11-13 · #2507）
+
+- 本轮在 #2506 之后又推进一格：#2507 把「`application-prod.yml` 的敏感值全部来自环境变量」（上线检查清单 §八-1，长期是 `[ ]`、只能靠人核）做成静态门 `scripts/check-prod-config-secrets.sh`（第 53 道）。现读那 53 行里 11 处敏感项确实都是 `${IRONOATH_…}` 占位、0 处明文 —— 也就是说**这件事此刻是对的，但此前没有任何东西拦着它以后变错**；生产 AppKey 一旦被粘进 yml 会跟进 git 历史，而契约/分层/发送口/payload 四族门都不读这份文件。
+- 门的三条判据：①键名含 password/secret/token/app-key/credential/private-key/access-key 或以 `uri` 结尾的项，取值只能是空或恰好一个占位；②占位数量 ≥ 6（文件被改瘦时判红而不是扫空退 0）；③文件缺失/为空 fail-closed。负控四臂全部退 1。
+- 本轮 `bash scripts/check.sh` ⇒ `CHECK_SH_EXIT=0`：`[prod-config-secrets] ✓ … 15 处占位`、`[status-counts] ✓ 上线清单 - [x] 78 / - [ ] 35`（新加的 `[x]` 子项由门自己逼着同步声明）、`[doc-counts] 53 道`、`[check-harness-coverage] 54 = 40 + 14`。
+- 下一格候选：①把「探针份数 87」「GameApi 155 方法」也纳入声明值比对；②`/level-reward/list` 11596B 是否拆分；③V23-c 双向漂移；④上线清单里代码侧可验的剩余项（如「主线程无同步 IO」「对象池效果」）。
+- 明确未做：`check-gates-can-fail.sh` 整份仍未跑（三读数用手工/夹具同形验过）；部署后人工复核 `phase` 与真机/生产/支付类边界照旧 NOT_RUN。
 ---
 
 ## 一、任务装配与完成定义
@@ -534,7 +541,7 @@ B21 §五④ 已裁的 4 条 buff 候选表、乘区归属三方案、以及一�
 
 | 维度 | 现数 | 复跑命令 |
 |---|---|---|
-| 静态门 | ~~**45 道**~~ **52 道**（AGENTS.md 声明值与 `check.sh` 实际调用数一致，门自己核过） | `bash scripts/check-doc-counts.sh` ⇒ 退 0 并打印「45 道（现数 45）」 |
+| 静态门 | ~~**45 道**~~ ~~**52 道**~~ **53 道**（AGENTS.md 声明值与 `check.sh` 实际调用数一致，门自己核过） | `bash scripts/check-doc-counts.sh` ⇒ 退 0 并打印「45 道（现数 45）」 |
 | 客户端发送口 | GameApi ~~**136 方法~~ **155 方法 / 生产零调用点 0 / 连测试与探针也没碰过 0**；仅 GameApi 内部被调 **3**（`worldExile`、`worldRecall`、`worldCollectGather`，要顺入口方法复验） | `node tools/report-client-send-paths.mjs` |
 | 验收矩阵 | 编号验收项 ~~**265 条 = 231 ✅ / 22 🟡 / 12 ⬜**~~ **266 条 = 237 ✅ / 17 🟡 / 9 ⬜ / 其他 3**（本会话内翻绿两次：**B25 验收 7**（#7 四句都有用例，`test-client.sh` 同刻全绿）与 **B23 验收 3**（#771 落地 `mayEnterRankTop`，沙箱全量 2118/0/0/0）；相邻的 B25 验收 6 仍留 ⬜，卡点是「资源那一行是估算」要产品裁口径，见 §二·补·二 D 组第 1 行） | 见 §二·补·三 的那条 node 一行脚本。**[2026-10-08 01:2x 现跑：266 条 = 240 ✅ / 17 🟡 / 8 ⬜ —— 上面那组数停在本轮之前]** 本格把 **B13 验收 8 由 ⬜ 翻 🟡**（国家集结的服务端通路 + 客户端入口 + 运行时量具与四张前台截图都有读数；不翻 ✅ 是因为句里那个"50"今天不成立 —— 真口径是 `min(50, 本国实有人数)` 的折叠值，随科技放开属 V24 未做，且 V22 验收④「亡国后已存在的那次集结」仍未裁）。计数按状态列逐行判（`codePointAt`，脚本见 §二·补·三） |
 | 上线检查清单 | ~~`- [x]` **70** / `- [ ]` **38**~~ `- [x]` **77** / `- [ ]` **35** | `node -e '…'`（§二·补·三） |
@@ -8621,3 +8628,5 @@ TEST_EXIT=0
 | #2505 payload 覆盖面：手挑六条 → Spring 注册表全量 | 005b977b | `Tests run: 4, Failures: 0`（`GREEN_EXIT=0`）；无参数 GET **57** 条、`code==0` **41** 条、最大 `/stage/list` **17982B** of 20480B；负控把预算改成 10000 ⇒ `Tests run: 4, Failures: 2`、`NEGCTL_EXIT=1`，点名 `/level-reward/list → 11596B` 与 `/stage/list → 17982B` | 日志 `D:/Java/maven/logs/payload-sweep-green-20261113.log`、`payload-sweep-negctl-10000-20261113.log`；surefire 输出「payload覆盖面：无参数GET端点=57 …」；`global.json` 恢复后 SHA `04D0A984…F2670BE` 逐字节一致 | 写接口与需前置状态的读接口、客户端驱动覆盖仍未做（归动作驱动器）；`/level-reward/list` 11596B 已占 57% 预算但未拆分 |
 
 | #2506 台账状态计数：四组「工程现数」全是旧的 → 做成会红的门 | 未提交前 `scripts/check-doc-status-counts.sh` + `scripts/lib/doc-status-counts.js`；`check.sh` 门 51→52；`AGENTS.md` 同步；`check-gates-can-fail.sh` 接一条 `three_arg` | `bash scripts/check.sh` ⇒ `CHECK_SH_EXIT=0`：`[status-counts] ✓ 验收矩阵.md 编号行 266 = ✅ 237 / 🟡 17 / ⬜ 9 / 其他 3；上线检查清单.md - [x] 77 / - [ ] 35（声明值与现跑一致）`、`[doc-counts] 静态门道数一致：52 道`、`[check-harness-coverage] 静态门 53 道 = harness 已接 39 + 豁免 14`、「[check] 全部静态检查通过」 | 日志 `D:\Java\maven\logs\check-sh-statuscounts2-20261113.log`；四臂负控在 `D:\tmp\probe753` 里用 env 口跑：A 基线绿、B 总数错红、C 清单 70/77 红、D（自洽但错位 236/18）红并打印声明 vs 现跑 | 探针份数 87 与 GameApi 155 只做就地补注、未入门；整份 `check-gates-can-fail.sh` 未在本轮跑（三读数用手工同形夹具验过：基线绿 / 违规红 / 还原绿） |
+
+| #2507 生产配置的「敏感值全走环境变量」从人记变成门（上线清单 §八-1） | 新增 `scripts/check-prod-config-secrets.sh`（`check.sh` 第 53 道）；`AGENTS.md` 53 道；`check-gates-can-fail.sh` 接 `three_arg`；上线清单 §八-1 加一条 `[x]` 子项 | `bash scripts/check.sh` ⇒ `CHECK_SH_EXIT=0`，含 `[prod-config-secrets] ✓ … 共 15 处 ${…}，无明文凭据`、`[doc-counts] 53 道`、`[check-harness-coverage] 静态门 54 道 = harness 已接 40 + 豁免 14`、`[check] 全部静态检查通过` | 日志 `D:\Java\maven\logs\check-sh-2507-20261113.log`；四种负控（明文 `uri` / 明文 `app-key-prod` / 只剩 1 处占位 / 文件缺失）全部退 1，夹具 `D:\tmp\probe753\prodcfg-a1` | 门只判「有没有明文凭据」，不判「哪个环境变量必须设」；部署后人工复核 `GET /season/status` 的 `phase` 仍为 `[ ]` |

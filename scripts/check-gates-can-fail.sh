@@ -41,7 +41,7 @@ CO_D=/d/tmp/probe753/gates-clientorphan
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$NC_D" "$DN_D" "$SC_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$NC_D" "$DN_D" "$SC_D" "$PC_D"
 }
 trap cleanup EXIT
 
@@ -302,6 +302,51 @@ mk_doc_status_counts() { # check-doc-status-counts：台账声明的状态计数
 run_doc_status_counts() { bash scripts/check-doc-status-counts.sh; }
 three_arg check-doc-status-counts.sh \
           mk_doc_status_counts run_doc_status_counts '台账声明的状态计数必须等于现跑数出来的（走环境变量口，零污染）'
+PC_D=/d/tmp/probe753/gates-prodcfg
+mk_prod_config_secrets() { # check-prod-config-secrets：生产配置里不许出现明文凭据
+  # ⚠️ 走**环境变量口**（PRODCFG_FILE）⇒ **零污染**：不碰仓库里的 application-prod.yml。
+  # ⚠️ 正常态必须**够 6 处占位**：本门有「占位数量下限」，文件太瘦会先被那条挡住，
+  #    测不到真正的明文判定分支；违规态因此保留全部 6 处占位，另加一行明文 secret。
+  if [ "$1" = "1" ]; then
+    rm -rf "$PC_D"; mkdir -p "$PC_D"
+    cat > "$PC_D/prod.yml" <<'EOF'
+ironoath:
+  redis:
+    address: ${IRONOATH_REDIS_ADDRESS}
+  pay:
+    app-key-prod: ${IRONOATH_PAY_APP_KEY_PROD:}
+    offer-id: ${IRONOATH_PAY_OFFER_ID:}
+    superapp-signature-secret: abcd1234efgh5678
+  wechat:
+    session-key-encryption-key: ${IRONOATH_WECHAT_SESSION_KEY_ENCRYPTION_KEY:}
+spring:
+  data:
+    mongodb:
+      uri: ${IRONOATH_MONGO_URI}
+EOF
+  else
+    rm -rf "$PC_D"; mkdir -p "$PC_D"
+    cat > "$PC_D/prod.yml" <<'EOF'
+ironoath:
+  redis:
+    address: ${IRONOATH_REDIS_ADDRESS}
+  pay:
+    app-key-prod: ${IRONOATH_PAY_APP_KEY_PROD:}
+    offer-id: ${IRONOATH_PAY_OFFER_ID:}
+    env: ${IRONOATH_PAY_ENV:0}
+  wechat:
+    session-key-encryption-key: ${IRONOATH_WECHAT_SESSION_KEY_ENCRYPTION_KEY:}
+spring:
+  data:
+    mongodb:
+      uri: ${IRONOATH_MONGO_URI}
+EOF
+  fi
+  export PRODCFG_FILE="$PC_D/prod.yml"
+}
+run_prod_config_secrets() { bash scripts/check-prod-config-secrets.sh; }
+three_arg check-prod-config-secrets.sh \
+          mk_prod_config_secrets run_prod_config_secrets '生产配置的敏感项必须是环境变量占位（走环境变量口，零污染）'
 
 mk_pkg_path_predicates() { # check-package-path-predicates：量具里写死的包路径谓词必须命中真实文件/目录
   # ⚠️ 走**环境变量口**（PKGPATH_SCAN_DIRS / PKGPATH_SERVER_DIR，2026-10-06 新加）⇒ **零污染**：
