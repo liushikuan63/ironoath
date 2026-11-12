@@ -132,6 +132,39 @@ if [ -f "$battle_pom" ]; then
   fi
 fi
 
+# 9) 上线检查清单 §四-13「主线程无同步 IO」的 WebSocket 一侧。
+#    为什么单独锁 web.ws：它是推送路径，会话回调跑在容器的 WS 线程上，而心跳是**每 30 秒每连接一次**。
+#    这里一旦注入 Mongo/Redis 这类阻塞客户端，每帧心跳都可能等一次数据库往返；B13-9 要的单服 5000 在线
+#    在线程池上先垮，症状是"连不上/心跳超时"，不会报成任何一条业务错误。
+#    口径**只锁直接依赖**：握手阶段走 PlayerIdentityVerifier 的校验是每连接一次，不在本规则范围。
+#    目录不存在时判红而不是跳过 —— 这一族要防的正是"把 ws 包搬走让门扫空然后退 0"。
+#    ⚠️ 默认值必须单独一个变量：`WS_DIR="${LAYERING_WS_DIR:-server/…}"` 这种写法的字面量会被
+#       check-package-path-predicates.sh 当成 `-server/…` 而无法归一（首段不属于已知顶层目录），
+#       那道门会因此判红 —— 换了形态但同样是"路径必须真实存在"这条纪律。
+WS_DIR_DEFAULT=server/game-web/src/main/java/com/ironoath/web/ws
+WS_DIR="${LAYERING_WS_DIR:-$WS_DIR_DEFAULT}"
+WS_IMPORT_REGEX='^[[:space:]]*import[[:space:]]+com\.ironoath\.web\.(store|social|nation|world|rank|service)\.'
+WS_CLIENT_REGEX='MongoTemplate|RedissonClient|StringRedisTemplate|MongoClient|org\.redisson'
+if [ ! -d "$WS_DIR" ]; then
+  err "WebSocket 推送目录不存在（LAYERING_WS_DIR=$WS_DIR）：本规则要防的正是把 ws 包搬走让门扫空"
+else
+  ws_files=$(find "$WS_DIR" -name '*.java' -type f | wc -l | tr -d ' ')
+  if [ "$ws_files" -lt 3 ]; then
+    err "WebSocket 推送目录里只扫到 ${ws_files} 个 .java（<$WS_DIR>）：谓词失效，判红不判绿"
+  fi
+  ws_hits=$(grep -rnE "$WS_IMPORT_REGEX" "$WS_DIR" --include='*.java' || true)
+  if [ -n "$ws_hits" ]; then
+    err "web.ws 直接依赖了 store/social/nation/world/rank/service（推送线程上做阻塞 IO）:"
+    echo "$ws_hits" >&2
+  fi
+  ws_client=$(grep -rnE "$WS_CLIENT_REGEX" "$WS_DIR" --include='*.java' \
+    | grep -vE "$COMMENT_LINE_FILTER" || true)
+  if [ -n "$ws_client" ]; then
+    err "web.ws 直接引用了 Mongo/Redis 客户端（推送线程上做阻塞 IO）:"
+    echo "$ws_client" >&2
+  fi
+fi
+
 if [ "$fail" -ne 0 ]; then
   report "分层检查未通过。"
   exit 1

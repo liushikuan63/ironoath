@@ -25,6 +25,9 @@ JAVA=server/game-web/src/main/java
 # ⚠️ layering 门扫的是 **PURE_MODULES=(game-common game-core game-battle)**，**不含 game-web**
 #    ⇒ 造它的违规必须另放一个临时 java 文件到 game-core，放到 $JAVA 会静默不红。
 JAVA_LAYER=server/game-core/src/main/java/ZzGateLayerSelfTest.java
+# web.ws 那条规则的违规夹具落在 /d/tmp（见 mk_ws_blocking）：仓库内的 ws 包路径不许写成
+# 半成品，check-package-path-predicates.sh 要求脚本里的源码路径字面量必须真实存在。
+WS_D=/d/tmp/probe753/gates-wsbin
 TS=client/assets/scripts
 MJS=tools
 TMP_JAVA="$JAVA/ZzGateSelfTest.java"
@@ -41,7 +44,7 @@ CO_D=/d/tmp/probe753/gates-clientorphan
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$NC_D" "$DN_D" "$SC_D" "$PC_D" "$LR_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep /d/tmp/probe753/gates-wsbin "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$NC_D" "$DN_D" "$SC_D" "$PC_D" "$LR_D"
 }
 trap cleanup EXIT
 
@@ -145,6 +148,22 @@ mk_mathrandom() { # check-layering 的 FORBIDDEN_CALL_REGEX 分支（只查 FLOA
   if [ "$1" = "1" ]; then
     printf 'public class ZzGateLayerSelfTest { double f() { return Math.random(); } }\n' > "$JAVA_LAYER"
   else rm -f "$JAVA_LAYER"; fi
+}
+mk_ws_blocking() { # check-layering 第 9 条：web.ws 不许直接依赖 store（推送线程上做阻塞 IO）
+  # ⚠️ 夹具放 /d/tmp 而不是仓库里的 ws 包：check-package-path-predicates.sh 要求脚本里写的
+  #    `…/src/main/java/com/…` 字面量**必须真实存在**，而违规文件只在违规那一相才存在。
+  #    所以用 LAYERING_WS_DIR 环境变量口把门指到夹具目录（其余各门也是这个范式）。
+  # ⚠️ 目录里必须有 ≥3 个 .java：门在少于 3 个时判"谓词失效"而红，那是另一条分支。
+  if [ "$1" = "1" ]; then
+    mkdir -p "$WS_D"
+    printf 'package com.ironoath.web.ws;\npublic class A { }\n' > "$WS_D/A.java"
+    printf 'package com.ironoath.web.ws;\npublic class B { }\n' > "$WS_D/B.java"
+    printf 'package com.ironoath.web.ws;\nimport com.ironoath.web.store.mongo.MongoSocialStore;\npublic class ZzGateWsBlockingSelfTest { }\n' > "$WS_D/ZzGateWsBlockingSelfTest.java"
+    export LAYERING_WS_DIR="$WS_D"
+  else
+    rm -rf "$WS_D"
+    unset LAYERING_WS_DIR
+  fi
 }
 
 mk_contract_defs() { # check-contract-defs：同名 def 的结构（去掉 description）必须一致
@@ -927,6 +946,7 @@ three check-dangling-test-refs.sh mk_dangling '悬空测试引用（必须先 gi
 three check-no-bot-privilege.sh  mk_bot_priv '禁 isBot 特判'
 three check-layering.sh          mk_layering '领域层禁 import 框架（FORBIDDEN_IMPORT_REGEX 只认行首 import）'
 three check-layering.sh          mk_mathrandom '领域层禁 Math.random（FORBIDDEN_CALL_REGEX 分支）'
+three check-layering.sh          mk_ws_blocking 'web.ws 不许直接依赖 store（推送线程上做阻塞 IO）'
 
 cleanup
 printf '\n=== 结果：合格 %d 条 / 不合格 %d 条 ===\n' "$pass" "$fail"
