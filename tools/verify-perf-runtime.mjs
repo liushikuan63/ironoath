@@ -191,6 +191,56 @@ for (let elapsed = 0; elapsed < SOAK_SECONDS; elapsed += 30) {
 }
 const heapEndMb = await heapUsedMb()
 
+/**
+ * 面板巡游：把「客户端绑定了、但主城挂机那 120s 里一次都没打到」的读接口逐屏打一遍。
+ *
+ * <p><b>为什么单开 context 逐屏进</b>：主城那段量的是首屏与堆，多开面板会把这两个读数搅浑；
+ * 巡游放在 heapEnd 之后，只贡献「还有哪些接口是真的会发」这件事。
+ *
+ * <p><b>为什么用 `?panel=<key>` 而不是点按钮</b>：深链是纯客户端跳转
+ * （`client/assets/scripts/scene/PanelNav.ts` 的 `initialPanelFromUrl`），不需要命中测试、
+ * 也不发写请求；点按钮要换算画布坐标，测出来的绿会混进「点得动/点不动」另一件事（见 tools/lib/panel-clicks.mjs 的头注）。
+ *
+ * <p>覆盖面原来是 21/147 条 —— 缺的是覆盖面而不是量具，所以这一步只加"去看"，不改阈值。
+ */
+const TOUR_PANELS = (process.env.PERF_TOUR_PANELS
+  ?? 'army,hero,gacha,bag,stage,reports,quest,battlePass,levelReward,mail,social,power,shop,avatarFrames,targets,world')
+  .split(',').map((s) => s.trim()).filter((s) => s !== '')
+const tourResponses = []
+const tourPerPanel = {}
+const tourProblems = []
+for (const key of TOUR_PANELS) {
+  const tourContext = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+  await tourContext.addInitScript((v) => localStorage.setItem('ironoath.deviceId', v), `perf-tour-${key}-${Date.now()}`)
+  const tourPage = await tourContext.newPage()
+  const seen = []
+  tourPage.on('response', async (resp) => {
+    if (!resp.url().startsWith(BACKEND)) return
+    let bytes = 0
+    try {
+      bytes = (await resp.body()).length
+    } catch {
+      bytes = Number(resp.headers()['content-length'] ?? 0)
+    }
+    const rec = { path: new URL(resp.url()).pathname, status: resp.status(), bytes }
+    seen.push(rec)
+    tourResponses.push(rec)
+  })
+  try {
+    await tourPage.goto(`http://localhost:${PORT}/?panel=${key}`, { waitUntil: 'domcontentloaded' })
+    await tourPage.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null,
+      { timeout: 30_000 })
+    // 面板要等读接口回来才画全：只等"场景就绪"会把只有壳的状态读成"这屏就这样"（同 verify-panel-paging-runtime.mjs 的教训）
+    await tourPage.waitForTimeout(2500)
+  } catch (error) {
+    tourProblems.push(`面板巡游 ${key} 没进得去：${error.message}`)
+  }
+  await tourContext.close()
+  tourPerPanel[key] = Array.from(new Set(seen.map((r) => r.path)))
+}
+// 巡游期间的响应并进同一份逐接口统计：它们同样是这台客户端打出去的报文
+backendResponses.push(...tourResponses)
+
 const biggest = Array.from(backendResponses)
   .sort((a, b) => b.bytes - a.bytes)
   .slice(0, 8)
@@ -233,6 +283,7 @@ const measuredPaths = new Set(byPath.keys())
 const neverMeasured = clientPaths.filter(p => !measuredPaths.has(p))
 
 const failures = []
+failures.push(...tourProblems)
 if (!bootLineSeen) failures.push('没拿到 [boot] 自检行：首屏口径退化了，这次测量不算数')
 // 自报数是小游戏运行时里唯一可读的首屏耗时（那边没有本工具这样的外部墙钟），所以它必须在
 // 本工具跑得通的路径上先被核对存在 —— 否则"能在 DevTools 里读那一行"仍然只是一句愿望
@@ -267,6 +318,9 @@ console.log(`[perf] 逐接口体积：量到 ${payloadByPath.length} 条路径�
 for (const row of payloadByPath.slice(0, 6)) {
   console.log(`[perf]   ${row.path} 最大 ${row.maxBytes}B · 中位 ${row.medianBytes}B · ${row.responses} 次`)
 }
+const tourPaths = new Set(tourResponses.map((r) => r.path))
+const tourOnContract = Array.from(tourPaths).filter((p) => clientPaths.includes(p)).length
+console.log(`[perf] 面板巡游：${TOUR_PANELS.length} 屏，打出 ${tourPaths.size} 条路径，其中 ${tourOnContract} 条在客户端的绑定清单上`)
 
 // ---------- 弱网相位 ----------
 //
@@ -389,6 +443,7 @@ console.log(JSON.stringify({
   backendResponseCount: backendResponses.length,
   payloadByPath,
   coverage: {
+    panelTour: tourPerPanel,
     clientBoundPaths: clientPaths.length,
     measuredPaths: payloadByPath.length,
     neverMeasured,

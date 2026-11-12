@@ -170,6 +170,13 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 本轮 `bash scripts/check.sh` ⇒ `CHECK_SH_EXIT=0`：`[prod-config-secrets] ✓ … 15 处占位`、`[status-counts] ✓ 上线清单 - [x] 78 / - [ ] 35`（新加的 `[x]` 子项由门自己逼着同步声明）、`[doc-counts] 53 道`、`[check-harness-coverage] 54 = 40 + 14`。
 - 下一格候选：①把「探针份数 87」「GameApi 155 方法」也纳入声明值比对；②`/level-reward/list` 11596B 是否拆分；③V23-c 双向漂移；④上线清单里代码侧可验的剩余项（如「主线程无同步 IO」「对象池效果」）。
 - 明确未做：`check-gates-can-fail.sh` 整份仍未跑（三读数用手工/夹具同形验过）；部署后人工复核 `phase` 与真机/生产/支付类边界照旧 NOT_RUN。
+### 0.21 当前接续（2026-11-13 · #2508）
+
+- 本轮续做覆盖面那格：`tools/verify-perf-runtime.mjs` 在首屏 + 120s 挂机之后新增「面板巡游」相 —— 每屏单开 context 用 `?panel=<key>` 深链进（`client/assets/scripts/scene/PanelNav.ts` 的 `initialPanelFromUrl`），16 屏各等 2.5s 收报文，响应并进同一份逐接口统计。
+- 现数：**34 条量到 / 147 条绑定（未量 128 → 115）**；巡游自己打出 33 条、其中 31 条在契约清单上；顺带量出第三大响应 `/world/viewport` = 11111B（此前从未被量过）。
+- 为什么不点按钮：深链是纯客户端跳转，不发写请求；按坐标点按钮要过命中测试与画布缩放换算，会把「点得动/点不动」另一件事混进这份读数（见 `tools/lib/panel-clicks.mjs` 头注）。
+- 一条待查的方差：同一产物、同一后端、同 120s 挂机，两轮堆峰值 23.2MB 与 54.6MB（上限 300MB，不影响判红，但读数对采样相位敏感）。
+- 下一格候选：①写接口那批的动作驱动器；②`/world/viewport` 11111B 是否要先分页；③把「探针份数 87」「GameApi 155 方法」也纳入声明值比对；④V23-c 双向漂移。
 ---
 
 ## 一、任务装配与完成定义
@@ -8630,3 +8637,4 @@ TEST_EXIT=0
 | #2506 台账状态计数：四组「工程现数」全是旧的 → 做成会红的门 | 未提交前 `scripts/check-doc-status-counts.sh` + `scripts/lib/doc-status-counts.js`；`check.sh` 门 51→52；`AGENTS.md` 同步；`check-gates-can-fail.sh` 接一条 `three_arg` | `bash scripts/check.sh` ⇒ `CHECK_SH_EXIT=0`：`[status-counts] ✓ 验收矩阵.md 编号行 266 = ✅ 237 / 🟡 17 / ⬜ 9 / 其他 3；上线检查清单.md - [x] 77 / - [ ] 35（声明值与现跑一致）`、`[doc-counts] 静态门道数一致：52 道`、`[check-harness-coverage] 静态门 53 道 = harness 已接 39 + 豁免 14`、「[check] 全部静态检查通过」 | 日志 `D:\Java\maven\logs\check-sh-statuscounts2-20261113.log`；四臂负控在 `D:\tmp\probe753` 里用 env 口跑：A 基线绿、B 总数错红、C 清单 70/77 红、D（自洽但错位 236/18）红并打印声明 vs 现跑 | 探针份数 87 与 GameApi 155 只做就地补注、未入门；整份 `check-gates-can-fail.sh` 未在本轮跑（三读数用手工同形夹具验过：基线绿 / 违规红 / 还原绿） |
 
 | #2507 生产配置的「敏感值全走环境变量」从人记变成门（上线清单 §八-1） | 新增 `scripts/check-prod-config-secrets.sh`（`check.sh` 第 53 道）；`AGENTS.md` 53 道；`check-gates-can-fail.sh` 接 `three_arg`；上线清单 §八-1 加一条 `[x]` 子项 | `bash scripts/check.sh` ⇒ `CHECK_SH_EXIT=0`，含 `[prod-config-secrets] ✓ … 共 15 处 ${…}，无明文凭据`、`[doc-counts] 53 道`、`[check-harness-coverage] 静态门 54 道 = harness 已接 40 + 豁免 14`、`[check] 全部静态检查通过` | 日志 `D:\Java\maven\logs\check-sh-2507-20261113.log`；四种负控（明文 `uri` / 明文 `app-key-prod` / 只剩 1 处占位 / 文件缺失）全部退 1，夹具 `D:\tmp\probe753\prodcfg-a1` | 门只判「有没有明文凭据」，不判「哪个环境变量必须设」；部署后人工复核 `GET /season/status` 的 `phase` 仍为 `[ ]` |
+| #2508 面板巡游：探针覆盖面从 21 条压到 34 条（`/world/viewport` 第三大响应浮出） | 只改 `tools/verify-perf-runtime.mjs`（+55 行，新增一相），不动阈值、不改契约 | `node tools/verify-perf-runtime.mjs`（`BACKEND_ORIGIN=http://localhost:8199`、`PERF_SOAK_SECONDS=120`）⇒ `PERF_TOUR_EXIT=0`，日志 `D:/Java/maven/logs/perf-tour-20261113-061319.log`；输出「量到 34 条路径（客户端绑定 147 条）…一次都没打到的 115 条」、「面板巡游：16 屏，打出 33 条路径，其中 31 条在客户端的绑定清单上」；首屏 2504ms、FPS 60.1、堆峰 54.6MB | 同一份日志；对比基线 `perf-20261113-013246.log`（21 条 / 最大 17971B） | 未做：115 条里那批写接口仍要动作驱动器；两轮堆峰 23.2 vs 54.6MB 的方差待多轮采样查；本轮未跑全套 `mvn test` 与 `check.sh` 之外的其他门 |
