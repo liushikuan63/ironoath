@@ -154,6 +154,15 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 末次runtime：`verify-nation-live`71通过；`verify-war-real-battle`43通过/0失败/2 NO-RUN，真实战仍为PREPARATION，`BATCH_EXIT=2`；三后端owner清理与端口复验通过。根因确认当前探针只`POST /world/march`攻击守方主城，没有向4座GATE发起国家集结；生产捕获恢复链存在，Mongo集成测试通过四关HTTP战斗，但测试直接注入军力，不替代实时90分钟闭环。当前`world_target.json`的mapmonster_lv40守军仍标“推荐/待确认”，本轮未改坐标或强度。独立Q复审、真实四关SIEGE/结算榜分仍未做。
 - 未完成：独立Q0-Q3复审、真实War进入SIEGE并验证结算榜分；该probe不伪造关卡击败或奖分。排查确认当前`verify-war-real-battle.mjs`只攻击守方主城，没有逐一对四座GATE发起国家集结，因此运行流程本身不能满足进入SIEGE的前置；生产战斗恢复链已有GATE捕获接线，`NationRallyFortressMongoEndpointTest.activeMongoWarCapturesFourGatesThenRecordsPlayerDefenderVictory`覆盖四关HTTP/战斗/Mongo路径，但测试直接注入军力，不能替代真实90分钟结算。续验需在隔离自有后端准备合成账号军力并补四关流程；`world_target.json`的mapmonster_lv40守军配置仍标注推荐/待确认，本轮未改其坐标或强度。仅使用tmpfs Mongo/Redis与开发内存后端合成账号，无真实玩家数据/真实支付；未推送。
 
+### 0.19 当前接续（2026-11-13 · #2506）
+
+- 当前长期目标为「推进收口文档里所有可推进项」（用户 2026-11-13 指令）；本轮开工时`HEAD`=`0f86f1aa`、与`origin/master`同 SHA、tracked 干净。A（奖分持久恢复）、B（迁都）、C（生产禁 legacy `/pay/callback`）三条线的代码已由另一会话在 2026-11-10 收口并推送，本会话只做独立复核与落档，不重复实现。
+- 本轮独立复跑：全套服务端`mvn test` **3771 条 0 失败 0 错误 0 跳过**（common 62、config 168、core 726、battle 65、web 2732、balance-sim 18，`SUITE_EXIT=0`）；客户端产物用`build-webmobile.sh`重建（`BUILD_EXIT=0`，`index.html`刷新到 2026-11-13 1:27:55）；真后端（`--server.port=8199`）+ playwright 跑`verify-perf-runtime.mjs`：首屏 2448ms、FPS 60.2、堆峰 23.2MB、逐接口量到 21/147 条、最大`/stage/list` 17971B（预算 20480B ⇒ 余量仅 12%）。
+- 据此推了三格：#2504 把 payload 预算做成 CI 不变式（六条最重读接口）；#2505 覆盖面从手挑六条扩到 Spring 注册表全量无参数 GET（57 条，其中 code==0 41 条，`/level-reward/list` 11596B 暴露）；#2506 把「台账声明的状态计数」做成会红的门（`check-doc-status-counts.sh`，门 51→52 道，四臂负控 A 绿 / B 总数错红 / C 70 vs 77 红 / D 自洽但错位红）。三格均已提交；`#2504`、`#2505` 已推送（`origin/master`=`b0d73c2e`）。
+- 本轮`bash scripts/check.sh`⇒`CHECK_SH_EXIT=0`：`[status-counts] ✓ 266 = ✅237/🟡17/⬜9/其他3；- [x] 77 / - [ ] 35`、`[doc-counts] 52 道`、`[check-harness-coverage] 53 = 39 + 14`、`[check] 全部静态检查通过`。
+- 下一格候选（均不依赖生产凭据）：①把「探针份数 87」「GameApi 155 方法」也纳入声明值比对（当前只有就地补注）；②`验收矩阵.md`头部历史「267 行」声明与本门谓词数到的 266 不同源，需一次口径合并；③`/level-reward/list` 11596B 是否该拆分/裁剪；④弱网提示恢复后不收回（属裁决项）；⑤V23-c 双向漂移扫描。
+- 明确未做：`check-gates-can-fail.sh`整份未在本轮跑（三读数用手工同形夹具验过）；Q5 类边界（生产服、微信 release、真机、真实支付、B13-9 容量压测）仍 NOT_RUN，其中 B13-9 量具`tools/run-b13-online-load.mjs`要求外部准入票与 holder 读回，本地无通道、不伪造运行。
+
 ---
 
 ## 一、任务装配与完成定义
@@ -525,13 +534,19 @@ B21 §五④ 已裁的 4 条 buff 候选表、乘区归属三方案、以及一�
 
 | 维度 | 现数 | 复跑命令 |
 |---|---|---|
-| 静态门 | **45 道**（AGENTS.md 声明值与 `check.sh` 实际调用数一致，门自己核过） | `bash scripts/check-doc-counts.sh` ⇒ 退 0 并打印「45 道（现数 45）」 |
-| 客户端发送口 | GameApi **136 方法 / 生产零调用点 0 / 连测试与探针也没碰过 0**；仅 GameApi 内部被调 **3**（`worldExile`、`worldRecall`、`worldCollectGather`，要顺入口方法复验） | `node tools/report-client-send-paths.mjs` |
-| 验收矩阵 | 编号验收项 **265 条 = 231 ✅ / 22 🟡 / 12 ⬜**（本会话内翻绿两次：**B25 验收 7**（#7 四句都有用例，`test-client.sh` 同刻全绿）与 **B23 验收 3**（#771 落地 `mayEnterRankTop`，沙箱全量 2118/0/0/0）；相邻的 B25 验收 6 仍留 ⬜，卡点是「资源那一行是估算」要产品裁口径，见 §二·补·二 D 组第 1 行） | 见 §二·补·三 的那条 node 一行脚本。**[2026-10-08 01:2x 现跑：266 条 = 240 ✅ / 17 🟡 / 8 ⬜ —— 上面那组数停在本轮之前]** 本格把 **B13 验收 8 由 ⬜ 翻 🟡**（国家集结的服务端通路 + 客户端入口 + 运行时量具与四张前台截图都有读数；不翻 ✅ 是因为句里那个"50"今天不成立 —— 真口径是 `min(50, 本国实有人数)` 的折叠值，随科技放开属 V24 未做，且 V22 验收④「亡国后已存在的那次集结」仍未裁）。计数按状态列逐行判（`codePointAt`，脚本见 §二·补·三） |
-| 上线检查清单 | `- [x]` **70** / `- [ ]` **38** | `node -e '…'`（§二·补·三） |
-| 运行时探针 | `tools/verify-*.mjs` **62 份**（10-07 20:1x 现跑；本盘点第一次数的时候是 60，之后 V19/V20 各新增一份：`verify-minor-notice`、`verify-hint-queue`） | `ls tools/verify-*.mjs \| wc -l` |
+| 静态门 | ~~**45 道**~~ **52 道**（AGENTS.md 声明值与 `check.sh` 实际调用数一致，门自己核过） | `bash scripts/check-doc-counts.sh` ⇒ 退 0 并打印「45 道（现数 45）」 |
+| 客户端发送口 | GameApi ~~**136 方法~~ **155 方法 / 生产零调用点 0 / 连测试与探针也没碰过 0**；仅 GameApi 内部被调 **3**（`worldExile`、`worldRecall`、`worldCollectGather`，要顺入口方法复验） | `node tools/report-client-send-paths.mjs` |
+| 验收矩阵 | 编号验收项 ~~**265 条 = 231 ✅ / 22 🟡 / 12 ⬜**~~ **266 条 = 237 ✅ / 17 🟡 / 9 ⬜ / 其他 3**（本会话内翻绿两次：**B25 验收 7**（#7 四句都有用例，`test-client.sh` 同刻全绿）与 **B23 验收 3**（#771 落地 `mayEnterRankTop`，沙箱全量 2118/0/0/0）；相邻的 B25 验收 6 仍留 ⬜，卡点是「资源那一行是估算」要产品裁口径，见 §二·补·二 D 组第 1 行） | 见 §二·补·三 的那条 node 一行脚本。**[2026-10-08 01:2x 现跑：266 条 = 240 ✅ / 17 🟡 / 8 ⬜ —— 上面那组数停在本轮之前]** 本格把 **B13 验收 8 由 ⬜ 翻 🟡**（国家集结的服务端通路 + 客户端入口 + 运行时量具与四张前台截图都有读数；不翻 ✅ 是因为句里那个"50"今天不成立 —— 真口径是 `min(50, 本国实有人数)` 的折叠值，随科技放开属 V24 未做，且 V22 验收④「亡国后已存在的那次集结」仍未裁）。计数按状态列逐行判（`codePointAt`，脚本见 §二·补·三） |
+| 上线检查清单 | ~~`- [x]` **70** / `- [ ]` **38**~~ `- [x]` **77** / `- [ ]` **35** | `node -e '…'`（§二·补·三） |
+| 运行时探针 | `tools/verify-*.mjs` ~~**62 份**~~ **87 份**（10-07 20:1x 现跑；本盘点第一次数的时候是 60，之后 V19/V20 各新增一份：`verify-minor-notice`、`verify-hint-queue`） | `ls tools/verify-*.mjs \| wc -l` |
 | 用例总量 | 客户端 **1025 跑 / 1025 通过 / 0 失败 / 0 跳过**（**本轮同刻现跑**：`bash scripts/test-client.sh` EXIT=0，Node 20）；服务端 **2117 项 0 红 0 跳** 是**上一格同树读数、本轮未复跑** | `bash scripts/test.sh`（⚠️ 主树跑会经 `contract-sync` 的 `-am install` 重写活后端 classpath 上的 jar，见项目记忆「Java 用例的沙箱配方」；本轮 8080 上确有活后端 PID 43152） |
 
+> **2026-11-13 现跑补注（#2506）**：上表五行数字已过期，已按当轮现跑就地改正（划掉的是原文，不改旧字）：
+> 静态门 **52 道**（本轮新增 `check-doc-status-counts.sh` 后 51→52，`bash scripts/check-doc-counts.sh` 会核）、
+> 验收矩阵 **266 条 = 237 ✅ / 17 🟡 / 9 ⬜ / 其他 3**（其他＝状态列写的不是三种状态之一的行：L178「已裁决退役」、L230「现跑核对」、L545「不适用」）、
+> 上线清单 **`- [x]` 77 / `- [ ]` 35**、运行时探针 **87 份**（`ls tools/verify-*.mjs | wc -l`）、GameApi **155 个发送口**（`[send-paths]` 行）。
+> 其中「验收矩阵分布」与「上线清单计数」从本轮起由 `scripts/check-doc-status-counts.sh` 逐次校验：声明值与现跑不一致即红，
+> 且这两行声明就住在**被数的文档自己头部**（`验收矩阵.md` 的 `> **现分布`、`上线检查清单.md` 的 `> **现计数`），不另立第三个家。
 **§1.1 那张优先级表现在是过期文档**（它写的是 2026-09-28 的待做顺序）：①~⑥ 与 ⑧ 全部已落地——
 V10/V11/V12/V14/V16/V13-S1/S2/V15/V17(A~H)/V18 都在 §四 有格子与读数；只有 ⑦ V15 当年的「待裁决」
 已裁（选 ③ 真分页）并落地。**不删原表**（它是当时的决策现场）；本段同属历史，当前按 §零与后续实施记录读取。
@@ -8604,3 +8619,5 @@ TEST_EXIT=0
 | #2504-附 本轮基线读数 | 不改源码（本轮只跑量具与构建） | 全套服务端`SUITE_EXIT=0`：common 62、config 168、core 726、battle 65、web 2729、balance-sim 18，合计**3768条0失败0错误0跳过**；客户端`BUILD_EXIT=0`，`client/build/web-mobile/index.html`刷新为2026/11/13 1:27:55（原为11-09 03:54） | 全套日志`D:\Java\maven\logs\full-test-20261113-012619.log`；构建用`env -u ELECTRON_RUN_AS_NODE bash scripts/build-webmobile.sh` | 未跑`build.sh`全量（[2026-11-13 补] `scripts/check.sh` 随后已跑：静态门 51 道全通过、`CHECK_SH_EXIT=0`，日志 `D:/Java/maven/logs/check-sh-20261113.log`；终态全套服务端再次复跑：game-web **2732**（多出的 3 条即本格新用例）、合计 **3771** 条 0 失败 0 错误 0 跳过、`FINAL_SUITE_EXIT=0`，日志 `D:/Java/maven/logs/full-test-final-20261113.log`）；未做视觉验收；弱网相位观测到「网络恢复后提示仍挂着」（探针自述根因是登录后客户端不再发请求，指向收口清单#139），该条本轮未改 |
 
 | #2505 payload 覆盖面：手挑六条 → Spring 注册表全量 | 005b977b | `Tests run: 4, Failures: 0`（`GREEN_EXIT=0`）；无参数 GET **57** 条、`code==0` **41** 条、最大 `/stage/list` **17982B** of 20480B；负控把预算改成 10000 ⇒ `Tests run: 4, Failures: 2`、`NEGCTL_EXIT=1`，点名 `/level-reward/list → 11596B` 与 `/stage/list → 17982B` | 日志 `D:/Java/maven/logs/payload-sweep-green-20261113.log`、`payload-sweep-negctl-10000-20261113.log`；surefire 输出「payload覆盖面：无参数GET端点=57 …」；`global.json` 恢复后 SHA `04D0A984…F2670BE` 逐字节一致 | 写接口与需前置状态的读接口、客户端驱动覆盖仍未做（归动作驱动器）；`/level-reward/list` 11596B 已占 57% 预算但未拆分 |
+
+| #2506 台账状态计数：四组「工程现数」全是旧的 → 做成会红的门 | 未提交前 `scripts/check-doc-status-counts.sh` + `scripts/lib/doc-status-counts.js`；`check.sh` 门 51→52；`AGENTS.md` 同步；`check-gates-can-fail.sh` 接一条 `three_arg` | `bash scripts/check.sh` ⇒ `CHECK_SH_EXIT=0`：`[status-counts] ✓ 验收矩阵.md 编号行 266 = ✅ 237 / 🟡 17 / ⬜ 9 / 其他 3；上线检查清单.md - [x] 77 / - [ ] 35（声明值与现跑一致）`、`[doc-counts] 静态门道数一致：52 道`、`[check-harness-coverage] 静态门 53 道 = harness 已接 39 + 豁免 14`、「[check] 全部静态检查通过」 | 日志 `D:\Java\maven\logs\check-sh-statuscounts2-20261113.log`；四臂负控在 `D:\tmp\probe753` 里用 env 口跑：A 基线绿、B 总数错红、C 清单 70/77 红、D（自洽但错位 236/18）红并打印声明 vs 现跑 | 探针份数 87 与 GameApi 155 只做就地补注、未入门；整份 `check-gates-can-fail.sh` 未在本轮跑（三读数用手工同形夹具验过：基线绿 / 违规红 / 还原绿） |

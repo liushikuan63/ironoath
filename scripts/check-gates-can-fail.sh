@@ -41,7 +41,7 @@ CO_D=/d/tmp/probe753/gates-clientorphan
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$NC_D" "$DN_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$NC_D" "$DN_D" "$SC_D"
 }
 trap cleanup EXIT
 
@@ -264,6 +264,44 @@ mk_doc_counts() { # check-doc-counts：AGENTS.md 声明的门禁道数必须等�
 run_doc_counts() { bash scripts/check-doc-counts.sh; }
 three_arg check-doc-counts.sh \
           mk_doc_counts run_doc_counts '文档声明的门禁道数必须等于实际调用数（走环境变量口，零污染）'
+
+SC_D=/d/tmp/probe753/gates-statuscounts
+mk_doc_status_counts() { # check-doc-status-counts：台账声明的状态计数必须等于现跑数出来的
+  # ⚠️ 走**环境变量口**（STATUSCOUNT_MATRIX / STATUSCOUNT_CHECKLIST）⇒ **零污染**：
+  #    不碰仓库里的 验收矩阵.md / 上线检查清单.md（那两份正被别的会话翻状态）。
+  # ⚠️ 违规态必须是**自洽但错位**的声明（3 = ✅3/🟡0/⬜0/其他0，实际 2 ✅ + 1 ⬜）：
+  #    只把总数改错会先被「声明自身不自洽」那条挡住，测不到真正的比对分支。
+  if [ "$1" = "1" ]; then
+    rm -rf "$SC_D"; mkdir -p "$SC_D"
+    {
+      echo "> **现分布（夹具）**：编号行 3 = ✅ 3 / 🟡 0 / ⬜ 0 / 其他 0"
+      echo "| 编号 | 项 | 状态 | 证据 |"
+      echo "|---|---|---|---|"
+      echo "| 1 | a | ✅ 自动验证 | x |"
+      echo "| 2 | b | ✅ 自动验证 | x |"
+      echo "| 3 | c | ⬜ 未验证 | x |"
+    } > "$SC_D/matrix.md"
+  else
+    rm -rf "$SC_D"; mkdir -p "$SC_D"
+    {
+      echo "> **现分布（夹具）**：编号行 3 = ✅ 2 / 🟡 0 / ⬜ 1 / 其他 0"
+      echo "| 编号 | 项 | 状态 | 证据 |"
+      echo "|---|---|---|---|"
+      echo "| 1 | a | ✅ 自动验证 | x |"
+      echo "| 2 | b | ✅ 自动验证 | x |"
+      echo "| 3 | c | ⬜ 未验证 | x |"
+    } > "$SC_D/matrix.md"
+  fi
+  {
+    echo "> **现计数（夹具）**：\`- [x]\` 1 / \`- [ ]\` 1"
+    echo "- [x] done"
+    echo "- [ ] todo"
+  } > "$SC_D/checklist.md"
+  export STATUSCOUNT_MATRIX="$SC_D/matrix.md" STATUSCOUNT_CHECKLIST="$SC_D/checklist.md"
+}
+run_doc_status_counts() { bash scripts/check-doc-status-counts.sh; }
+three_arg check-doc-status-counts.sh \
+          mk_doc_status_counts run_doc_status_counts '台账声明的状态计数必须等于现跑数出来的（走环境变量口，零污染）'
 
 mk_pkg_path_predicates() { # check-package-path-predicates：量具里写死的包路径谓词必须命中真实文件/目录
   # ⚠️ 走**环境变量口**（PKGPATH_SCAN_DIRS / PKGPATH_SERVER_DIR，2026-10-06 新加）⇒ **零污染**：
