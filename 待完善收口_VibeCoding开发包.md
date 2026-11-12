@@ -193,6 +193,14 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 判据四层：台账缺/编号数低于 800 判红、单份文档零引用判红、活引用必须命中、引用总数低于 60 判红；~~ 划掉的历史引用只剥编号本身（整段剥离会把跨行内容拼成假引用，实测多报过一条）。
 - 负控：手工四臂（真台账绿 / 假编号 #9999 红 / 文档零引用红 / 台账被截到 2 个编号红）+ harness 三读数 绿/绿/红（夹具走环境变量口，零污染）。
 - 下一格候选：①写接口那批的动作驱动器（覆盖面 115 条）；②/world/viewport 11111B 是否分页；③V23-c 的「按 §x 互引」那一半（本条只覆盖了「收口清单 #N」）。
+### 0.24 当前接续（2026-11-13 · #2511）
+
+- 这一格起于一处**文档自相矛盾**：`验收矩阵.md:265`（B13 验收 8「国家集结 50 人门槛」）的状态单元格写 `⬜`，而同一行正文明确记着 2026-10-08 的「就地更新：⬜ → 🟡」以及不翻 ✅ 的两条理由。读文档无法判定哪个是真的，于是先跑真量具取证。
+- 现跑取证：在**本会话重建过的客户端产物**（`client/build/web-mobile`，11-13 01:27）与**开着 dev 提速档的后端**（`IRONOATH_DEV_CITY_LEVEL=16` + `IRONOATH_DEV_START_AMOUNT=2000000`，`--server.port=8299`）上重跑 `tools/verify-nation-rally-runtime.mjs` ⇒ `RALLY_EXIT=0`、**40 条判据全 PASS / 0 FAIL**（正文上一版记的是 38 条），日志 `D:\Java\maven\logs\rally-probe2-064228.log`。
+- 必须先给对档位：只给 `IRONOATH_DEV_CITY_LEVEL` 时探针退 2（`前提不足（不是功能红）：建盟 甲一 八次都被拒（最后一条：10014 金币不足…需要金币 500，当前 200）`）—— 建盟要 500 金，提速档必须连 `IRONOATH_DEV_START_AMOUNT=2000000` 一起给。退 2 是量具没架对，不是功能红。
+- 视觉取证：四张截图落 `client/build/nation-rally-verify/`，本次亲自看了 `nation-rally-compose.png`（1280×720）：集结页签、标题「NR发起队485910」、成员 2 人（战力 995 / 485）、底部吐司「已发起国家集结：野外怪」，与判据自述一致。
+- 改法：单元格 `⬜ → 🟡`（`🟡` 在本矩阵的既有用法就是「代码侧完备、差外部/部署/裁决」，同节结算幂等与段位重置两行都这么标），声明行同批改写为 `编号行 266 = ✅ 237 / 🟡 18 / ⬜ 8 / 其他 3`；并就地补注写清「仍不翻 ✅ 的两条」：V24 科技逐级放开未做（"50 人"字面不成立，真口径 `min(配置上限 50, 本国实有人数)`）、V22 验收④「亡国后已存在的那次集结怎么处置」仍未裁。
+- 下一格候选：①写接口那批的「动作驱动器」（覆盖面 115 条未量）；②`/world/viewport` 11111B 是否分页；③单元格 vs 正文这类矛盾仍靠人发现，可考虑做成门。
 ---
 
 ## 一、任务装配与完成定义
@@ -8656,3 +8664,4 @@ TEST_EXIT=0
 | #2508 面板巡游：探针覆盖面从 21 条压到 34 条（`/world/viewport` 第三大响应浮出） | 只改 `tools/verify-perf-runtime.mjs`（+55 行，新增一相），不动阈值、不改契约 | `node tools/verify-perf-runtime.mjs`（`BACKEND_ORIGIN=http://localhost:8199`、`PERF_SOAK_SECONDS=120`）⇒ `PERF_TOUR_EXIT=0`，日志 `D:/Java/maven/logs/perf-tour-20261113-061319.log`；输出「量到 34 条路径（客户端绑定 147 条）…一次都没打到的 115 条」、「面板巡游：16 屏，打出 33 条路径，其中 31 条在客户端的绑定清单上」；首屏 2504ms、FPS 60.1、堆峰 54.6MB | 同一份日志；对比基线 `perf-20261113-013246.log`（21 条 / 最大 17971B） | 未做：115 条里那批写接口仍要动作驱动器；两轮堆峰 23.2 vs 54.6MB 的方差待多轮采样查；本轮未跑全套 `mvn test` 与 `check.sh` 之外的其他门 |
 | #2509 「探针份数 / GameApi 发送口」两组工程现数也进 status-counts 门（声明行住在开发包自己头部） | 扩 `scripts/check-doc-status-counts.sh`（第三个输入 `STATUSCOUNT_DEV`、两个现跑口 `STATUSCOUNT_PROBES_DIR`/`STATUSCOUNT_SEND_PATHS`）；开发包头部插一行 `> **现数…**：探针 87 份 / GameApi 155 个发送口` | `bash scripts/check-doc-status-counts.sh` ⇒ `GATE_EXIT=0`，绿行同时报三份文档；四臂负控（探针声明 4≠3、发送口声明 8≠7、声明行缺失、基线）依次 `0/1/1/1` | `D:/tmp/probe754` 夹具 + `bash -n` 通过；`bash scripts/check.sh` ⇒ `CHECK_SH_EXIT=0`（`[status-counts] ✓ … 探针 87 份 / GameApi 155 个发送口`、`[doc-counts] 53 道`、harness 54 = 40 + 14），日志 `D:/Java/maven/logs/check-sh-2509-20261113.log` | 未做：harness 里没给这条新分支加第二条夹具（加了会动 `门数 == 已接数 + 豁免数` 那道门），所以它目前只有手工四臂；`/world/viewport` 11111B 是否分页仍待裁 |
 | #2510 文档里「收口清单 #N」的引用从来没有门核：台账只增不删，引用一旦指向不存在的编号，下一轮要么找不到依据、要么把同一件事重新发现一遍（现跑当场抓到开发包引 #767，清单里那条实为 #759） | 本笔（本地提交，待推） | 新增 scripts/check-ledger-refs.sh + scripts/lib/ledger-refs.js：四份文档 86 处活引用全部命中台账 1663 个编号（表格行 784 + 编号段 899）；check.sh 53→54 道全绿；harness 三读数 绿/绿/红 | 日志 D:\\Java\\maven\\logs\\check-sh-2510-20261113.log、harness-2510-20261113.log；四臂负控夹具 D:\\tmp\\probe755 | 只核「收口清单 #N」这一种引用形状；B13/B25 之间按「§x」的互引仍未核；开发包里另两处「修 #767」的小标题（不属「收口清单 #」形状）保持原文未改 |
+| #2511 验收矩阵 B13 验收 8「国家集结 50 人门槛」的状态单元格写 ⬜，同一行正文却已记着 2026-10-08 的「⬜ → 🟡」裁决（单元格 vs 自己的裁决记录打架），且正文量具读数停在 38 条判据 | 本笔（本地提交，待推） | 今日复跑 V22-c：`RALLY_EXIT=0`、40 PASS / 0 FAIL（日志 `D:\Java\maven\logs\rally-probe2-064228.log`）；单元格改 🟡、声明行改 266 = 237/18/8/3；`check-doc-status-counts`、`check-checklist-table`、`check-eol-policy` 退 0 | 四张截图 `client/build/nation-rally-verify/nation-rally-{grey,scope-nation,compose,list}.png`，人工看了 compose（集结页签 + 「已发起国家集结：野外怪」吐司） | 不翻 ✅：V24 科技逐级放开未做、V22 验收④ 未裁；本轮未跑全套 `mvn test`；单元格 vs 正文这类矛盾目前仍靠人发现，没有门 |
