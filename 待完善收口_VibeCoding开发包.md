@@ -6,6 +6,7 @@
 > 与 B17~B25 批次文件的七段结构一致；不新增 Bxx 编号，也不重写任何已交付系统。
 > **口径**：原始任务卡的「现状」来自 2026-09-28；后增任务卡与 §四记录各自标注取证日期，不能统一当成当前读数。
 > 引用前**先重跑那一条命令** —— 本仓最贵的教训是「文档说 A、代码是 B」。
+> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 87 份 / GameApi 155 个发送口
 
 ---
 
@@ -177,6 +178,13 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 为什么不点按钮：深链是纯客户端跳转，不发写请求；按坐标点按钮要过命中测试与画布缩放换算，会把「点得动/点不动」另一件事混进这份读数（见 `tools/lib/panel-clicks.mjs` 头注）。
 - 一条待查的方差：同一产物、同一后端、同 120s 挂机，两轮堆峰值 23.2MB 与 54.6MB（上限 300MB，不影响判红，但读数对采样相位敏感）。
 - 下一格候选：①写接口那批的动作驱动器；②`/world/viewport` 11111B 是否要先分页；③把「探针份数 87」「GameApi 155 方法」也纳入声明值比对；④V23-c 双向漂移。
+### 0.22 当前接续（2026-11-13 · #2509）
+
+- 把 #2506 那道门从两张状态表扩到**工程现数**两组：探针份数（`ls tools/verify-*.mjs`）与 GameApi 发送口（`node tools/report-client-send-paths.mjs` 打出的 `GameApi 方法：N`）。声明行放在开发包自己头部，不另立第三个家。
+- 动因是 #2506 现跑时抓到的同一族事实：§二·补·一 那张表里「62 份探针 / 136 个方法」也是过期的（现数 87 / 155），而当时只补注、没上锁 —— 补注只修了那一次，上锁才防下一次。
+- 现数：三份文档一起被核（矩阵 266 = 237/17/9/其他 3、清单 79/35、开发包 87 份 / 155 口）。四臂负控：探针声明 4≠3 红、发送口声明 8≠7 红、声明行缺失红、基线绿。
+- 已有边界：本条没动 `check-gates-can-fail.sh`（给同一脚本加第二条夹具会改「门数 == 已接数 + 豁免数」那道门的计数），所以这条新分支目前只有手工四臂做反证。
+- 下一格候选：①写接口那批的动作驱动器（覆盖面 115 条的真正堵点）；②V23-c 双向漂移；③验收矩阵 🟡 里那批「代码侧完备、依赖部署」的两条（`:280`/`:284`）只能在部署侧翻。
 ---
 
 ## 一、任务装配与完成定义
@@ -8638,3 +8646,4 @@ TEST_EXIT=0
 
 | #2507 生产配置的「敏感值全走环境变量」从人记变成门（上线清单 §八-1） | 新增 `scripts/check-prod-config-secrets.sh`（`check.sh` 第 53 道）；`AGENTS.md` 53 道；`check-gates-can-fail.sh` 接 `three_arg`；上线清单 §八-1 加一条 `[x]` 子项 | `bash scripts/check.sh` ⇒ `CHECK_SH_EXIT=0`，含 `[prod-config-secrets] ✓ … 共 15 处 ${…}，无明文凭据`、`[doc-counts] 53 道`、`[check-harness-coverage] 静态门 54 道 = harness 已接 40 + 豁免 14`、`[check] 全部静态检查通过` | 日志 `D:\Java\maven\logs\check-sh-2507-20261113.log`；四种负控（明文 `uri` / 明文 `app-key-prod` / 只剩 1 处占位 / 文件缺失）全部退 1，夹具 `D:\tmp\probe753\prodcfg-a1` | 门只判「有没有明文凭据」，不判「哪个环境变量必须设」；部署后人工复核 `GET /season/status` 的 `phase` 仍为 `[ ]` |
 | #2508 面板巡游：探针覆盖面从 21 条压到 34 条（`/world/viewport` 第三大响应浮出） | 只改 `tools/verify-perf-runtime.mjs`（+55 行，新增一相），不动阈值、不改契约 | `node tools/verify-perf-runtime.mjs`（`BACKEND_ORIGIN=http://localhost:8199`、`PERF_SOAK_SECONDS=120`）⇒ `PERF_TOUR_EXIT=0`，日志 `D:/Java/maven/logs/perf-tour-20261113-061319.log`；输出「量到 34 条路径（客户端绑定 147 条）…一次都没打到的 115 条」、「面板巡游：16 屏，打出 33 条路径，其中 31 条在客户端的绑定清单上」；首屏 2504ms、FPS 60.1、堆峰 54.6MB | 同一份日志；对比基线 `perf-20261113-013246.log`（21 条 / 最大 17971B） | 未做：115 条里那批写接口仍要动作驱动器；两轮堆峰 23.2 vs 54.6MB 的方差待多轮采样查；本轮未跑全套 `mvn test` 与 `check.sh` 之外的其他门 |
+| #2509 「探针份数 / GameApi 发送口」两组工程现数也进 status-counts 门（声明行住在开发包自己头部） | 扩 `scripts/check-doc-status-counts.sh`（第三个输入 `STATUSCOUNT_DEV`、两个现跑口 `STATUSCOUNT_PROBES_DIR`/`STATUSCOUNT_SEND_PATHS`）；开发包头部插一行 `> **现数…**：探针 87 份 / GameApi 155 个发送口` | `bash scripts/check-doc-status-counts.sh` ⇒ `GATE_EXIT=0`，绿行同时报三份文档；四臂负控（探针声明 4≠3、发送口声明 8≠7、声明行缺失、基线）依次 `0/1/1/1` | `D:/tmp/probe754` 夹具 + `bash -n` 通过；`bash scripts/check.sh` ⇒ `CHECK_SH_EXIT=0`（`[status-counts] ✓ … 探针 87 份 / GameApi 155 个发送口`、`[doc-counts] 53 道`、harness 54 = 40 + 14），日志 `D:/Java/maven/logs/check-sh-2509-20261113.log` | 未做：harness 里没给这条新分支加第二条夹具（加了会动 `门数 == 已接数 + 豁免数` 那道门），所以它目前只有手工四臂；`/world/viewport` 11111B 是否分页仍待裁 |

@@ -11,8 +11,13 @@
 # 判据形状照 `check-doc-counts.sh`：文档声明值 vs 现跑值，不一致即红；且**这两处声明分别住在
 # 被数的文档自己头部**（验收矩阵与上线检查清单各一行 `> **现分布/现计数…`），不另立第三个家。
 #
-# ⚠️ 两个输入都可用环境变量换（验证这条检查真的会红，而不必改仓库里的文件）：
-#    STATUSCOUNT_MATRIX / STATUSCOUNT_CHECKLIST。**不设时逐字节等同改动前**（模式隔离）。
+# ⚠️ 三个输入都可用环境变量换（验证这条检查真的会红，而不必改仓库里的文件）：
+#    STATUSCOUNT_MATRIX / STATUSCOUNT_CHECKLIST / STATUSCOUNT_DEV。**不设时逐字节等同改动前**（模式隔离）。
+#
+# 第四组数是 2026-11-13 追加的「工程现数」两组：**探针份数**（`tools/verify-*.mjs` 的个数）与
+# **GameApi 发送口个数**（`tools/report-client-send-paths.mjs` 打出来的 `GameApi 方法：N`）。
+# 它们原先只写在 §二·补·一 那张表里、没人核，本轮现跑一次就发现两边都过期（表里 62 份 / 136 方法，
+# 现数 87 份 / 155 方法）。这两行同样住在**被数的文档自己头部**。
 #
 # ⚠️ 声明行里**故意不靠 emoji 去切字段**：emoji 可能带/不带 U+FE0F 变体选择符，写进 sed 的
 #    正则会在"某台机器上对、另一台上静默不匹配"（本门第一版就是这样：探针里最短的一条能匹配、
@@ -23,8 +28,9 @@ cd "$(dirname "$0")/.."
 
 MATRIX="${STATUSCOUNT_MATRIX:-验收矩阵.md}"
 CHECKLIST="${STATUSCOUNT_CHECKLIST:-上线检查清单.md}"
+DEV="${STATUSCOUNT_DEV:-待完善收口_VibeCoding开发包.md}"
 
-for f in "$MATRIX" "$CHECKLIST"; do
+for f in "$MATRIX" "$CHECKLIST" "$DEV"; do
   if [ ! -f "$f" ]; then
     echo "[status-counts][FAIL] 输入文件不存在：$f（fail-closed，不静默跳过）" >&2
     exit 1
@@ -105,6 +111,57 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
+# ---------- 工程现数：探针份数 / GameApi 发送口 ----------
+# 现跑口径与文档里那两条「现数」命令逐字一致（探针＝`ls tools/verify-*.mjs`，发送口＝报告器打的那行），
+# 不在这里另立第二套定义。两个现跑口也都能换（自测用，见 STATUSCOUNT_PROBES_DIR / STATUSCOUNT_SEND_PATHS）。
+PROBES_DIR="${STATUSCOUNT_PROBES_DIR:-.}"
+A_PROBES=$(find "$PROBES_DIR/tools" -maxdepth 1 -name 'verify-*.mjs' 2>/dev/null | wc -l | tr -d ' ')
+if [ "${A_PROBES:-0}" -eq 0 ]; then
+  echo "[status-counts][FAIL] 在 $PROBES_DIR/tools 下一份 verify-*.mjs 都没数到 —— 谓词失效时判红而不是判绿" >&2
+  exit 1
+fi
+if [ -n "${STATUSCOUNT_SEND_PATHS:-}" ]; then
+  A_API=$(grep -oE 'GameApi 方法：[0-9]+' "$STATUSCOUNT_SEND_PATHS" | head -1 | grep -oE '[0-9]+')
+else
+  A_API=$(node tools/report-client-send-paths.mjs 2>/dev/null | grep -oE 'GameApi 方法：[0-9]+' | head -1 | grep -oE '[0-9]+')
+fi
+if [ -z "${A_API:-}" ]; then
+  echo "[status-counts][FAIL] 取不到 GameApi 发送口个数（报告器没打出那行）—— 判红而不是当成 0" >&2
+  exit 1
+fi
+
+D_ENG=$(node -e '
+const fs = require("node:fs")
+const hits = fs.readFileSync(process.argv[1], "utf8").split("\n").filter((l) => l.startsWith("> **现数"))
+if (hits.length !== 1) {
+  console.error("现数声明行命中处数不对：" + hits.length)
+  process.exit(3)
+}
+const nums = hits[0].match(/[0-9]+/g) || []
+if (nums.length !== 2) {
+  console.error("现数声明行里的整数个数不对：" + JSON.stringify(nums))
+  process.exit(4)
+}
+console.log(nums.join(" "))
+' "$DEV") || {
+  echo "[status-counts][FAIL] 取不到 $DEV 的工程现数声明（要恰好 1 行以 \"> **现数\" 开头、含 2 个整数）" >&2
+  exit 1
+}
+read -r D_PROBES D_API <<<"$D_ENG"
+
+FAILED=0
+if [ "$D_PROBES" != "$A_PROBES" ] || [ "$D_API" != "$A_API" ]; then
+  echo "[status-counts][FAIL] $DEV 的工程现数与现跑不一致：" >&2
+  echo "  声明：探针 $D_PROBES 份 / GameApi $D_API 个发送口" >&2
+  echo "  现跑：探针 $A_PROBES 份 / GameApi $A_API 个发送口" >&2
+  echo "  ⇒ 加/删探针或改 GameApi 方法数必须同批改那行声明" >&2
+  FAILED=1
+fi
+if [ "$FAILED" -ne 0 ]; then
+  exit 1
+fi
+
 echo "[status-counts] ✓ $MATRIX 编号行 $A_NUM = ✅ $A_OK / 🟡 $A_MID / ⬜ $A_TODO / 其他 $A_OTHER；"\
-"$CHECKLIST - [x] $A_DONE / - [ ] $A_TODOBOX（声明值与现跑一致）"
+"$CHECKLIST - [x] $A_DONE / - [ ] $A_TODOBOX；"\
+"$DEV 探针 $A_PROBES 份 / GameApi $A_API 个发送口（声明值与现跑一致）"
 exit 0
