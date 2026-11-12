@@ -55,6 +55,17 @@ function threshold(id) {
   return Number(row.value)
 }
 
+/**
+ * 覆盖面下限：**触到过多少条接口路径**。
+ *
+ * <p>为什么要一个下限：逐接口体积、首屏、堆峰这三项测的都是「打出去的那几条报文」，
+ * 一旦面板巡游整段失败、或首屏的并发读取被拆掉，被测的接口会**悄悄变少**，
+ * 而所有体积/耗时读数都会更漂亮 —— 越退化越绿，是这类测量最典型的假绿形状。
+ * 下限把「这次量了几条」也变成判据：2026-11-13 现跑 34 条（客户端绑定 147 条），
+ * 留 2 条余量取 32（巡游偶尔少进一屏不该判红，整段断掉必须红）。
+ */
+const MIN_COVERED = Number(process.env.PERF_MIN_COVERED_PATHS ?? 32)
+
 const LIMITS = {
   firstScreenMs: threshold('PERF_FIRST_SCREEN_MAX_MS'),
   payloadBytes: threshold('PERF_PAYLOAD_MAX_BYTES'),
@@ -283,6 +294,14 @@ const measuredPaths = new Set(byPath.keys())
 const neverMeasured = clientPaths.filter(p => !measuredPaths.has(p))
 
 const failures = []
+if (clientPaths.length === 0) {
+  failures.push('客户端绑定清单一条都没读到：契约侧的真源读不到，覆盖面这项等于没测')
+}
+if (measuredPaths.size < MIN_COVERED) {
+  failures.push(`这次只打出 ${measuredPaths.size} 条接口路径，低于下限 ${MIN_COVERED}`
+    + `（客户端绑定 ${clientPaths.length} 条）：覆盖面回退了 —— 先看面板巡游是否整段失败、`
+    + '首屏的并发读取是否被拆掉；这一项变少会让体积/耗时读数反而更漂亮')
+}
 failures.push(...tourProblems)
 if (!bootLineSeen) failures.push('没拿到 [boot] 自检行：首屏口径退化了，这次测量不算数')
 // 自报数是小游戏运行时里唯一可读的首屏耗时（那边没有本工具这样的外部墙钟），所以它必须在
@@ -313,7 +332,7 @@ if (fps < LIMITS.minFps) {
 if (errors.length > 0) failures.push(`控制台报错 ${errors.length} 条`)
 
 console.log(`[perf] 逐接口体积：量到 ${payloadByPath.length} 条路径（客户端绑定 ${clientPaths.length} 条），` +
-  `最大 ${maxPayload}B / 预算 ${LIMITS.payloadBytes}B；一次都没打到的 ${neverMeasured.length} 条` +
+  `最小 ${MIN_COVERED} 条 / 最大 ${maxPayload}B / 预算 ${LIMITS.payloadBytes}B；一次都没打到的 ${neverMeasured.length} 条` +
   `（写接口与需要前置状态的读接口，见 JSON.coverage.neverMeasured）`)
 for (const row of payloadByPath.slice(0, 6)) {
   console.log(`[perf]   ${row.path} 最大 ${row.maxBytes}B · 中位 ${row.medianBytes}B · ${row.responses} 次`)
@@ -446,6 +465,7 @@ console.log(JSON.stringify({
     panelTour: tourPerPanel,
     clientBoundPaths: clientPaths.length,
     measuredPaths: payloadByPath.length,
+    minCoveredPaths: MIN_COVERED,
     neverMeasured,
     note: 'neverMeasured 不是"没问题"，是"这次没量到"：它们要么是写接口（要玩家动作才发），'
       + '要么要先有状态（队列里有兵、有未领奖励等）。判 B16 验收 6 时只能按已量到的这些说',

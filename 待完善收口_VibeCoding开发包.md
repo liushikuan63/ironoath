@@ -210,6 +210,15 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - harness：`scripts/check-gates-can-fail.sh` 挂 `mk_ws_blocking`（夹具落 `/d/tmp/probe753/gates-wsbin`，走 `LAYERING_WS_DIR` 口，零污染仓库），三读数 绿/绿/红；整份 harness **43 条合格 / 0 条不合格**，残留 `java=0 layer=0 ts=0 ts.meta=0 mjs=0`。
 - 两个自己踩出来的坑：① 夹具最初写进仓库里的 ws 包，`check-package-path-predicates.sh` 判「谓词指向不存在的路径」—— 那份文件只在违规相才存在；改成 `/d/tmp` 夹具 + 环境变量口。② 门的默认值最初写成 `WS_DIR="${LAYERING_WS_DIR:-server/…}"`，同一道门把它读成 `-server/…`（首段不属于已知顶层目录）判红；拆出 `WS_DIR_DEFAULT` 变量后归一位。两道门互相咬合，是好事。
 - 下一格候选：①§四-13 父项那半（其余业务路径「一条一次 IO」逐条复核）；②写接口那批的「动作驱动器」（覆盖面 115 条未量）；③`/world/viewport` 11111B 是否分页。
+### 0.26 当前接续（2026-11-13 · #2513）
+
+- 这一格由「盘矩阵非绿」逼出来：237 ✅ / 18 🟡 / 8 ⬜ / 其他 3 逐条读完，卡点几乎全在**外部**（B13-9 要准入票 + holder 读回、5000 Bot 要 Mongo+Redis 达标、FPS/内存/弱网/热更要真机、`quest_main_08` 卡 B18 粮耗裁决、离线报告「各项之和」要裁「估算算不算」、两条未成年提示缺 prod 年龄源），**不能靠改文档推进**；`L557`/`L319` 也核实过不是「已绿未翻」。
+- 于是做代码侧那半：探针的三项读数（体积/首屏/堆峰）都只覆盖「这一次真正打出去的报文」，而**量到几条接口**本身没有判据 —— 巡游整段失败或首屏并发读取被拆掉时，被试接口变少、读数反而更漂亮。
+- 改动：`MIN_COVERED`（`PERF_MIN_COVERED_PATHS`，默认 32；现跑 34 留 2 条余量），低于下限判红并点名排查方向；客户端绑定清单读到 0 条也判红；JSON 增 `coverage.minCoveredPaths`，人读行改打「最小 N 条 / 最大 …B」。
+- 现跑与反证：`A_EXIT=0`（`34 条量到 / 147 条绑定`）→ 负控 `=999` 得 `NEGCTL2_EXIT=1`，正文「这次只打出 34 条接口路径，低于下限 999（客户端绑定 147 条）：覆盖面回退了 —— 先看面板巡游是否整段失败、首屏的并发读取是否被拆掉」→ 改完再跑绿 `B_EXIT=0`。
+- **第一个负控是假红**：下限块最初写在 `const failures = []` 之前，`NEGCTL_EXIT=1` 来自 `ReferenceError: Cannot access 'failures' before initialization`，不是判据本身；搬到声明之后重跑才拿到正文。教训：负控要认**错误正文**，不能只认非零退出码。
+- 同批修掉一处文档自相矛盾：`上线检查清单.md` 里「21 条量到 / 128 条仍未量」的现值行与 #2508 的 34/115 打架，已改准并注明旧值属面板巡游之前那一轮。
+- 下一格候选：①写接口的「动作驱动器」（115 条未量的真正堵点）；②`/world/viewport` 11111B；③§四-13 父项其余业务路径。
 ---
 
 ## 一、任务装配与完成定义
@@ -8675,3 +8684,4 @@ TEST_EXIT=0
 | #2510 文档里「收口清单 #N」的引用从来没有门核：台账只增不删，引用一旦指向不存在的编号，下一轮要么找不到依据、要么把同一件事重新发现一遍（现跑当场抓到开发包引 #767，清单里那条实为 #759） | 本笔（本地提交，待推） | 新增 scripts/check-ledger-refs.sh + scripts/lib/ledger-refs.js：四份文档 86 处活引用全部命中台账 1663 个编号（表格行 784 + 编号段 899）；check.sh 53→54 道全绿；harness 三读数 绿/绿/红 | 日志 D:\\Java\\maven\\logs\\check-sh-2510-20261113.log、harness-2510-20261113.log；四臂负控夹具 D:\\tmp\\probe755 | 只核「收口清单 #N」这一种引用形状；B13/B25 之间按「§x」的互引仍未核；开发包里另两处「修 #767」的小标题（不属「收口清单 #」形状）保持原文未改 |
 | #2511 验收矩阵 B13 验收 8「国家集结 50 人门槛」的状态单元格写 ⬜，同一行正文却已记着 2026-10-08 的「⬜ → 🟡」裁决（单元格 vs 自己的裁决记录打架），且正文量具读数停在 38 条判据 | 本笔（本地提交，待推） | 今日复跑 V22-c：`RALLY_EXIT=0`、40 PASS / 0 FAIL（日志 `D:\Java\maven\logs\rally-probe2-064228.log`）；单元格改 🟡、声明行改 266 = 237/18/8/3；`check-doc-status-counts`、`check-checklist-table`、`check-eol-policy` 退 0 | 四张截图 `client/build/nation-rally-verify/nation-rally-{grey,scope-nation,compose,list}.png`，人工看了 compose（集结页签 + 「已发起国家集结：野外怪」吐司） | 不翻 ✅：V24 科技逐级放开未做、V22 验收④ 未裁；本轮未跑全套 `mvn test`；单元格 vs 正文这类矛盾目前仍靠人发现，没有门 |
 | #2512 `上线检查清单.md` §四-13「主线程无同步 IO」缺 WebSocket 一侧：推送回调跑在容器 WS 线程上，心跳每 30 秒每连接一次，注入 Mongo/Redis 就让 5000 在线先在线程池上垮，且症状只会是「连不上/心跳超时」 | 本笔（本地提交，待推） | `scripts/check-layering.sh` 加第 9 条（ws 包禁 store/social/nation/world/rank/service 与 Mongo/Redis 客户端，目录缺失或 .java 少于 3 个判红）；基线 0、五臂负控 0/1/1/1/1；harness 挂 `mk_ws_blocking` 后 43 合格 0 不合格；顺带修掉 `WS_DIR="${LAYERING_WS_DIR:-server/…}"` 让 `check-package-path-predicates.sh` 判红的写法 | 日志 `D:\Java\maven\logs\harness-2512b-20261113.log`；`check-package-path-predicates.sh` 复跑退 0（19 条路径 · 1 mainClass · 1 x-java-package · 源码根 13） | 只锁直接依赖，握手校验不在内；父项仍 `[ ]`（其余业务路径一条一次 IO 未复核）；未跑全套 `mvn test` |
+| #2513 探针的「量到几条接口」没有判据：巡游整段失败或首屏并发读取被拆掉时，被试接口悄悄变少而体积/耗时/堆峰读数反而更漂亮（越退化越绿）；同一段文档还留着 21 条/128 条的旧现值与 #2508 的 34/115 打架 | 本笔（本地提交，待推） | `tools/verify-perf-runtime.mjs` 加 `MIN_COVERED`（`PERF_MIN_COVERED_PATHS`，默认 32）与绑定清单为空两条判红；JSON 增 `coverage.minCoveredPaths`、人读行打「最小 N 条」；文档那条现数改成 34/115 并注明旧值属哪一轮 | 现跑 `A_EXIT=0`、`34 条量到 / 147 条绑定`；负控 `=999` ⇒ `NEGCTL2_EXIT=1` 且正文点名「低于下限 999…覆盖面回退了」；改完重跑绿 `B_EXIT=0`；日志 `perf-floor-a-070822.log` / `perf-floor-negctl2.log` / `perf-floor-b.log` | 下限不代替动作驱动器（115 条多为写接口/需前置状态）；探针不进 CI，下限只在人跑时生效；第一次负控是 ReferenceError 假红，已在台账写明 |
