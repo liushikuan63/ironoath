@@ -8592,3 +8592,11 @@ TEST_EXIT=0
 | 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
 |---|---|---|---|---|
 | #2502 Q-R2独立验收 | Q角色只读复核，Q卡单独提交`fe857b05`、Q2更正`5942f407`与Q0同步`b286b755`；不触源码、不重跑测试/runtime | 冻结HEAD `80f1ae30b73ed9fa8cf13babd8e547673434ccae`、JAR SHA `948D7F2066BBD8EBC3A040C5193C8B94AFE735E81098FAEA483BF0E2DD7E6EDC`：Q0 PASS、Q1-A/B/C PASS、Q2 PASS、Q3 PASS、Q4隔离dev PASS、Q5 NOT_RUN。Q1-B以RaceProbe三类同步负控3/0/0/0、peer Redis争用1/0/0/0及B全目标套件133/0/0/0为证；Q3核查最新test/build/check日志，注明全套日志先于提交但生产源码未变且新增探针有同SHA目标运行绑定；Q4为50/50真实dev WAR榜读回 | `docs/parallel/Q-integration-acceptance.md`；Q卡提交`fe857b05`/`5942f407`/`b286b755`；RaceProbe、B套件、全套门禁及live读回路径见#2501；Q-R2后COORD同步卡片的最终`check.sh` `.tmp-logs/b13-check-final-delivery-20261110.log` | Q1-B范围仅同一后端进程内Mongo+Redisson并发，不声称第二后端进程验收；Q5生产服、release设备、真实支付及B13-9容量均保持NOT_RUN |
+
+### 2026-11-13 · #2503 已推送 HEAD 的独立复核（A/B/C 三条线）
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| #2503 已交付B13在0f86f1aa上的独立复跑 | 不改源码、不改历史结论；本轮只读复核并追加本行 | `HEAD`=`0f86f1aa408f9b5e84fba3c329668d5c24089278`，`origin/master`同SHA，`git rev-list --left-right --count origin/master...HEAD`=0 0，tracked工作树干净。专属M2 `D:\Java\maven\m2-ironoath-a-20261113` + JDK17.0.12：核心`game-common`62/0/0/0、`game-core`726/0/0/0（含`WarAwardPlanTest`5、`NationSystemTest`47、`WarBattleEventTest`9），`BUILD SUCCESS`；web A定向`WarEndpointTest`28、`RankEndpointTest`20与三套存储等价合计132/0/0/0；web B/C定向`PayEndpointTest`30、`ProductionReadinessTest`14、`CapitalMigrationEndpointTest`11、`TargetOccupationStoreTest`15、`StrategicCombatPendingMapProjectionTest`2、`CapitalMigrationMongoEndpointTest`1，合计73/0/0/0 | `D:\Java\maven\core-test-20261113.log`；`D:\Java\maven\web-test-20261113b.log`；`D:\Java\maven\bc-verify-20261113.log`；`D:\Java\maven\bc-mongo-verify-20261113.log` | 全套`test.sh`/`build.sh`/`check.sh`与运行时探针本轮未重跑，沿用#2496/#2497/#2502读数；Q5生产服、release设备、真实支付与C4真实商户沙箱仍为NOT_RUN，属既有边界，本轮未扩大范围 |
+| #2503-附 量具合同：Mongo测试URI必须不带库名 | 同上，仅记录不改测试 | 首跑`CapitalMigrationMongoEndpointTest`报`java.lang.IllegalArgumentException: Mongo测试URI必须指向未指定数据库的服务器`（`TestMongo.uriForDatabase`拒绝非空path），改传`mongodb://127.0.0.1:27017/?serverSelectionTimeoutMS=3000`后1/0/0/0；阴性对照为同一命令带`/ironoath_task_a_20261113`即复红 | `server/game-web/src/test/java/com/ironoath/web/store/TestMongo.java:63-89`；`D:\Java\maven\bc-verify-20261113.log`（红）；`D:\Java\maven\bc-mongo-verify-20261113.log`（绿） | 该约束是测试自派随机库的设计，不是产品缺陷；影响面仅限以为隔离URI应带库名的调用者 |
+
