@@ -21,6 +21,9 @@
 #
 # 输入口（自测用，零污染）：PROBE_COVERAGE_PATHS_JSON / PROBE_COVERAGE_TOOLS_DIR /
 # PROBE_COVERAGE_MAX_UNDRIVEN / PROBE_COVERAGE_MIN_PATHS / PROBE_COVERAGE_MIN_PROBES。
+#
+# 2026-11-13 #2527：`verify-nation-live.mjs` 补了 `GET /nation/relations` 的只读口断言
+#（写口回执与只读表必须同形），无驱动从 31 诚实降到 30，上限同批收到 30。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -29,7 +32,7 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-MAX_UNDRIVEN="${PROBE_COVERAGE_MAX_UNDRIVEN:-31}"
+MAX_UNDRIVEN="${PROBE_COVERAGE_MAX_UNDRIVEN:-30}"
 MIN_PATHS="${PROBE_COVERAGE_MIN_PATHS:-100}"
 MIN_PROBES="${PROBE_COVERAGE_MIN_PROBES:-50}"
 

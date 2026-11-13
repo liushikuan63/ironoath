@@ -385,6 +385,20 @@ if (foundRival.code === 0) {
     const mine = relations.find(rel => rel.nationId === rivalId) ?? null
     checkThat('那张表里有本轮的对手国', mine !== null)
     check('表里对手国的关系值 = 我要设的', mine?.relation, 'HOSTILE')
+    // 只读口 `GET /nation/relations` 必须与写口回的这张表**同形**（#2527）。
+    // 背景：这一屏当年只能靠写口的 `allRelations` 凑，于是注释里长期写着"服务端没有只读端点"
+    // （本文件 :725 那句更正讲的就是这件事）。只断"端点存在"会漏掉"两份表用了不同过滤口径"，
+    // 所以要同时断内容一致与国家数一致。
+    const readBack = await call('GET', '/nation/relations', undefined, king.playerId, king.token)
+    check('只读口 GET /nation/relations 回 code 0', readBack.code, 0)
+    const readRows = readBack.data?.allRelations ?? []
+    const readMine = readRows.find(rel => rel.nationId === rivalId) ?? null
+    checkThat('只读口也列出本轮那个对手国', readMine !== null)
+    // 自检口（#2527）：把期望值故意写成另一个关系，这一段必须红。
+    // 没有这一条，只读口读到什么就只是看着对，而不是错的时候会响。
+    const expectedRelation = process.env.NATION_LIVE_NEGCTL === 'relations' ? 'ALLIED' : 'HOSTILE'
+    check('只读口读到的关系值 = 写口刚设的', readMine?.relation, expectedRelation)
+    check('只读口与写口列出的国家数相同（两份表同形）', readRows.length, relations.length)
     // 负例：不能与自己建交。**判的是业务码 1001（PARAM_INVALID）而不是 HTTP 400** ——
     // prod 一律回 200 信封，业务码才是"服务端拒了"的判据（第一版按 400 判，红了但功能是好的）
     const self = await call('POST', '/nation/diplomacy', {

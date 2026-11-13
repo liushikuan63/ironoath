@@ -349,6 +349,19 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
   判据必须量「JS 堆 + backingStorageSize」，并加一条「负控确实挂住 ≥16MB」的自检防假绿。
 - 未做：不是微信开发者工具里跑 10 分钟（无头 Chromium 等价物）；池化开关 A/B 对照未做；真机内存曲线未采。
 
+### 0.38 当前接续（2026-11-13 · #2527）
+
+- 目标：`goal-8856426d-d416-43fb-ba85-abe72774b7be`；本会话已推 #2504–#2526 共 21 格。
+- 本格（#2527）：`GET /nation/relations` 只读口一直存在，但**没有任何探针碰过它** —— 
+  `tools/verify-nation-live.mjs` 只断写口回执里的 `allRelations`，注释里还长期写着「服务端没有只读端点」
+  （#2523 修那批注释时点出过这件事）。这属于「代码在、判据没接上」那一族。
+- 补的四条：只读口 `code 0`、列出本轮那个对手国、关系值与写口刚设的一致、**两份表列出的国家数相同**
+  （只断"端点存在"会漏掉"两份表用了不同过滤口径"）。另加自检口 `NATION_LIVE_NEGCTL=relations`，
+  把期望值故意换成 `ALLIED`，该段必须红。
+- 现跑：绿 `75 通过 / 0 失败`；负控 `74 通过 / 1 失败`（正文 `期望 ALLIED，实际 HOSTILE`）。
+- 覆盖面：`check-probe-endpoint-coverage.sh` 上限同批 31 → 30（无驱动 30 条，诚实值）。
+- 未做：没断亡国国家是否被剔除（需造亡国场景）；探针仍要提速档后端。
+
 ---
 
 ## 一、任务装配与完成定义
@@ -8827,3 +8840,4 @@ TEST_EXIT=0
 | #2524 探针脚本语法门 | `450b1593` | `[tool-syntax] ✓ 189 个脚本通过 node --check`；四臂 `0/1/1/1`；harness 新臂 `0/0/1`、`合格 47 条 / 不合格 0 条`；`check.sh` 全绿（57 道，harness 58 = 44 + 14） | `D:/Java/maven/logs/harness-2524.log`、`D:/Java/maven/logs/check-sh-2524.log` | 只看语法不看行为；第三方测试桩不覆盖；未跑全套 `mvn test` |
 | #2525 弱网（接口级慢相）探针 | `6aad226e` | 绿 `6 通过 / 0 失败`；负控只红 B、C 记 SKIP；截屏横幅「网络不稳定，正在重试（第 1 次）」 | `D:/Java/maven/logs/weak-2525h.log`、`weak-negctl3-2525.log`、`client/build/weak-network-verify/notice.png` | 真机/真 3G 未量；文案白名单；未跑全套 `mvn test` |
 | #2526 驻留内存（强回收后）探针 | `af1ac69b` | 绿 `5 通过 / 0 失败`（稳态 25.3MB，6 轮 +0.6MB、单轮最大 0.3MB）；负控 `4 通过 / 2 失败`（+40.7MB / 8.3MB） | `D:/Java/maven/logs/mem-2526d.log`、`mem-negctl3-2526.log`、`client/build/memory-residency-verify/memory-residency.json` | 非微信开发者工具 10 分钟；池化开关 A/B 未做；真机未采 |
+| #2527 只读外交表的探针断言 | `SHA_PLACEHOLDER` | 绿 `75 通过 / 0 失败`；负控 `74/1`（`期望 ALLIED，实际 HOSTILE`）；覆盖面 `无驱动 30 条（上限 30）` | `D:/Java/maven/logs/nation-live-2527-green.log`、`nation-live-2527-negctl.log` | 未断亡国剔除（需造亡国场景）；需提速档后端；未跑全套 `mvn test` |
