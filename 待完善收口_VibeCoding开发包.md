@@ -6,7 +6,7 @@
 > 与 B17~B25 批次文件的七段结构一致；不新增 Bxx 编号，也不重写任何已交付系统。
 > **口径**：原始任务卡的「现状」来自 2026-09-28；后增任务卡与 §四记录各自标注取证日期，不能统一当成当前读数。
 > 引用前**先重跑那一条命令** —— 本仓最贵的教训是「文档说 A、代码是 B」。
-> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 98 份 / GameApi 155 个发送口
+> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 99 份 / GameApi 155 个发送口
 
 ---
 
@@ -436,6 +436,14 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 读数：绿 **16 通过 / 0 失败**；负控 `MAIL_READ_NEGCTL=skip-read` ⇒ **11 通过 / 2 失败**（红在「再查列表 read=true」「未读 0」）；门现跑 `147 绑定 / 151 探针 / 133 有驱动 / 14 无驱动（上限 14）`。
 - 造信走 `/ops/mail/send`（唯一「凭空给玩家东西」的运维入口，须 `X-Ops-Token`）；`/mail/list` 的 `unreadCount` 由服务端算，探针只读它、不自己数。
 - 未做：`/mail/claimAll`（需带附件与溢出路径）、`expireAt` 与 `MAIL_RETENTION_DAYS` 的关系未断言；本格未跑全套 `mvn test`。
+### 0.48 当前接续（2026-11-13 · #2537）
+
+- 本格：把 `POST /rally/squad`（小队集结）从「没有任何探针碰过」变成一条 19 条判据的真链路。它是三项集结里唯一「发起人必须自带兵力」的那条（`SquadRallyReq#troops` 必填），也是权限位 `perm_squad_start_rally`（队长/副队可、普通成员不可）唯一真正生效的入口。
+- 新增 `tools/verify-rally-squad-runtime.mjs`（纯 HTTP，三个真号，**必须跑在真仗档后端**）：真练兵（不是内存夹具）→ 承诺兵力发起 → 回执 `scope=SQUAD`／`groupId=小队 id`／`totalTroops=承诺数`／`maxMembers ≤ 小队人数` → 承诺即锁定（`/army/list` 可用数真的少了）→ 普通成员发起被 `10040` 拒 → 不在小队里的人 `10000` → 别人的集结不能取消、发起人能取消且兵力原路退回。
+- 现跑：绿 `=== 小队集结：19 通过 / 0 失败 ===`（`D:/Java/maven/logs/rally-squad-2537g.log`）；负控 `RALLY_SQUAD_NEGCTL=no-troops` ⇒ `10 通过 / 9 失败`（`rally-squad-negctl-2537.log`，红在发起与随后的回执/锁定/取消各条）。
+- **前提链（三步，缺一步就造不出承诺兵力）**：① 主城等级（小队解锁，plain 档回 `10004 SQUAD_LOCKED`）；② 兵营（新号 0 级 ⇒ 练兵回「兵种尚未解锁」，要先 `/city/upgrade configId=barracks` 再等建完）；③ 上阵武将（带兵上限来自统帅值，0 兵位时练兵回「超出带兵上限：当前 0，上限 0」，要用 `/ops/mail/send` 发 HERO 邮件 → `/mail/claimAll` → `/hero/lineup`）。另外 **T1 训练是 60 秒一只**，所以这一份必须跑在 `IRONOATH_DEV_TIME_SPEED=100` 的真仗档上，否则训练 10 只就是 10 分钟。
+- 覆盖面：`check-probe-endpoint-coverage.sh` 默认上限 6 → **5**；现跑 `绑定 147 / 探针 155 / 有驱动 142 / 无驱动 5（上限 5）`。
+- **未做**：不覆盖「集结出发后合并兵力」那一相（属 `verify-rally-runtime` 与 B10 的既有验收）；副队长（OFFICER）发起这一档没造（小队目前只有队长/成员两档可用）；真机未验。
 ### 0.47 当前接续（2026-11-13 · #2536）
 
 - 本格：把 `POST /social/helpAll` 的**整条链路**走通并钉住语义。动机是它在覆盖面门上长期「没有任何探针碰过」；而它的前置可以真造出来 —— 联盟成员发一次真的会跑一会儿的升级（`CityAppService` 只在 `finishAt > now` 时登记求助），另一个成员就能在 `/social/helpRequests` 看到并一键帮助。
@@ -8944,3 +8952,4 @@ TEST_EXIT=0
 | #2534 举报留痕进探针（`/social/report`） | f8960640 | 绿 7/0；负控 skip-report 3/1；门 147/152/134/13=13、GATE=0 | `D:/Java/maven/logs/social-report-2534b.log`、`social-report-negctl-2534.log` | 限频上限分支（`SOCIAL_REPORT_DUPLICATE`）未断言；`detail` 内容安全送检未单独验；未跑全套 `mvn test` |
 | #2535 写接口拒绝面 | `fe43b42e` | 绿 `33 通过 / 0 失败`；负控 `expect-zero` ⇒ `32/1`；门 `有驱动 140 / 无驱动 7（上限 7）` | `D:/Java/maven/logs/write-guards-2535b.log`、`write-guards-negctl-2535.log` | 不证明 happy path；`/hero/levelUp`、`/hero/starUp`、`/pay/card`、`/pay/card/claim`、`/social/helpAll`、`/rally/squad`、`/world/exile` 仍无驱动 |
 | #2536 一键帮助 | `23ab71c8` | 绿 `23 通过 / 0 失败`；负控 `skip-help` ⇒ `19/4`；覆盖面 7 → 6；`GATE=0` | `D:/Java/maven/logs/social-help-2536d.log`、`social-help-negctl-2536.log` | 只覆盖联盟互助；小队互助与余 6 条无驱动路径未验 |
+| #2537 小队集结 | `SHA_PLACEHOLDER` | 绿 `19 通过 / 0 失败`；负控 `no-troops` ⇒ `10/9`；覆盖面 6 → 5；`GATE=0` | `D:/Java/maven/logs/rally-squad-2537g.log`、`rally-squad-negctl-2537.log` | 出发合并那一相未覆盖；副队发起档未造；真机未验 |
