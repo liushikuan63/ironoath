@@ -6,7 +6,7 @@
 > 与 B17~B25 批次文件的七段结构一致；不新增 Bxx 编号，也不重写任何已交付系统。
 > **口径**：原始任务卡的「现状」来自 2026-09-28；后增任务卡与 §四记录各自标注取证日期，不能统一当成当前读数。
 > 引用前**先重跑那一条命令** —— 本仓最贵的教训是「文档说 A、代码是 B」。
-> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 95 份 / GameApi 155 个发送口
+> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 96 份 / GameApi 155 个发送口
 
 ---
 
@@ -436,6 +436,12 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 读数：绿 **16 通过 / 0 失败**；负控 `MAIL_READ_NEGCTL=skip-read` ⇒ **11 通过 / 2 失败**（红在「再查列表 read=true」「未读 0」）；门现跑 `147 绑定 / 151 探针 / 133 有驱动 / 14 无驱动（上限 14）`。
 - 造信走 `/ops/mail/send`（唯一「凭空给玩家东西」的运维入口，须 `X-Ops-Token`）；`/mail/list` 的 `unreadCount` 由服务端算，探针只读它、不自己数。
 - 未做：`/mail/claimAll`（需带附件与溢出路径）、`expireAt` 与 `MAIL_RETENTION_DAYS` 的关系未断言；本格未跑全套 `mvn test`。
+### 0.45 当前接续（2026-11-13 · #2534）
+
+- 本格：`POST /social/report` 补进探针（`tools/verify-social-report-runtime.mjs`），覆盖面门默认上限 14 → 13。
+- 读数：绿 **7 通过 / 0 失败**；负控 `SOCIAL_REPORT_NEGCTL=skip-report` ⇒ **3 通过 / 1 失败**（红在「回执带留痕 id」）；门现跑 `147 绑定 / 152 探针 / 134 有驱动 / 13 无驱动（上限 13）`。
+- 口径：`ReportReason` 只有 `ABUSE / SPAM / CHEAT_SUSPECT / OTHER` 四个取值（第一版传 `HARASSMENT` 被 Jackson 判 `1001 参数不合法`）；举报只留痕不处置（B22 §五 裁决②），限频按「举报人 × 目标 × 24h」记账。
+- 未做：把 `SOCIAL_REPORT_DAILY_LIMIT` 刷到上限后的 `SOCIAL_REPORT_DUPLICATE` 分支未断言；`detail` 过内容安全送检那一支未单独验；未跑全套 `mvn test`。
 ## 一、任务装配与完成定义
 
 ### 1.1 原始优先级与推荐顺序（2026-09-28 基线）
@@ -8919,3 +8925,4 @@ TEST_EXIT=0
 | #2531 转让队长后新队长读不了摘要（契约枚举缺 SQUAD_LEADER_CHANGED） | 契约补取值 + `npm run gen`；`SocialEndpointTest` 补新队长读摘要断言；新增第 58 道门 `scripts/check-social-event-literals.sh` + `scripts/lib/social-event-literals.js`；新探针 `tools/verify-squad-management-runtime.mjs` | 单测 1/0（负控 1/1，正文同线上）；探针绿 17/0、负控 11/5；新门绿「12 个取值全在枚举（19 个）」，四臂负控全退 1；`check.sh` 58 道全绿 | 无截图（纯服务端契约与序列化）；探针日志 `/d/Java/maven/logs/squad-2531-green2.log`、`squad-2531-negctl2.log` | 真机与视觉未验；其他摘要是否也序列化未读事件未逐个复核；`/squad` 其余写口边界未单列 |
 | #2532 联盟成员管理面进探针（`/alliance/kick`、`/alliance/disband`） | caf34f56 | 绿 16/0；负控 skip-disband 13/2；门 147/150/132/15=15、GATE=0 | `D:/Java/maven/logs/alliance-mgmt-2532b.log`、`alliance-mgmt-negctl-2532.log` | 审核拒绝分支、联盟科技/捐赠面未进探针；未跑全套 `mvn test` |
 | #2533 邮件已读进探针（`/mail/read`） | ba599541 | 绿 16/0；负控 skip-read 11/2；门 147/151/133/14=14、GATE=0 | `D:/Java/maven/logs/mail-read-2533.log`、`mail-read-negctl-2533.log` | `/mail/claimAll` 未进探针；`expireAt` 与留存天数关系未断言；未跑全套 `mvn test` |
+| #2534 举报留痕进探针（`/social/report`） | SHA_PLACEHOLDER | 绿 7/0；负控 skip-report 3/1；门 147/152/134/13=13、GATE=0 | `D:/Java/maven/logs/social-report-2534b.log`、`social-report-negctl-2534.log` | 限频上限分支（`SOCIAL_REPORT_DUPLICATE`）未断言；`detail` 内容安全送检未单独验；未跑全套 `mvn test` |
