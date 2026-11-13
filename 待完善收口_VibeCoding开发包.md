@@ -362,6 +362,27 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 覆盖面：`check-probe-endpoint-coverage.sh` 上限同批 31 → 30（无驱动 30 条，诚实值）。
 - 未做：没断亡国国家是否被剔除（需造亡国场景）；探针仍要提速档后端。
 
+### 0.39 当前接续（2026-11-13 · #2528）
+
+- 目标：`goal-8856426d-d416-43fb-ba85-abe72774b7be`；本会话已推 #2504–#2527 共 22 格。
+- 本格（#2528）不是新判据，是**收口前的整线复跑**：前面 22 格几乎都在改 `tools/`、`scripts/`、文档，
+  但每格只跑自己那几份探针 —— 谁也没在同一时刻证明「整套仍然成立」。
+- 全套服务端测试：`mvn -o -B -f server/pom.xml test`（隔离 M2 `D:/Java/maven/m2-ironoath-a-20261113`，
+  Mongo URI 不带库名）⇒ `SUITE_EXIT=0`、`BUILD SUCCESS`。分模块 62 / 168 / 726 / 65 / **2733** / 18 = **3772 条，0 失败 0 错误 0 跳过**
+  （game-web 2733 比 #2504 那轮 2729 多 4 条 = 本轮新增的 payload 守卫用例）。日志 `D:/Java/maven/logs/full-test-2528.log`。
+- 运行时探针：清单 `D:/tmp/probes-2528.txt` 25 份，`bash scripts/run-batch-dual-backend.sh` ⇒ `BATCH_EXIT=0`，
+  汇总行 `[runtime-probes] 尝试=25 已确认通过=25 失败=0 未验证=0（TIMEOUT=0 PREREQ=0 NO-RUN=0 SKIP=0 无效状态=0）`，
+  三台后端收尾后 8199 / 8198 / 8197 均不再监听。逐份退出码账 `/d/tmp/runtime-probes-exitcodes.txt`（25 行全 `0`），
+  日志 `D:/Java/maven/logs/batch-2528.log`。
+- 抽样断言数（各探针自己的尾行）：`rank` 58 / `march` 138 / `social-create` 116 / `nation-live` 75 / `nation-policy-ui` 70 /
+  `season` 17 / `player-baseline` 10 / `hero-empty` 7 / `memory-residency` 5 / `dialog-style` 425。
+- 起批前先 `Stop-Process` 掉自己早先留在 8299 的提速档后端（否则脚本以「已有 game-web JVM 持有构建产物」退 2，
+  这是 #2514 记过的第 2 类挡住形态）；jar 仍是 2026-11-10 06:49 那份，本轮没有服务端主源码改动，`verify-runtime.sh` 的
+  「jar 不旧于源码」前置仍成立 —— 这点是**沿用既有构建**，不是本轮重新打包。
+- 未做：真机 / 真 3G / 真机内存曲线仍未量；`verify-war-real-battle` 的 2 条 NO-RUN（真实进 SIEGE 后 90 分钟结算、
+  结算后 WAR 榜个人击杀）与 `world-target` / `repeat-march` 的自有夹具前提仍缺，本轮一样没跑它们；
+  本轮未跑 `scripts/build.sh` 全量构建与 `build-webmobile.sh`（产物沿用 2026-11-13 01:27:55 那份）。
+
 ---
 
 ## 一、任务装配与完成定义
@@ -8841,3 +8862,4 @@ TEST_EXIT=0
 | #2525 弱网（接口级慢相）探针 | `6aad226e` | 绿 `6 通过 / 0 失败`；负控只红 B、C 记 SKIP；截屏横幅「网络不稳定，正在重试（第 1 次）」 | `D:/Java/maven/logs/weak-2525h.log`、`weak-negctl3-2525.log`、`client/build/weak-network-verify/notice.png` | 真机/真 3G 未量；文案白名单；未跑全套 `mvn test` |
 | #2526 驻留内存（强回收后）探针 | `af1ac69b` | 绿 `5 通过 / 0 失败`（稳态 25.3MB，6 轮 +0.6MB、单轮最大 0.3MB）；负控 `4 通过 / 2 失败`（+40.7MB / 8.3MB） | `D:/Java/maven/logs/mem-2526d.log`、`mem-negctl3-2526.log`、`client/build/memory-residency-verify/memory-residency.json` | 非微信开发者工具 10 分钟；池化开关 A/B 未做；真机未采 |
 | #2527 只读外交表的探针断言 | `093d9fa1` | 绿 `75 通过 / 0 失败`；负控 `74/1`（`期望 ALLIED，实际 HOSTILE`）；覆盖面 `无驱动 30 条（上限 30）` | `D:/Java/maven/logs/nation-live-2527-green.log`、`nation-live-2527-negctl.log` | 未断亡国剔除（需造亡国场景）；需提速档后端；未跑全套 `mvn test` |
+| #2528 收口前整线复跑 | `SHA_PLACEHOLDER` | 全套服务端 **3772 条 0 失败**（`SUITE_EXIT=0`）；25 份运行时探针 **25/25 通过**（`BATCH_EXIT=0`，TIMEOUT/PREREQ/NO-RUN 全 0） | `D:/Java/maven/logs/full-test-2528.log`、`batch-2528.log`、`/d/tmp/runtime-probes-exitcodes.txt` | 真机/真 3G 未量；`war-real-battle` 2 条 NO-RUN 与 `world-target`/`repeat-march` 夹具前提未解决；未重跑 `build.sh`/`build-webmobile.sh` |
