@@ -255,6 +255,14 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
   且必须带当前 `CODEX_THREAD_ID`，否则打印 `Missing current owned memory fixture receipt; no network action` 并退 2。
   这两条不是覆盖缺口被掩盖 —— 夹具前提在本轮之前就一直是这样，批跑记账里也如实记 `PREREQ`/`NO-RUN`。
 - **未做**：截图的视觉复核没做（截图只作证据留存）；两份夹具没建；本轮没跑全套 `mvn test`（改动只碰 tools 与台账）。
+### 0.29 当前接续（2026-11-13 · #2518）
+
+- 本轮新格：把上线清单 §二 8 里「未量 115 条仍是写接口与要先有状态才发得出的读接口」这句笼统说法拆成两组现数。
+- 静态口径：`clientBoundPaths()` 147 条，**114 条至少被一份探针引用、33 条全仓没有任何探针驱动**。
+- 运行时口径（配 `perf-2518.log`）：**34 条量到 / 115 条未量，其中 31 条是无驱动的**；84 条未量其实有探针，只是这次没走到。
+- 两条「无驱动却被真实客户端打到」：`/city/harvest-learning`、`/player/power` —— 客户端在预取，探针清单漏了它们。
+- 量具：`tools/report-endpoint-probe-coverage.mjs`（永远退 0；`PERF_LOG` 可选）。⛔ 坑：perf JSON 里 `coverage.measuredPaths` 是**条数**不是数组，按数组 `new Set()` 会抛 `number 34 is not iterable`。
+- 未做：那 33 条仍没有探针；本格只做量化与拆分，不新增驱动。
 ---
 
 ## 一、任务装配与完成定义
@@ -8724,3 +8732,4 @@ TEST_EXIT=0
 | #2514 本会话重建的 `client/build/web-mobile`（1:27:55）上只有 perf 与 rally 两份量具跑过，「新产物有没有把核心链路跑挂」没有读数 | 无代码提交，只落证据 | `run-batch-dual-backend.sh` + 8 份探针 ⇒ 尝试=8 通过=8 失败=0 未验证=0（TIMEOUT/PREREQ/NO-RUN/SKIP 全 0）；逐份断言 rank 58 / social-permission 69 / social-create 116 / march 138 / stage-summary 45 / hero-empty 7 / city-zoom 与 shop 全绿，约 433 条 0 失败；三台后端收尾端口复验均不监听 | `/d/tmp/probe753/batch-dual.log`、`/d/tmp/runtime-probes-exitcodes.txt`、`/d/tmp/probe-verify-*-runtime.mjs.log` | stage-summary 的「完整挑战路径 A 支八条」因 dev 号无武将未执行；nation 两份（需提速档）与真仗档那份未纳入本批；city-zoom/shop 的 SHOT 未做视觉复核；本格无待修项故不写 `收口清单.md` |
 | #2516 | 探针判据与实现漂移：卡片材质改由 `PanelSurface` 承担（本格无代码提交，只改量具） | 同一产物：修前 66/4 四相全红 `frameStyle=missing`；修后 70/0 且四相都报 `card-surface:PanelSurface`（`panel-iron-v1`） | `D:\Java\maven\logs\policy-2516d.log`、`tmp/nation-policy/layout-normal.png`（1440×1350，卡片暗铁框可见）、`D:\Java\maven\logs\dialogstyle-plain-2516.log`（425/0）、`/d/tmp/probe753/batch-dual.log`（5 份：4 通过 1 PREREQ） | 未在提速档后端验 dialog-style；`verify-war-real-battle` 的 2 NO-RUN 未解（边界见 #2499/#2500）；本轮未跑全套 `mvn test` |
 | #2517 | 第二批运行时基线：10 份探针（ws · panel-paging · guide-buttons · offline · season · battlepass · minor-curfew · rally 八份全绿，world-target 与 repeat-march 卡各自的夹具前提） | 8 份退出码 0（ws 11 条、guide-buttons 8 条、offline 11 条、season 17 条、battlepass 22 条、rally 14 条、minor-curfew 3 相、panel-paging 6 屏全绿）；批跑汇总 `尝试=10 已确认通过=8 失败=0 未验证=2（PREREQ=1 NO-RUN=1）` | `/d/tmp/probe-verify-*-runtime.mjs.log`、`D:\\Java\\maven\\logs\\batch-2517.log`、`D:/tmp/paging-probe`、`tmp/minor-curfew/*.png` | 未做截图视觉复核；`world-target` 要 `WORLD_TARGET_BACKEND/DEVICE/OUT` 与自有隔离账号、`repeat-march` 要 `REPEAT_OWNER` 指向自持 memory 夹具（否则 `Missing current owned memory fixture receipt; no network action` 退 2），两处夹具本轮都没建；未跑全套 `mvn test` |
+| #2518 未量路径归因 | 无代码提交（只加审计工具与台账） | `[probe-coverage] 绑定=147 有探针驱动=114 无探针驱动=33 本次量到=34 未量=115（其中无驱动=31）` | `D:/tmp/cov-2518-final.txt`、`D:/Java/maven/logs/perf-2518.log` | 33 条仍无探针驱动；未给「允许无驱动」的豁免清单 |
