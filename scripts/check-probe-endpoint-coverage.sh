@@ -9,8 +9,9 @@
 # 判据（四层，谓词失效一律判红而不是判绿）：
 #   1. 绑定路径清单读得到，且条数不低于下限（默认 100）——真源坏了不许当"没东西要测"；
 #   2. 探针目录里有 .mjs，且份数不低于下限（默认 50）；
-#   3. 无驱动条数 <= 上限（默认 30：2026-11-13 #2520 补齐 /player/power 与 /city/harvest-learning（33→31）、
-#      #2521 让 verify-gacha-history.mjs 在源码里点出 /gacha/history 并断言请求真的发生（31→30）；
+#   3. 无驱动条数 <= 上限（默认 31：2026-11-13 #2520 补齐 /player/power 与 /city/harvest-learning（33→31）、
+#      #2521 让 verify-gacha-history.mjs 在源码里点出 /gacha/history 并断言请求真的发生（31→30）、
+#      #2522 把「注释也算驱动」这个假阳性修掉后**诚实地回到 31**（/nation/relations 只因一句注释被算成有驱动）；
 #      可被 PROBE_COVERAGE_MAX_UNDRIVEN 覆盖）；
 #   4. 超上限时逐条打印新增的无驱动路径（要修的那一份就是从这几行里挑）。
 #
@@ -28,7 +29,7 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-MAX_UNDRIVEN="${PROBE_COVERAGE_MAX_UNDRIVEN:-30}"
+MAX_UNDRIVEN="${PROBE_COVERAGE_MAX_UNDRIVEN:-31}"
 MIN_PATHS="${PROBE_COVERAGE_MIN_PATHS:-100}"
 MIN_PROBES="${PROBE_COVERAGE_MIN_PROBES:-50}"
 

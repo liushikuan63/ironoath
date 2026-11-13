@@ -44,7 +44,7 @@ CO_D=/d/tmp/probe753/gates-clientorphan
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep /d/tmp/probe753/gates-wsbin "$PEC_D" "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$NC_D" "$DN_D" "$SC_D" "$PC_D" "$LR_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep /d/tmp/probe753/gates-wsbin "$PEC_D" "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$NC_D" "$DN_D" "$SC_D" "$PC_D" "$LR_D" "$PEC2_D"
 }
 trap cleanup EXIT
 
@@ -391,7 +391,10 @@ mk_probe_endpoint_coverage() {
   #    ⇒ **零污染**：不碰真清单、不碰 tools/。
   # ⚠️ 违规态只比上限多 1 条（2 条路径里 1 条没人驱动、上限 0）：夹具一多，报错正文会把真正的红点淹掉。
   rm -rf "$PEC_D"; mkdir -p "$PEC_D/tools"
-  printf '// 只驱动 /stage/list\n' > "$PEC_D/tools/zzz-driver.mjs"
+  # ⚠️ 这里的「驱动」必须是**代码**里的字面量：`#2522` 之后注释不再算驱动
+  #    （夹具原来只写一行注释 `// 只驱动 /stage/list`，剥注释后它自己就变成"没人驱动"，
+  #     基线当场退 1 —— 这条夹具也顺带证明了剥注释真的生效）。
+  printf 'const r = await call("/stage/list")\n' > "$PEC_D/tools/zzz-driver.mjs"
   printf '["/stage/list","/army/list"]\n' > "$PEC_D/paths-two.json"
   printf '["/stage/list"]\n' > "$PEC_D/paths-one.json"
   if [ "$1" = "1" ]; then PEC_JSON="$PEC_D/paths-two.json"; else PEC_JSON="$PEC_D/paths-one.json"; fi
@@ -401,6 +404,31 @@ mk_probe_endpoint_coverage() {
 run_probe_endpoint_coverage() { bash scripts/check-probe-endpoint-coverage.sh; }
 three_arg check-probe-endpoint-coverage.sh \
           mk_probe_endpoint_coverage run_probe_endpoint_coverage '客户端绑定的路径不许出现没人驱动的（走环境变量口，零污染）'
+
+# check-probe-endpoint-coverage 的第二条夹具（#2522）：**只在注释里提到路径**的探针不算驱动。
+# 一个夹具不够用：上面那条测的是「无驱动超上限」，测不到「注释被当成驱动」这条误判 ——
+# 而 #2522 现跑抓到的正是后者（`/nation/relations` 只因一句注释就被算成有驱动）。
+# 判据设计：夹具里一条路径只在注释中出现、另有一条在代码里真出现。
+#   正常态（$1=0）上限 1 ⇒ 无驱动恰好 1 条 ⇒ 绿；
+#   违规态（$1=1）上限 0 ⇒ 正确实现下无驱动 1 > 0 ⇒ 红；
+#   若「注释也算驱动」这个 bug 回来了，无驱动会变 0 ⇒ 门绿 ⇒ 这条夹具当场报「造了违规也不红」。
+PEC2_D=/d/tmp/probe753/gates-probecov-comments
+mk_probe_coverage_comment_only() {
+  rm -rf "$PEC2_D"; mkdir -p "$PEC2_D/tools"
+  printf '// 只解释背景：`GET /zzz/comment-only` 将来要验，本文件从不调用它\nconsole.log(1)\n' > "$PEC2_D/tools/zzz-comment-only.mjs"
+  printf 'const r = await call("/zzz/real-code")\n' > "$PEC2_D/tools/zzz-real-code.mjs"
+  printf '["/zzz/comment-only","/zzz/real-code"]\n' > "$PEC2_D/paths.json"
+  export PROBE_COVERAGE_PATHS_JSON="$PEC2_D/paths.json" PROBE_COVERAGE_TOOLS_DIR="$PEC2_D/tools" \
+         PROBE_COVERAGE_MIN_PATHS=1 PROBE_COVERAGE_MIN_PROBES=1
+  if [ "$1" = "1" ]; then
+    export PROBE_COVERAGE_MAX_UNDRIVEN=0
+  else
+    export PROBE_COVERAGE_MAX_UNDRIVEN=1
+  fi
+}
+run_probe_coverage_comment_only() { bash scripts/check-probe-endpoint-coverage.sh; }
+three_arg check-probe-endpoint-coverage.sh \
+          mk_probe_coverage_comment_only run_probe_coverage_comment_only '只在注释里提到的路径不算有探针驱动（#2522）'
 
 mk_pkg_path_predicates() { # check-package-path-predicates：量具里写死的包路径谓词必须命中真实文件/目录
   # ⚠️ 走**环境变量口**（PKGPATH_SCAN_DIRS / PKGPATH_SERVER_DIR，2026-10-06 新加）⇒ **零污染**：

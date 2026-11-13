@@ -294,6 +294,15 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 门头注释写进约定：**用 UI 点击驱动接口的探针，也必须在源码里点到那条路径并把请求捞下来断言一次** ——
   否则要么量具看不见（被算成没人驱动），要么本地拼出来的假空态也能绿。
 - 未做：另 30 条无驱动里绝大多数是写接口（要真前置状态），本轮没碰；抽卡记录的「真抽一枪再看记录」两段（`GH_DRAW=1`）本轮没跑。
+### 0.33 当前接续（2026-11-13 · #2522）
+
+- 目标：`goal-8856426d-d416-43fb-ba85-abe72774b7be`（「推进文档中所有可继续推进的内容」），本会话已推 #2504–#2521 共 16 格。
+- 本格（#2522）：覆盖面判据的**假阳性**——`/nation/relations` 只因 `tools/verify-nation-live.mjs:724` 一句注释被算成「有探针驱动」，实际那份探针读的是 `/nation/diplomacy` 的 `allRelations`。
+- 修法：`scripts/lib/endpoint-probe-coverage.js` 新增 `stripComments`（去块注释与行注释、保留 `https://`），`collectProbes` 只认剥注释后的文本；现数由 `driven 117 / undriven 30` 修正为**诚实值** `116 / 31`，门默认上限 30 → **31**。
+- 反证三条：夹具（注释提到两条假路径 + 代码里一条真路径）通过；harness 新增「只写注释」臂（正常态上限 1 绿、违规态上限 0 红）；**既有夹具自证**——它原来只写一行注释，剥注释后基线当场退 1，改成 `call("/stage/list")` 才恢复。
+- 现跑：`[probe-endpoint-coverage] 绑定路径 147 条；探针 144 份；有驱动 116 条；无驱动 31 条（上限 31）`；`check-gates-can-fail.sh` `合格 45 条 / 不合格 0 条`。
+- 未做：无驱动仍是 31 条，绝大多数是写接口（要真前置状态才能打），本格只保证「注释不能冒充驱动」；`/nation/relations` 仍没有探针真打过。
+
 ---
 
 ## 一、任务装配与完成定义
@@ -8767,3 +8776,4 @@ TEST_EXIT=0
 | #2519 无驱动路径不许变多 | `0383b1f0` | `绑定路径 147；探针 143；有驱动 114；无驱动 33（上限 33）`；四臂负控全退 1 | `D:/tmp/pc-negctl-a.log`、`check-harness-coverage` 56 = 42 + 14 | 33 条本身仍未补探针 |
 | #2520 补两条预取读接口的探针 | `提交信息含 #2520 的那一笔` | `=== 基线读接口：10 通过 / 0 失败 ===`；负控 `BASELINE_NEGCTL=bad-power` ⇒ 6 通过 / 4 失败（EXIT=1）；无驱动 33→31 | `D:/Java/maven/logs/baseline-probe-2520.log`、`D:/Java/maven/logs/baseline-negctl-2520.log`、`client/build/player-baseline-verify/city-panel.png` | 其余 31 条仍无探针；本条未进批跑清单 |
 | #2521 UI 驱动的探针也要有网络层证据 | `提交信息含 #2521 的那一笔` | `/gacha/history 共 1 次 code 0`（GH_EXIT=0）；负控 `GH_NEGCTL=no-history-request` ⇒ 失败 6 条 EXIT=1；无驱动 31→30、上限 30 | `D:/Java/maven/logs/gacha-hist-2521.log`、`D:/Java/maven/logs/gacha-hist-negctl-2521.log` | 另 30 条多为写接口；`GH_DRAW=1` 第二段未跑 |
+| #2522 探针覆盖面判据的注释假阳性 | `de23d9d5` | `[probe-endpoint-coverage] 有驱动 116 / 无驱动 31（上限 31）`；夹具 `D:/tmp/fixture-2522.js` 通过；harness 新臂 0/0/1，既有臂「注释版」基线退 1 后改代码字面量恢复 | `D:/Java/maven/logs/harness-2522b.log`（`合格 45 条 / 不合格 0 条`） | 无驱动 31 条多为写接口；`/nation/relations` 仍无探针真打过；本轮未跑全套 `mvn test` |
