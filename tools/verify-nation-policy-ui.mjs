@@ -543,6 +543,7 @@ for (const [name, viewport, logicalHeight] of [['normal', { width: 1440, height:
   await page.setViewportSize(viewport)
   await page.waitForTimeout(500)
   const geometry = await page.evaluate(readDialogGeometry, layoutSpec)
+  console.log(`  材质/${name}：${geometry.frameStyle ?? 'missing'}${geometry.frameSurface ? ` 铺满 ${geometry.frameSurface.name}（${geometry.frameSurface.spriteFrame ?? '矢量填充'}）` : ''}`)
   checkThat(`国策/${name} 同页resize采真实逻辑高度`, Math.abs((geometry.visibleSize?.height ?? 0) - logicalHeight) < 2, JSON.stringify(geometry))
   checkThat(`国策/${name} 裁剪区与固定操作不侵占导航`, !geometry.error && geometry.material && geometry.masked
     && geometry.clipInArea && geometry.frameInArea && geometry.separation && geometry.footer.every(row => row.inArea), JSON.stringify(geometry))

@@ -228,6 +228,18 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 两次都被「产物被占用」挡下，且都**不是功能红**：① 我 01:32 起的 8199 后端还活着，脚本按「保护现有进程」直接停（`端口 8199 已被占用；保护现有进程，本批停止且不尝试清理`）；② 我 06:41 起的 8299 那台不在脚本核对的端口集合里，但占着 `server/game-web/target/game-web.jar`，脚本报「已有 game-web JVM 持有构建产物」。两台都先核对命令行（自己的 jar、dev profile、令牌 `art-verify-local`）才停，不碰别人的进程。
 - 诚实缺口：`verify-stage-summary` 自报「完整挑战路径那一支（A 支八条）**未执行**：dev 号没有武将，补不出主将」；本清单没带需要提速档的 nation 两份、也没跑真仗档那份（入口支持 `BOOST_BACKEND` / `WAR_BACKEND` 分流，本轮没选）；city-zoom / shop 的 SHOT 截图没有做视觉复核，这里只记探针自报路径。
 - **这一格不往 `收口清单.md` 加行**：待修台账只增不删，没有任何待修项却塞一条记录会污染它；证据只落 §四 与本节。
+### 0.28 当前接续（2026-11-13 · #2516）
+
+- **本格修的是量具，不是产品**：`tools/lib/dialog-geometry.mjs` 里「卡片有没有材质」原先只认 `DialogFrameArt` 位图与
+  `DialogFrameVector` 铜金矢量；卡片背景改由 `PanelSurface` + `panel-iron-v1` 承担后，同一份产物在国策页四相全部判成无材质。
+- **判据**：卡片自己的子节点、铺满卡片（两维 ≥90%、误差 12px 内）、宿主层、active、真带位图帧或有 alpha 的矢量填充。
+  空卡片仍判红；`frameStyle` 与 `frameSurface` 把「哪来的材质」写进 JSON，通过时也打印一行。
+- **读数**：修前 66 通过 / 4 失败（四相 `frameStyle:"missing"`）→ 修后 70 通过 / 0 失败，四相都报
+  `card-surface:PanelSurface（panel-iron-v1）`；共用该库的 `verify-dialog-style-runtime` 在普通档后端 425 通过 / 0 失败。
+- **同轮批跑**（`/d/tmp/probes-2515.txt`，三台后端）：`verify-nation-live`、`verify-nation-policy-ui`、
+  `verify-nation-rally-runtime`、`verify-level-reward-runtime` 四份退出码 0；`verify-war-real-battle` 仍 PREREQ
+  （43 通过 / 0 失败 / 2 未验证：真实进 SIEGE 后 90 分钟结算、结算后 WAR 榜个人击杀，边界见 #2499/#2500）。
+- **未做**：提速档后端跑 dialog-style（前提不允许，它会找「普通新号服务器引导帧」）；两份缺口都没在本轮解掉。
 ---
 
 ## 一、任务装配与完成定义
@@ -8695,3 +8707,4 @@ TEST_EXIT=0
 | #2512 `上线检查清单.md` §四-13「主线程无同步 IO」缺 WebSocket 一侧：推送回调跑在容器 WS 线程上，心跳每 30 秒每连接一次，注入 Mongo/Redis 就让 5000 在线先在线程池上垮，且症状只会是「连不上/心跳超时」 | 本笔（本地提交，待推） | `scripts/check-layering.sh` 加第 9 条（ws 包禁 store/social/nation/world/rank/service 与 Mongo/Redis 客户端，目录缺失或 .java 少于 3 个判红）；基线 0、五臂负控 0/1/1/1/1；harness 挂 `mk_ws_blocking` 后 43 合格 0 不合格；顺带修掉 `WS_DIR="${LAYERING_WS_DIR:-server/…}"` 让 `check-package-path-predicates.sh` 判红的写法 | 日志 `D:\Java\maven\logs\harness-2512b-20261113.log`；`check-package-path-predicates.sh` 复跑退 0（19 条路径 · 1 mainClass · 1 x-java-package · 源码根 13） | 只锁直接依赖，握手校验不在内；父项仍 `[ ]`（其余业务路径一条一次 IO 未复核）；未跑全套 `mvn test` |
 | #2513 探针的「量到几条接口」没有判据：巡游整段失败或首屏并发读取被拆掉时，被试接口悄悄变少而体积/耗时/堆峰读数反而更漂亮（越退化越绿）；同一段文档还留着 21 条/128 条的旧现值与 #2508 的 34/115 打架 | 本笔（本地提交，待推） | `tools/verify-perf-runtime.mjs` 加 `MIN_COVERED`（`PERF_MIN_COVERED_PATHS`，默认 32）与绑定清单为空两条判红；JSON 增 `coverage.minCoveredPaths`、人读行打「最小 N 条」；文档那条现数改成 34/115 并注明旧值属哪一轮 | 现跑 `A_EXIT=0`、`34 条量到 / 147 条绑定`；负控 `=999` ⇒ `NEGCTL2_EXIT=1` 且正文点名「低于下限 999…覆盖面回退了」；改完重跑绿 `B_EXIT=0`；日志 `perf-floor-a-070822.log` / `perf-floor-negctl2.log` / `perf-floor-b.log` | 下限不代替动作驱动器（115 条多为写接口/需前置状态）；探针不进 CI，下限只在人跑时生效；第一次负控是 ReferenceError 假红，已在台账写明 |
 | #2514 本会话重建的 `client/build/web-mobile`（1:27:55）上只有 perf 与 rally 两份量具跑过，「新产物有没有把核心链路跑挂」没有读数 | 无代码提交，只落证据 | `run-batch-dual-backend.sh` + 8 份探针 ⇒ 尝试=8 通过=8 失败=0 未验证=0（TIMEOUT/PREREQ/NO-RUN/SKIP 全 0）；逐份断言 rank 58 / social-permission 69 / social-create 116 / march 138 / stage-summary 45 / hero-empty 7 / city-zoom 与 shop 全绿，约 433 条 0 失败；三台后端收尾端口复验均不监听 | `/d/tmp/probe753/batch-dual.log`、`/d/tmp/runtime-probes-exitcodes.txt`、`/d/tmp/probe-verify-*-runtime.mjs.log` | stage-summary 的「完整挑战路径 A 支八条」因 dev 号无武将未执行；nation 两份（需提速档）与真仗档那份未纳入本批；city-zoom/shop 的 SHOT 未做视觉复核；本格无待修项故不写 `收口清单.md` |
+| #2516 | 探针判据与实现漂移：卡片材质改由 `PanelSurface` 承担（本格无代码提交，只改量具） | 同一产物：修前 66/4 四相全红 `frameStyle=missing`；修后 70/0 且四相都报 `card-surface:PanelSurface`（`panel-iron-v1`） | `D:\Java\maven\logs\policy-2516d.log`、`tmp/nation-policy/layout-normal.png`（1440×1350，卡片暗铁框可见）、`D:\Java\maven\logs\dialogstyle-plain-2516.log`（425/0）、`/d/tmp/probe753/batch-dual.log`（5 份：4 通过 1 PREREQ） | 未在提速档后端验 dialog-style；`verify-war-real-battle` 的 2 NO-RUN 未解（边界见 #2499/#2500）；本轮未跑全套 `mvn test` |

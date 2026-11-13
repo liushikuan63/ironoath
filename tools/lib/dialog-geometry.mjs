@@ -42,6 +42,22 @@ export function readDialogGeometry(spec) {
     && stroke?.r === 184 && stroke?.g === 134 && stroke?.b === 11 && frameGraphics.lineWidth === 2
   const frameLayerVisible = frameRender?.activeInHierarchy === true && frameRender.layer === host.layer
   const bitmapFrame = frameLayerVisible && frameRender?._uiProps.uiComp === frameSprite && frameSprite?.enabled === true && !!frameSprite.spriteFrame
+  // 卡的材质也可能由「铺满卡片的子节点」承担（现在生产路径是 PanelSurface + panel-iron-v1 九宫格）。
+  // 判据不放宽成「随便哪个子节点」，要求：卡片自己的子节点、铺满卡片（两维都 ≥90%、误差 12px 内）、
+  // 在宿主层且 active，并且真的带位图帧或有 alpha 的填充 —— 空卡片仍然判红。
+  const coversCard = box => box !== null && frameBox !== null
+    && box.width >= frameBox.width * 0.9 - 12 && box.height >= frameBox.height * 0.9 - 12
+    && box.width <= frameBox.width * 1.1 + 12 && box.height <= frameBox.height * 1.1 + 12
+  const surface = (frame?.children ?? []).map(child => {
+    const box = bounds(child)
+    const sprite = child.getComponent('cc.Sprite')
+    const graphics = child.getComponent('cc.Graphics')
+    const visible = child.activeInHierarchy && child.layer === host.layer && coversCard(box)
+    const bitmap = visible && sprite !== null && sprite.enabled === true && !!sprite.spriteFrame
+    const vector = visible && graphics !== null && graphics.enabled === true && (graphics.fillColor?.a ?? 0) > 0
+    return bitmap ? { name: child.name, style: 'card-surface', spriteFrame: sprite.spriteFrame.name }
+      : vector ? { name: child.name, style: 'card-vector', spriteFrame: null } : null
+  }).filter(Boolean)[0] ?? null
   const footer = (spec.footer ?? []).map(name => {
     const node = find(host, name)
     const box = bounds(node)
@@ -84,12 +100,39 @@ export function readDialogGeometry(spec) {
         visibleFrom: Math.max(0, box.y + box.height - (clip.y + clip.height)),
         visibleTo: Math.min(box.height, box.y + box.height - clip.y), width: box.width, overflow: label.overflow })
     }
+    // 诊断用：材质判定说不清「为什么没有」时，把框节点与它的 DialogFrame* 子节点原样带出来。
+    const describe = node => node === null || node === undefined ? null : {
+      name: node.name, active: node.activeInHierarchy, layer: node.layer,
+      comps: (node.components ?? []).map(component => component.constructor?.name ?? 'unknown'),
+      uiComp: node._uiProps?.uiComp?.constructor?.name ?? null,
+      spriteFrame: node.getComponent('cc.Sprite')?.spriteFrame?.name ?? null,
+      graphicsFill: node.getComponent('cc.Graphics')?.enabled === true ? 'enabled' : 'off',
+    }
+    const frameChildren = (frame?.children ?? []).filter(child => child.name.startsWith('DialogFrame')).map(describe)
+    // 诊断用：框不在 NationCard 上时就沿宿主树找「谁带着渲染件」，只带名字/渲染件/尺寸，深度与条数都有上限。
+    const rendererOf = node => {
+      const sprite = node.getComponent('cc.Sprite')
+      const graphics = node.getComponent('cc.Graphics')
+      return { sprite: sprite?.spriteFrame?.name ?? (sprite === null ? null : '(no frame)'),
+        graphics: graphics?.enabled === true ? { fill: graphics.fillColor ? [graphics.fillColor.r, graphics.fillColor.g, graphics.fillColor.b] : null } : null }
+    }
+    const tree = (node, depth) => {
+      if (depth > 3) return null
+      const box = bounds(node)
+      return { name: node.name, active: node.activeInHierarchy, layer: node.layer,
+        renderer: rendererOf(node), box: box && { w: Math.round(box.width), h: Math.round(box.height) },
+        children: depth === 3 ? [] : node.children.map(child => tree(child, depth + 1)).filter(Boolean) }
+    }
+    const hostTree = tree(host, 0)
     return { area, clip, frameBox, frameInArea: inside(frameBox, area), clipInArea: inside(clip, area),
+      frameNode: describe(frame), frameChildren, hostTree,
       masked: !!viewport.getComponent('cc.Mask'), footer, separation, seen, bodyBoxes, bodyOverlaps,
-      material: bitmapFrame || (frameLayerVisible && vectorFrame), frameStyle: bitmapFrame ? 'A-bitmap' : frameLayerVisible && vectorFrame ? 'token-vector' : 'missing',
+      material: bitmapFrame || (frameLayerVisible && vectorFrame) || surface !== null,
+      frameStyle: bitmapFrame ? 'A-bitmap' : frameLayerVisible && vectorFrame ? 'token-vector' : surface !== null ? `${surface.style}:${surface.name}` : 'missing',
+      frameSurface: surface,
       hostLayer: host.layer, frameLayer: frameRender?.layer, frameRenderer: frameRender?._uiProps.uiComp?.constructor?.name,
       viewportCount: host.children.filter(node => node.name === (spec.viewport ?? 'DialogContent')).length,
-      frameName: bitmapFrame ? frameSprite.spriteFrame.name : null,
+      frameName: bitmapFrame ? frameSprite.spriteFrame.name : surface?.spriteFrame ?? null,
       contentHeight: transform.height, maxOffset: Math.max(0, transform.height - clip.height),
       offset: scroll.getScrollOffset().y, visibleSize: cc.view.getVisibleSize() }
   }
