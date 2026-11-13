@@ -6,7 +6,7 @@
 > 与 B17~B25 批次文件的七段结构一致；不新增 Bxx 编号，也不重写任何已交付系统。
 > **口径**：原始任务卡的「现状」来自 2026-09-28；后增任务卡与 §四记录各自标注取证日期，不能统一当成当前读数。
 > 引用前**先重跑那一条命令** —— 本仓最贵的教训是「文档说 A、代码是 B」。
-> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 92 份 / GameApi 155 个发送口
+> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 93 份 / GameApi 155 个发送口
 
 ---
 
@@ -410,6 +410,17 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 现跑：绿 `18 通过 / 0 失败`；负控 `12 通过 / 3 失败`（`期望 "PAUSED"，实际 "UPGRADING"`）。
 - 覆盖面：`check-probe-endpoint-coverage.sh` 上限同批 24 → 21（无驱动 21 条）。
 - 未做：没验「暂停不放产」这一维（要等产量结算窗口）；没验 `source=ITEM` / `GOLD` 两条加速路径的扣费。
+
+### 0.42 当前接续（2026-11-13 · #2531）
+
+- 本格起点是「把 21 条无驱动写接口里的小队管理面补上探针」（`/squad/leave` `kick` `transfer` `disband`），却在第一轮就撞到一处**真缺陷**，所以先修缺陷再加门。
+- 缺陷：`POST /squad/transfer` 推 `SQUAD_LEADER_CHANGED`，而契约 `SocialEventType` 枚举没有这个取值。字符串存得进库、既有测试只断言字符串，因此一路绿；真正爆炸在**新队长下一次读 `GET /social/summary`**：整包 1001、`data:null`（`detail` 原文 `No enum constant com.ironoath.web.dto.generated.SocialEventType.SQUAD_LEADER_CHANGED`）——看不到小队、看不到红点，而「把事件读掉」也要经过那个面板。
+- 分层判别用三条读数钉住「是序列化不是存储」：转让后队员再 `join` 回 10001（`SQUAD_ALREADY_IN`）、直接 `leave` 回 10007（`SQUAD_NOT_LEADER`）⇒ 存储层找得到他的小队；只有 `summary` 整包失败。
+- 修法：契约补取值 + `npm run gen`（生成 Java 441 / TS 26 个文件）；`SocialEndpointTest` 补「转让后新队长读摘要仍见队伍」；新增第 58 道门 `check-social-event-literals.sh`（判据四层：枚举可解且取值数达标 / 字面量数达标 / 每个字面量都在枚举里 / 谓词失效判红），接进 `check.sh` 与 harness。
+- 负控（可失败证据）：把生成枚举里的常量临时改名，同一条用例 `Tests run: 1, Failures: 1`，正文与线上一致；新门四臂（修复前契约 / 枚举下限 99 / 字面量下限 999 / 契约缺失）全退 1。
+- 新探针 `tools/verify-squad-management-runtime.mjs`：两个真号走真 HTTP，A 建队+入队 → B 队员踢人/解散被拒 → C 队长直接退出被拒 → D 转让（含「转让后原队长不能再踢人」）→ E 新队长踢原队长 → F 被踢者再退出被拒 → G 新队长解散；首跑 plain 后端回 10004 时按「前提不足」退 2，不冒充功能红。绿 `17/0`，负控 `SQUAD_MGMT_NEGCTL=skip-transfer` 红 `11/5`。
+- 覆盖面：`/squad` 这四条仍在「无驱动」清单上（`check-probe-endpoint-coverage` 只回答「有没有人碰过这条路径」），下限未动；已写进「未做」。
+- 未做：真机与视觉验收；`/social/summary` 之外还有哪些摘要会一起序列化未读事件，未逐个复核；小队其他写口的边界未单独覆盖。
 
 ---
 
@@ -8893,3 +8904,4 @@ TEST_EXIT=0
 | #2528 收口前整线复跑 | `28cf2c37` | 全套服务端 **3772 条 0 失败**（`SUITE_EXIT=0`）；25 份运行时探针 **25/25 通过**（`BATCH_EXIT=0`，TIMEOUT/PREREQ/NO-RUN 全 0） | `D:/Java/maven/logs/full-test-2528.log`、`batch-2528.log`、`/d/tmp/runtime-probes-exitcodes.txt` | 真机/真 3G 未量；`war-real-battle` 2 条 NO-RUN 与 `world-target`/`repeat-march` 夹具前提未解决；未重跑 `build.sh`/`build-webmobile.sh` |
 | #2529 社交关系六条路径进探针 | `7a774a63` | 绿 `20 通过 / 0 失败`；两个负控各 `17/2`、`EXIT=1`；覆盖面 `无驱动 24 条（上限 24）` | `D:/Java/maven/logs/social-rel-2529.log`、`social-rel-negctl-block.log`、`social-rel-negctl-follow.log` | 未验私聊拒收与频道过滤；未验关注上限撞顶文案；未跑全套 `mvn test` |
 | #2530 城内队列时钟（暂停/恢复/加速）探针 | `c069abdb` | 绿 `18 通过 / 0 失败`；负控 `12/3`（`期望 "PAUSED"，实际 "UPGRADING"`）；覆盖面 `无驱动 21 条（上限 21）` | `D:/Java/maven/logs/cityclock-2530c.log`、`cityclock-negctl2-2530.log` | 未验暂停不放产；未验 ITEM/GOLD 加速扣费；不点界面 |
+| #2531 转让队长后新队长读不了摘要（契约枚举缺 SQUAD_LEADER_CHANGED） | 契约补取值 + `npm run gen`；`SocialEndpointTest` 补新队长读摘要断言；新增第 58 道门 `scripts/check-social-event-literals.sh` + `scripts/lib/social-event-literals.js`；新探针 `tools/verify-squad-management-runtime.mjs` | 单测 1/0（负控 1/1，正文同线上）；探针绿 17/0、负控 11/5；新门绿「12 个取值全在枚举（19 个）」，四臂负控全退 1；`check.sh` 58 道全绿 | 无截图（纯服务端契约与序列化）；探针日志 `/d/Java/maven/logs/squad-2531-green2.log`、`squad-2531-negctl2.log` | 真机与视觉未验；其他摘要是否也序列化未读事件未逐个复核；`/squad` 其余写口边界未单列 |

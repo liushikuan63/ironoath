@@ -169,6 +169,10 @@ bash scripts/check-comment-endpoint-claims.sh
 # 现跑 146 个探针里绝大多数只在人工跑探针时才执行，check.sh 只跑其中几份 ——
 # 一次坏合并会让整份探针静默失效，症状是"这一份今天没结果"而不是一条红。
 bash scripts/check-tool-syntax.sh
+# #2531：服务端推的社交事件取值必须在契约 SocialEventType 枚举里。
+# 字符串存得进库、测试也只断言字符串，所以整条链一路绿；爆炸推迟到序列化那一刻，
+# 表现是新队长读 /social/summary 整包 1001、data 为 null（看不到小队也看不到红点）。
+bash scripts/check-social-event-literals.sh
 # 文档里的门禁道数必须等于本脚本实际调用的道数（2026-10-06 开）：
 # AGENTS.md 写「32 道」而这里实际 40 道是现跑抓到的 —— 计数一漂，后面每次会话都拿旧数当
 # 「门全开」的证据。⚠️ 这道门自己也在被数之内：加/删门禁不改 AGENTS.md 的数字就会红。

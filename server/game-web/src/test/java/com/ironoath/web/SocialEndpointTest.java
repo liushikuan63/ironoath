@@ -190,6 +190,13 @@ class SocialEndpointTest {
         assertThat(socialStore.unreadEvents(mate).toString())
                 .as("组织身份的变化必须被通知到，而不是让自己发现").contains("SQUAD_LEADER_CHANGED");
 
+        // 上面那条只证明「字符串存进去了」。通知在库里就是字符串，查枚举发生在**序列化那一刻** ——
+        // 枚举里缺 SQUAD_LEADER_CHANGED 时，新队长下一次读摘要会整包回 1001、data 为 null：
+        // 他看不到小队也看不到红点，而「把这条读掉」正好也要经过那个面板（#2531 就是这么卡住的）。
+        JsonNode newLeaderSummary = get200("/social/summary", mate);
+        assertThat(newLeaderSummary.get("squad").get("id").asText())
+                .as("转让之后新队长自己读摘要还得能看到这支队伍").isEqualTo(squadId);
+
         // 新队长转给一个不是成员的人：领域不变量要回成业务错而不是 500
         String stranger = newPlayer(10);
         JsonNode bad = postRaw("/squad/transfer", mate, new SquadMemberReq(newRequestId(), stranger));

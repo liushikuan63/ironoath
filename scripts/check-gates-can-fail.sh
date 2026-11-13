@@ -473,6 +473,30 @@ run_tool_syntax() { bash scripts/check-tool-syntax.sh; }
 three_arg check-tool-syntax.sh \
           mk_tool_syntax run_tool_syntax 'tools 下的脚本必须能被 node 解析（#2524）'
 
+# check-social-event-literals（#2531）：服务端推的社交事件取值必须在契约枚举里。
+# 判据设计：正常态源码推 SQUAD_JOINED（枚举里有）⇒ 绿；
+#          违规态源码推 SQUAD_LEADER_CHANGED（枚举里没有）⇒ 红。
+# 真实后果：字符串存得进库、测试只断言字符串，所以一路绿；爆炸推迟到序列化那一刻，
+#          表现是新队长读 /social/summary 整包 1001、data 为 null（看不到小队也看不到红点）。
+# ⚠️ 下限全部压到 1：夹具只有一份 schema、一个 java 文件，真实仓库是 19 个取值、12 处字面量。
+SEL_D=/d/tmp/probe753/gates-socialevent
+mk_social_event_literals() {
+  rm -rf "$SEL_D"; mkdir -p "$SEL_D/service"
+  cat > "$SEL_D/schema.json" <<'JSON'
+{"$defs":{"SocialEventType":{"enum":["SQUAD_JOINED","PRIVATE_MESSAGE"]}}}
+JSON
+  if [ "$1" = "1" ]; then
+    printf 'class S { void f() { event("SQUAD_LEADER_CHANGED", 1); } }\n' > "$SEL_D/service/S.java"
+  else
+    printf 'class S { void f() { event("SQUAD_JOINED", 1); } }\n' > "$SEL_D/service/S.java"
+  fi
+  export SOCIAL_EVENT_SCHEMA="$SEL_D/schema.json" SOCIAL_EVENT_SRC="$SEL_D/service"
+  export SOCIAL_EVENT_MIN_LITERALS=1 SOCIAL_EVENT_MIN_ENUM=1
+}
+run_social_event_literals() { bash scripts/check-social-event-literals.sh; }
+three_arg check-social-event-literals.sh \
+          mk_social_event_literals run_social_event_literals '服务端推的社交事件取值必须在契约枚举里（#2531）'
+
 mk_pkg_path_predicates() { # check-package-path-predicates：量具里写死的包路径谓词必须命中真实文件/目录
   # ⚠️ 走**环境变量口**（PKGPATH_SCAN_DIRS / PKGPATH_SERVER_DIR，2026-10-06 新加）⇒ **零污染**：
   #    不碰仓库里的 17 条门禁字面量路径，也不动 Java 源码树。

@@ -49,6 +49,8 @@ export type ChatChannel =
  * **NATION_LEFT / NATION_DISBANDED 是 2026-09-13 裁决补的**（收口清单 §三·补 A7）：国家侧此前一条通知都不发，而「我的国没了」是只能靠玩家自己点一下才发现的那类事实 —— GET /nation 对一个刚失去国籍的人回 13000，他从中读不出「我原来那个国呢」。注意这两个类型**不会同时发给同一个人**：最后一个成员联盟退出导致的自动亡国，走的是 NATION_LEFT 一条并把「该国随之解散」写进标题，而不是给同一件事发两条。
  *
  * **PRIVATE_MESSAGE 是 C23 补的（2026-09-14）**：私聊此前「发得出去、对方不主动拉就永远不知道」。它是**「有人找你」的信标，不携带正文** —— 正文的家是聊天频道（{@code /chat/list}）。把内容抄进事件会出现两个版本，而且事件带 3 小时 TTL、聊天带条数裁剪，两边各自消失的时间还不一样，症状就是「通知说有人找我，点开却看不到那条」。同一个发信人在未读里只留一条，连发多条不叠加。
+ *
+ * **SQUAD_LEADER_CHANGED 是 2026-11-13 补的**：`SocialAppService#squadTransfer` 一直在给新队长推这条事件（`store.pushEvent(req.memberId(), event('SQUAD_LEADER_CHANGED', …))`），而本枚举没有它 —— 于是新队长下一次读 `GET /social/summary` 时，序列化未读事件直接抛 `No enum constant …SocialEventType.SQUAD_LEADER_CHANGED`，整个摘要回 1001、data 为 null：他既看不到小队也看不到红点，而「把事件读掉」正好也要经过那个面板。B10 明写绝不静默失败，这条是反例。
  */
 export type SocialEventType =
   | 'MEMBER_ATTACKED'
@@ -69,6 +71,7 @@ export type SocialEventType =
   | 'NATION_LEFT'
   | 'NATION_DISBANDED'
   | 'PRIVATE_MESSAGE'
+  | 'SQUAD_LEADER_CHANGED'
 
 /**
  * 帮助的目标类型（B10 §2：升级 / 治疗可请求帮助）。两者共用同一个每日额度 global.HELP_DAILY_LIMIT —— 各给一份等于把加速总量翻倍，而 B10 禁止项明写「不要让小队互助与联盟帮助简单叠加」。
