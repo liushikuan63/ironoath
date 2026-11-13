@@ -160,6 +160,11 @@ bash scripts/check-ledger-refs.sh
 # #2518 现跑数出 147 条绑定路径里 33 条没有任何探针驱动。缺口只会单向变多 —— 新加一个发送口
 # 不需要任何人写探针，而 check-endpoint-paths.sh 只保证「有生产调用点」、不保证「有人验过」。
 bash scripts/check-probe-endpoint-coverage.sh
+# 注释里断言「服务端没有某个端点」时，那个端点不许真的存在（2026-11-13 开，收口清单 #2523）：
+# `/nation/relations` 曾被四处注释写成「服务端没有只读的关系端点」，它却一直挂在
+# `NationController` 上、还是外交页唯一的数据源 —— 过期注释不会让测试变红，但把人和量具
+# 都带到反方向（#2522 那格的假阳性就来自其中一句）。
+bash scripts/check-comment-endpoint-claims.sh
 # 文档里的门禁道数必须等于本脚本实际调用的道数（2026-10-06 开）：
 # AGENTS.md 写「32 道」而这里实际 40 道是现跑抓到的 —— 计数一漂，后面每次会话都拿旧数当
 # 「门全开」的证据。⚠️ 这道门自己也在被数之内：加/删门禁不改 AGENTS.md 的数字就会红。

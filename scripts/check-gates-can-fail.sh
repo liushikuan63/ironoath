@@ -44,7 +44,7 @@ CO_D=/d/tmp/probe753/gates-clientorphan
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep /d/tmp/probe753/gates-wsbin "$PEC_D" "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$NC_D" "$DN_D" "$SC_D" "$PC_D" "$LR_D" "$PEC2_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep /d/tmp/probe753/gates-wsbin "$PEC_D" "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$NC_D" "$DN_D" "$SC_D" "$PC_D" "$LR_D" "$PEC2_D" "$CEC_D"
 }
 trap cleanup EXIT
 
@@ -429,6 +429,30 @@ mk_probe_coverage_comment_only() {
 run_probe_coverage_comment_only() { bash scripts/check-probe-endpoint-coverage.sh; }
 three_arg check-probe-endpoint-coverage.sh \
           mk_probe_coverage_comment_only run_probe_coverage_comment_only '只在注释里提到的路径不算有探针驱动（#2522）'
+
+# check-comment-endpoint-claims（#2523）：注释里断言「服务端没有 X」时，X 不许真的存在。
+# 判据设计：夹具里写着「服务端没有只读的 `<真路径>`」。
+#   正常态（$1=0）其实**还是要红** —— 这条门的"绿"只可能来自"没有这种注释"，
+#   所以夹具用两条臂分别喂不同事实：把「真路径」换成一条假路径就绿。
+#   为保持 three_arg 的「基线绿 / 还原绿 / 违规红」形状，这里改喂**两份目录**：
+#   正常态扫 clean 目录（断言一条不存在的路径）⇒ 绿；违规态扫 dirty 目录（断言真路径）⇒ 红。
+CEC_D=/d/tmp/probe753/gates-commentclaims
+mk_comment_endpoint_claims() {
+  rm -rf "$CEC_D"; mkdir -p "$CEC_D/clean" "$CEC_D/dirty"
+  printf '/**\n * 服务端没有 `/zzz/not-a-real-endpoint` 这条路径，所以这里用本地回退。\n */\nexport const FALLBACK = 1\n' > "$CEC_D/clean/Fine.ts"
+  # ⚠️ 真路径要**分两段拼**：本文件被自己扫到，写整条会让基线当场红。
+  printf '/**\n * 服务端没有只读的 `%s%s`。\n */\nexport function build(rows: string[] | null): string[] { return rows ?? [] }\n' \
+    "/nation" "/relations" > "$CEC_D/dirty/Stale.ts"
+  if [ "$1" = "1" ]; then
+    export COMMENT_CLAIMS_DIRS="$CEC_D/dirty"
+  else
+    export COMMENT_CLAIMS_DIRS="$CEC_D/clean"
+  fi
+  export COMMENT_CLAIMS_MIN_FILES=1 COMMENT_CLAIMS_MIN_BOUND=100
+}
+run_comment_endpoint_claims() { bash scripts/check-comment-endpoint-claims.sh; }
+three_arg check-comment-endpoint-claims.sh \
+          mk_comment_endpoint_claims run_comment_endpoint_claims '注释断言不存在的端点不许真的存在（#2523）'
 
 mk_pkg_path_predicates() { # check-package-path-predicates：量具里写死的包路径谓词必须命中真实文件/目录
   # ⚠️ 走**环境变量口**（PKGPATH_SCAN_DIRS / PKGPATH_SERVER_DIR，2026-10-06 新加）⇒ **零污染**：

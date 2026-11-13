@@ -413,8 +413,8 @@ export class GameApi {
    * <p>**单方面声明、双方都记着才成立**（2026-09-13 裁决 C21）：一份 `ALLIED` 只有两侧都记着
    * 同一个关系才双向禁攻。屏上因此不能说"结盟成功"就等于"条约已生效"。
    *
-   * <p>**这是唯一能拿到关系表的入口**：服务端没有只读的 `/nation/relations`，
-   * 响应里的 `allRelations` 是变更之后的那张全表。
+   * <p>**写口回的这张表只是"变更之后"那一刻的**：只读入口是 `nationRelations()`
+   * （`GET /nation/relations`），两者一起用 —— 写口立刻改，读口把别处造成的改动拉回屏幕。
    */
   setNationDiplomacy(req: Omit<NationDiplomacyReq, 'requestId'>): Promise<NetOutcome<NationDiplomacyResp>> {
     return this.mutate<NationDiplomacyReq, NationDiplomacyResp>('/nation/diplomacy', req)

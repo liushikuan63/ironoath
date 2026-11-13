@@ -303,6 +303,16 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 现跑：`[probe-endpoint-coverage] 绑定路径 147 条；探针 144 份；有驱动 116 条；无驱动 31 条（上限 31）`；`check-gates-can-fail.sh` `合格 45 条 / 不合格 0 条`。
 - 未做：无驱动仍是 31 条，绝大多数是写接口（要真前置状态才能打），本格只保证「注释不能冒充驱动」；`/nation/relations` 仍没有探针真打过。
 
+### 0.34 当前接续（2026-11-13 · #2523）
+
+- 目标：`goal-8856426d-d416-43fb-ba85-abe72774b7be`（「推进文档中所有可继续推进的内容」）；本会话已推 #2504–#2522 共 17 格。
+- 本格（#2523）：**过期注释把人和量具都带偏**——`/nation/relations` 被四处注释写成「服务端没有只读的关系端点」，实际 `NationController#relations`（`@GetMapping("/relations")`）一直存在，`AppRoot.reloadNationRelations()`（`:3745`）就是它的调用点，外交页的画法 `buildNationSections(this.nationTechResp, this.nationRelations, …)`（`:3946`）也吃这份数据。
+- 触发链：#2522 那个「注释被算成有探针驱动」的假阳性，来源正是 `tools/verify-nation-live.mjs:724` 的同一句误述 ⇒ 注释不是无害的，它会变成判据的输入。
+- 修法两头：① 四处注释改成「只读口 `GET /nation/relations` + 写口 `/nation/diplomacy` 的 `allRelations`，两处同形」；② 新增第 56 道门 `scripts/check-comment-endpoint-claims.sh`，判据抽在 `scripts/lib/comment-endpoint-claims.js`（只认注释行里「服务端没有/未提供/不提供 `X`」，且只取断言之后出现的路径，避免同一行前半句提到别的端点造成假红）。
+- 反证：夹具四臂 `A_CLEAN=0 / B_STALE=1 / C_THIN=1 / D_MISSING=1`；harness 新臂三读数 `0/0/1`；门自身现跑 `✓ 320 个文件、147 条绑定路径`。
+- 现跑：`check.sh` 全绿（静态门 56 道、harness 覆盖 57 = 43 + 14）。
+- 未做：谓词只覆盖中文「服务端没有」这一族否定句；英文注释与其他口吻的误述仍需靠人；本轮未跑全套 `mvn test`（只动注释与门）。
+
 ---
 
 ## 一、任务装配与完成定义
@@ -674,7 +684,7 @@ B21 §五④ 已裁的 4 条 buff 候选表、乘区归属三方案、以及一�
 
 | 维度 | 现数 | 复跑命令 |
 |---|---|---|
-| 静态门 | ~~**45 道**~~ ~~**52 道**~~ ~~**53 道**~~ **55 道**（AGENTS.md 声明值与 `check.sh` 实际调用数一致，门自己核过） | `bash scripts/check-doc-counts.sh` ⇒ 退 0 并打印「45 道（现数 45）」 |
+| 静态门 | ~~**45 道**~~ ~~**52 道**~~ ~~**53 道**~~ ~~**55 道**~~ **56 道**（AGENTS.md 声明值与 `check.sh` 实际调用数一致，门自己核过） | `bash scripts/check-doc-counts.sh` ⇒ 退 0 并打印「45 道（现数 45）」 |
 | 客户端发送口 | GameApi ~~**136 方法~~ **155 方法 / 生产零调用点 0 / 连测试与探针也没碰过 0**；仅 GameApi 内部被调 **3**（`worldExile`、`worldRecall`、`worldCollectGather`，要顺入口方法复验） | `node tools/report-client-send-paths.mjs` |
 | 验收矩阵 | 编号验收项 ~~**265 条 = 231 ✅ / 22 🟡 / 12 ⬜**~~ **266 条 = 237 ✅ / 17 🟡 / 9 ⬜ / 其他 3**（本会话内翻绿两次：**B25 验收 7**（#7 四句都有用例，`test-client.sh` 同刻全绿）与 **B23 验收 3**（#771 落地 `mayEnterRankTop`，沙箱全量 2118/0/0/0）；相邻的 B25 验收 6 仍留 ⬜，卡点是「资源那一行是估算」要产品裁口径，见 §二·补·二 D 组第 1 行） | 见 §二·补·三 的那条 node 一行脚本。**[2026-10-08 01:2x 现跑：266 条 = 240 ✅ / 17 🟡 / 8 ⬜ —— 上面那组数停在本轮之前]** 本格把 **B13 验收 8 由 ⬜ 翻 🟡**（国家集结的服务端通路 + 客户端入口 + 运行时量具与四张前台截图都有读数；不翻 ✅ 是因为句里那个"50"今天不成立 —— 真口径是 `min(50, 本国实有人数)` 的折叠值，随科技放开属 V24 未做，且 V22 验收④「亡国后已存在的那次集结」仍未裁）。计数按状态列逐行判（`codePointAt`，脚本见 §二·补·三） |
 | 上线检查清单 | ~~`- [x]` **70** / `- [ ]` **38**~~ `- [x]` **77** / `- [ ]` **35** | `node -e '…'`（§二·补·三） |
@@ -8777,3 +8787,4 @@ TEST_EXIT=0
 | #2520 补两条预取读接口的探针 | `提交信息含 #2520 的那一笔` | `=== 基线读接口：10 通过 / 0 失败 ===`；负控 `BASELINE_NEGCTL=bad-power` ⇒ 6 通过 / 4 失败（EXIT=1）；无驱动 33→31 | `D:/Java/maven/logs/baseline-probe-2520.log`、`D:/Java/maven/logs/baseline-negctl-2520.log`、`client/build/player-baseline-verify/city-panel.png` | 其余 31 条仍无探针；本条未进批跑清单 |
 | #2521 UI 驱动的探针也要有网络层证据 | `提交信息含 #2521 的那一笔` | `/gacha/history 共 1 次 code 0`（GH_EXIT=0）；负控 `GH_NEGCTL=no-history-request` ⇒ 失败 6 条 EXIT=1；无驱动 31→30、上限 30 | `D:/Java/maven/logs/gacha-hist-2521.log`、`D:/Java/maven/logs/gacha-hist-negctl-2521.log` | 另 30 条多为写接口；`GH_DRAW=1` 第二段未跑 |
 | #2522 探针覆盖面判据的注释假阳性 | `b8f38edd` | `[probe-endpoint-coverage] 有驱动 116 / 无驱动 31（上限 31）`；夹具 `D:/tmp/fixture-2522.js` 通过；harness 新臂 0/0/1，既有臂「注释版」基线退 1 后改代码字面量恢复 | `D:/Java/maven/logs/harness-2522b.log`（`合格 45 条 / 不合格 0 条`） | 无驱动 31 条多为写接口；`/nation/relations` 仍无探针真打过；本轮未跑全套 `mvn test` |
+| #2523 注释断言不存在的端点其实存在 | `c020d9b8` | `[comment-endpoint-claims] ✓ 320 个文件、147 条绑定路径`；四臂 `0/1/1/1`；harness 新臂 `0/0/1`、`合格 46 条 / 不合格 0 条`；`check.sh` 全绿（56 道，harness 57 = 43 + 14） | `D:/Java/maven/logs/harness-2523.log`、`D:/Java/maven/logs/check-sh-2523.log` | 只认中文「服务端没有」一族；未跑全套 `mvn test`（本轮只动注释与门） |

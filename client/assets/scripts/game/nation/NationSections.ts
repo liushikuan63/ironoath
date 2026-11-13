@@ -6,8 +6,9 @@
  * <p><b>三块共同的纪律：只看服务端下发的结论</b>。
  * ① 科技：`canResearch` / `blockedReason` / `nextCostTreasury` 全部是服务端算好的，
  *    客户端不按国家等级与国库余额判第二遍（那是第二个家）。
- * ② 外交：`/nation/diplomacy` 的 `allRelations` 是变更后回的那张表 —— **服务端没有只读的关系端点**，
- *    所以"还没打过一次交道"的国家在屏上是「未知」，而不是「中立」猜出来的。
+ * ② 外交：关系表由 `GET /nation/relations`（`nationRelations()`）下发，写口 `/nation/diplomacy`
+ *    回的是"变更之后"那张 —— 两处同形，客户端原样画，不自己推「未知 / 中立」。
+ *    「还没打过一次交道」的国家在屏上是「未知」，永远不是猜出来的「中立」。
  * ③ 任命：权限位在 `role_permission` 表里（APPOINT_OFFICE），**客户端拿不到那张表**，
  *    所以客户端不预判"谁任命得了"；被拒时把服务端那句原样显示。
  *
@@ -155,8 +156,9 @@ export interface DiplomacyRowView {
 /**
  * 关系表。
  *
- * <p>`allRelations` 只在**变更之后**才有（`/nation/diplomacy` 是唯一入口，而它是个写口），
- * 所以第一次打开这一页之前是空表 —— 面板要照实说"还没有打过一次交道"，
+ * <p>两份来源同形：只读口 `GET /nation/relations`（`nationRelations()`）与写口
+ * `/nation/diplomacy` 回的 `allRelations`，字段一致，谁新用谁。
+ * 传 null 表示**还没读到过**（首屏那次还没回来）—— 面板要照实说"还没有打过一次交道"，
  * 而不是给每个国家填一个"中立"（那会让人以为已经签了一份中立条约）。
  */
 export function buildDiplomacyRows(relations: readonly NationRelationView[] | null): DiplomacyRowView[] {

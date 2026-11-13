@@ -720,8 +720,10 @@ if (process.env.NATION_LIVE_UI === '1') {
       console.log(`  截图：${path.join(OUT, 'live-war-declared.png')}`)
 
       // ---- 只读关系表：宣战改了关系，切到外交页必须看到「敌对」 ----
-      // 这一相验的就是那个缺口本身：`NationDiplomacyResp` 那张表只在"改关系"那一次是新的，
-      // 宣战也改关系而它回的是国战状态 —— 没有 `GET /nation/relations`，这一屏就是旧数据。
+      // 这一相验的是当时的缺口：`NationDiplomacyResp` 那张表只在"改关系"那一次是新的，
+      // 而宣战也改关系、回的却是国战状态 —— 那时的屏上只能是旧数据。
+      // 现在服务端有只读口 `GET /nation/relations`（`NationController.relations`），
+      // 客户端 `AppRoot.reloadNationRelations()` 走它；这一相就断言「切过去看到的已是敌对」。
       const diploPicked = await page.evaluate(`(() => {
         const panel = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
         if (!panel || !panel.activeInHierarchy) return false
