@@ -263,6 +263,14 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 两条「无驱动却被真实客户端打到」：`/city/harvest-learning`、`/player/power` —— 客户端在预取，探针清单漏了它们。
 - 量具：`tools/report-endpoint-probe-coverage.mjs`（永远退 0；`PERF_LOG` 可选）。⛔ 坑：perf JSON 里 `coverage.measuredPaths` 是**条数**不是数组，按数组 `new Set()` 会抛 `number 34 is not iterable`。
 - 未做：那 33 条仍没有探针；本格只做量化与拆分，不新增驱动。
+### 0.30 当前接续（2026-11-13 · #2519）
+
+- 承接 #2518 的 33 条无驱动路径：本轮把它上一道门，防止这个数继续变大（不要求补齐，只要求不变多）。
+- 门：`scripts/check-probe-endpoint-coverage.sh`（第 55 道）；判据抽到 `scripts/lib/endpoint-probe-coverage.js`，报告器 `tools/report-endpoint-probe-coverage.mjs` 改成同一份谓词（否则报告说 33、门说别的数，就是第二个真源）。
+- 现跑：`绑定路径 147 条；探针 143 份；有驱动 114 条；无驱动 33 条（上限 33）`。
+- 四臂负控全退 1：①多塞两条假路径（35 > 33，逐条点名 `/zzz/undriven-one`、`/zzz/undriven-two`）②路径清单文件不存在 ③探针目录只剩 1 份空 `.mjs` ④绑定条数下限抬到 500。
+- harness 夹具 `mk_probe_endpoint_coverage`（`PEC_D=/d/tmp/probe753/gates-probecov`，2 条路径里 1 条无驱动、上限 0），`check-harness-coverage` ⇒ `56 道 = 42 + 14`。
+- 未做：33 条仍没有探针；`/city/harvest-learning`、`/player/power` 这两条「无驱动却被真实客户端打到」的也没纳入（它们说明客户端在预取，该补的是探针清单）。
 ---
 
 ## 一、任务装配与完成定义
@@ -634,7 +642,7 @@ B21 §五④ 已裁的 4 条 buff 候选表、乘区归属三方案、以及一�
 
 | 维度 | 现数 | 复跑命令 |
 |---|---|---|
-| 静态门 | ~~**45 道**~~ ~~**52 道**~~ **53 道**（AGENTS.md 声明值与 `check.sh` 实际调用数一致，门自己核过） | `bash scripts/check-doc-counts.sh` ⇒ 退 0 并打印「45 道（现数 45）」 |
+| 静态门 | ~~**45 道**~~ ~~**52 道**~~ ~~**53 道**~~ **55 道**（AGENTS.md 声明值与 `check.sh` 实际调用数一致，门自己核过） | `bash scripts/check-doc-counts.sh` ⇒ 退 0 并打印「45 道（现数 45）」 |
 | 客户端发送口 | GameApi ~~**136 方法~~ **155 方法 / 生产零调用点 0 / 连测试与探针也没碰过 0**；仅 GameApi 内部被调 **3**（`worldExile`、`worldRecall`、`worldCollectGather`，要顺入口方法复验） | `node tools/report-client-send-paths.mjs` |
 | 验收矩阵 | 编号验收项 ~~**265 条 = 231 ✅ / 22 🟡 / 12 ⬜**~~ **266 条 = 237 ✅ / 17 🟡 / 9 ⬜ / 其他 3**（本会话内翻绿两次：**B25 验收 7**（#7 四句都有用例，`test-client.sh` 同刻全绿）与 **B23 验收 3**（#771 落地 `mayEnterRankTop`，沙箱全量 2118/0/0/0）；相邻的 B25 验收 6 仍留 ⬜，卡点是「资源那一行是估算」要产品裁口径，见 §二·补·二 D 组第 1 行） | 见 §二·补·三 的那条 node 一行脚本。**[2026-10-08 01:2x 现跑：266 条 = 240 ✅ / 17 🟡 / 8 ⬜ —— 上面那组数停在本轮之前]** 本格把 **B13 验收 8 由 ⬜ 翻 🟡**（国家集结的服务端通路 + 客户端入口 + 运行时量具与四张前台截图都有读数；不翻 ✅ 是因为句里那个"50"今天不成立 —— 真口径是 `min(50, 本国实有人数)` 的折叠值，随科技放开属 V24 未做，且 V22 验收④「亡国后已存在的那次集结」仍未裁）。计数按状态列逐行判（`codePointAt`，脚本见 §二·补·三） |
 | 上线检查清单 | ~~`- [x]` **70** / `- [ ]` **38**~~ `- [x]` **77** / `- [ ]` **35** | `node -e '…'`（§二·补·三） |
@@ -8733,3 +8741,4 @@ TEST_EXIT=0
 | #2516 | 探针判据与实现漂移：卡片材质改由 `PanelSurface` 承担（本格无代码提交，只改量具） | 同一产物：修前 66/4 四相全红 `frameStyle=missing`；修后 70/0 且四相都报 `card-surface:PanelSurface`（`panel-iron-v1`） | `D:\Java\maven\logs\policy-2516d.log`、`tmp/nation-policy/layout-normal.png`（1440×1350，卡片暗铁框可见）、`D:\Java\maven\logs\dialogstyle-plain-2516.log`（425/0）、`/d/tmp/probe753/batch-dual.log`（5 份：4 通过 1 PREREQ） | 未在提速档后端验 dialog-style；`verify-war-real-battle` 的 2 NO-RUN 未解（边界见 #2499/#2500）；本轮未跑全套 `mvn test` |
 | #2517 | 第二批运行时基线：10 份探针（ws · panel-paging · guide-buttons · offline · season · battlepass · minor-curfew · rally 八份全绿，world-target 与 repeat-march 卡各自的夹具前提） | 8 份退出码 0（ws 11 条、guide-buttons 8 条、offline 11 条、season 17 条、battlepass 22 条、rally 14 条、minor-curfew 3 相、panel-paging 6 屏全绿）；批跑汇总 `尝试=10 已确认通过=8 失败=0 未验证=2（PREREQ=1 NO-RUN=1）` | `/d/tmp/probe-verify-*-runtime.mjs.log`、`D:\\Java\\maven\\logs\\batch-2517.log`、`D:/tmp/paging-probe`、`tmp/minor-curfew/*.png` | 未做截图视觉复核；`world-target` 要 `WORLD_TARGET_BACKEND/DEVICE/OUT` 与自有隔离账号、`repeat-march` 要 `REPEAT_OWNER` 指向自持 memory 夹具（否则 `Missing current owned memory fixture receipt; no network action` 退 2），两处夹具本轮都没建；未跑全套 `mvn test` |
 | #2518 未量路径归因 | 无代码提交（只加审计工具与台账） | `[probe-coverage] 绑定=147 有探针驱动=114 无探针驱动=33 本次量到=34 未量=115（其中无驱动=31）` | `D:/tmp/cov-2518-final.txt`、`D:/Java/maven/logs/perf-2518.log` | 33 条仍无探针驱动；未给「允许无驱动」的豁免清单 |
+| #2519 无驱动路径不许变多 | `0383b1f0` | `绑定路径 147；探针 143；有驱动 114；无驱动 33（上限 33）`；四臂负控全退 1 | `D:/tmp/pc-negctl-a.log`、`check-harness-coverage` 56 = 42 + 14 | 33 条本身仍未补探针 |

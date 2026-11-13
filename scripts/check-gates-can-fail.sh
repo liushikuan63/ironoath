@@ -44,7 +44,7 @@ CO_D=/d/tmp/probe753/gates-clientorphan
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep /d/tmp/probe753/gates-wsbin "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$NC_D" "$DN_D" "$SC_D" "$PC_D" "$LR_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep /d/tmp/probe753/gates-wsbin "$PEC_D" "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$NC_D" "$DN_D" "$SC_D" "$PC_D" "$LR_D"
 }
 trap cleanup EXIT
 
@@ -384,6 +384,23 @@ mk_ledger_refs() { # check-ledger-refs：文档里「收口清单 #N」必须真
 run_ledger_refs() { bash scripts/check-ledger-refs.sh; }
 three_arg check-ledger-refs.sh \
           mk_ledger_refs run_ledger_refs '文档里「收口清单 #N」引用必须落在台账里（走环境变量口，零污染）'
+# check-probe-endpoint-coverage：客户端绑定路径里不许出现「没有任何探针驱动」的（#2519）
+PEC_D=/d/tmp/probe753/gates-probecov
+mk_probe_endpoint_coverage() {
+  # ⚠️ 走**环境变量口**（PROBE_COVERAGE_PATHS_JSON / PROBE_COVERAGE_TOOLS_DIR / PROBE_COVERAGE_MAX_UNDRIVEN）
+  #    ⇒ **零污染**：不碰真清单、不碰 tools/。
+  # ⚠️ 违规态只比上限多 1 条（2 条路径里 1 条没人驱动、上限 0）：夹具一多，报错正文会把真正的红点淹掉。
+  rm -rf "$PEC_D"; mkdir -p "$PEC_D/tools"
+  printf '// 只驱动 /stage/list\n' > "$PEC_D/tools/zzz-driver.mjs"
+  printf '["/stage/list","/army/list"]\n' > "$PEC_D/paths-two.json"
+  printf '["/stage/list"]\n' > "$PEC_D/paths-one.json"
+  if [ "$1" = "1" ]; then PEC_JSON="$PEC_D/paths-two.json"; else PEC_JSON="$PEC_D/paths-one.json"; fi
+  export PROBE_COVERAGE_PATHS_JSON="$PEC_JSON" PROBE_COVERAGE_TOOLS_DIR="$PEC_D/tools" \
+         PROBE_COVERAGE_MAX_UNDRIVEN=0 PROBE_COVERAGE_MIN_PATHS=1 PROBE_COVERAGE_MIN_PROBES=1
+}
+run_probe_endpoint_coverage() { bash scripts/check-probe-endpoint-coverage.sh; }
+three_arg check-probe-endpoint-coverage.sh \
+          mk_probe_endpoint_coverage run_probe_endpoint_coverage '客户端绑定的路径不许出现没人驱动的（走环境变量口，零污染）'
 
 mk_pkg_path_predicates() { # check-package-path-predicates：量具里写死的包路径谓词必须命中真实文件/目录
   # ⚠️ 走**环境变量口**（PKGPATH_SCAN_DIRS / PKGPATH_SERVER_DIR，2026-10-06 新加）⇒ **零污染**：
