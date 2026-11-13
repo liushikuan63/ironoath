@@ -9,7 +9,7 @@
 # 判据（四层，谓词失效一律判红而不是判绿）：
 #   1. 绑定路径清单读得到，且条数不低于下限（默认 100）——真源坏了不许当"没东西要测"；
 #   2. 探针目录里有 .mjs，且份数不低于下限（默认 50）；
-#   3. 无驱动条数 <= 上限（默认 33，可被 PROBE_COVERAGE_MAX_UNDRIVEN 覆盖）；
+#   3. 无驱动条数 <= 上限（默认 31：2026-11-13 #2520 补齐 /player/power 与 /city/harvest-learning 后从 33 降到 31，可被 PROBE_COVERAGE_MAX_UNDRIVEN 覆盖）；
 #   4. 超上限时逐条打印新增的无驱动路径（要修的那一份就是从这几行里挑）。
 #
 # 输入口（自测用，零污染）：PROBE_COVERAGE_PATHS_JSON / PROBE_COVERAGE_TOOLS_DIR /
@@ -22,7 +22,7 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-MAX_UNDRIVEN="${PROBE_COVERAGE_MAX_UNDRIVEN:-33}"
+MAX_UNDRIVEN="${PROBE_COVERAGE_MAX_UNDRIVEN:-31}"
 MIN_PATHS="${PROBE_COVERAGE_MIN_PATHS:-100}"
 MIN_PROBES="${PROBE_COVERAGE_MIN_PROBES:-50}"
 

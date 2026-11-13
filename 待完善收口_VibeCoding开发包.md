@@ -6,7 +6,7 @@
 > 与 B17~B25 批次文件的七段结构一致；不新增 Bxx 编号，也不重写任何已交付系统。
 > **口径**：原始任务卡的「现状」来自 2026-09-28；后增任务卡与 §四记录各自标注取证日期，不能统一当成当前读数。
 > 引用前**先重跑那一条命令** —— 本仓最贵的教训是「文档说 A、代码是 B」。
-> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 87 份 / GameApi 155 个发送口
+> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 88 份 / GameApi 155 个发送口
 
 ---
 
@@ -271,6 +271,14 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 四臂负控全退 1：①多塞两条假路径（35 > 33，逐条点名 `/zzz/undriven-one`、`/zzz/undriven-two`）②路径清单文件不存在 ③探针目录只剩 1 份空 `.mjs` ④绑定条数下限抬到 500。
 - harness 夹具 `mk_probe_endpoint_coverage`（`PEC_D=/d/tmp/probe753/gates-probecov`，2 条路径里 1 条无驱动、上限 0），`check-harness-coverage` ⇒ `56 道 = 42 + 14`。
 - 未做：33 条仍没有探针；`/city/harvest-learning`、`/player/power` 这两条「无驱动却被真实客户端打到」的也没纳入（它们说明客户端在预取，该补的是探针清单）。
+### 0.31 当前接续（2026-11-13 · #2520）
+
+- 承接 #2518 的发现：`/player/power` 与 `/city/harvest-learning` **没有任何探针提到过**，但 perf 的真实抓包里它们被打到了（客户端在预取）。
+- 新增 `tools/verify-player-baseline-runtime.mjs`：真起客户端（深链 `?panel=city`）、真抓包，断言两条各至少被打到一次、回 `code 0`、字段按生成的 DTO 形状（`power`/`breakdown`/`currentMatchPower`、`resources`/`requiredMainLevel`/`unlockReason`）。
+- 现跑 `=== 基线读接口：10 通过 / 0 失败 ===`，抓包 `/player/power 1 次；/city/harvest-learning 2 次`；截图 `client/build/player-baseline-verify/city-panel.png`。
+- 自检口：`BASELINE_NEGCTL=bad-power` 把回包换成 `code:1` ⇒ `NEGCTL_EXIT=1`、`6 通过 / 4 失败`（负控证明断言真的会红）。
+- 无驱动上限由 #2519 的 33 收紧到 **31**（`scripts/check-probe-endpoint-coverage.sh`），现跑 `绑定 147 / 探针 144 / 有驱动 116 / 无驱动 31（上限 31）`。
+- 未做：另 31 条仍没有探针；本格只补了这两条「客户端真在打却没探针」的。
 ---
 
 ## 一、任务装配与完成定义
@@ -652,7 +660,7 @@ B21 §五④ 已裁的 4 条 buff 候选表、乘区归属三方案、以及一�
 > **2026-11-13 现跑补注（#2506）**：上表五行数字已过期，已按当轮现跑就地改正（划掉的是原文，不改旧字）：
 > 静态门 **52 道**（本轮新增 `check-doc-status-counts.sh` 后 51→52，`bash scripts/check-doc-counts.sh` 会核）、
 > 验收矩阵 **266 条 = 237 ✅ / 17 🟡 / 9 ⬜ / 其他 3**（其他＝状态列写的不是三种状态之一的行：L178「已裁决退役」、L230「现跑核对」、L545「不适用」）、
-> 上线清单 **`- [x]` 77 / `- [ ]` 35**、运行时探针 **87 份**（`ls tools/verify-*.mjs | wc -l`）、GameApi **155 个发送口**（`[send-paths]` 行）。
+> 上线清单 **`- [x]` 77 / `- [ ]` 35**、运行时探针 **~~87 份~~ **88 份****（`ls tools/verify-*.mjs | wc -l`）、GameApi **155 个发送口**（`[send-paths]` 行）。
 > 其中「验收矩阵分布」与「上线清单计数」从本轮起由 `scripts/check-doc-status-counts.sh` 逐次校验：声明值与现跑不一致即红，
 > 且这两行声明就住在**被数的文档自己头部**（`验收矩阵.md` 的 `> **现分布`、`上线检查清单.md` 的 `> **现计数`），不另立第三个家。
 **§1.1 那张优先级表现在是过期文档**（它写的是 2026-09-28 的待做顺序）：①~⑥ 与 ⑧ 全部已落地——
@@ -8742,3 +8750,4 @@ TEST_EXIT=0
 | #2517 | 第二批运行时基线：10 份探针（ws · panel-paging · guide-buttons · offline · season · battlepass · minor-curfew · rally 八份全绿，world-target 与 repeat-march 卡各自的夹具前提） | 8 份退出码 0（ws 11 条、guide-buttons 8 条、offline 11 条、season 17 条、battlepass 22 条、rally 14 条、minor-curfew 3 相、panel-paging 6 屏全绿）；批跑汇总 `尝试=10 已确认通过=8 失败=0 未验证=2（PREREQ=1 NO-RUN=1）` | `/d/tmp/probe-verify-*-runtime.mjs.log`、`D:\\Java\\maven\\logs\\batch-2517.log`、`D:/tmp/paging-probe`、`tmp/minor-curfew/*.png` | 未做截图视觉复核；`world-target` 要 `WORLD_TARGET_BACKEND/DEVICE/OUT` 与自有隔离账号、`repeat-march` 要 `REPEAT_OWNER` 指向自持 memory 夹具（否则 `Missing current owned memory fixture receipt; no network action` 退 2），两处夹具本轮都没建；未跑全套 `mvn test` |
 | #2518 未量路径归因 | 无代码提交（只加审计工具与台账） | `[probe-coverage] 绑定=147 有探针驱动=114 无探针驱动=33 本次量到=34 未量=115（其中无驱动=31）` | `D:/tmp/cov-2518-final.txt`、`D:/Java/maven/logs/perf-2518.log` | 33 条仍无探针驱动；未给「允许无驱动」的豁免清单 |
 | #2519 无驱动路径不许变多 | `0383b1f0` | `绑定路径 147；探针 143；有驱动 114；无驱动 33（上限 33）`；四臂负控全退 1 | `D:/tmp/pc-negctl-a.log`、`check-harness-coverage` 56 = 42 + 14 | 33 条本身仍未补探针 |
+| #2520 补两条预取读接口的探针 | `提交信息含 #2520 的那一笔` | `=== 基线读接口：10 通过 / 0 失败 ===`；负控 `BASELINE_NEGCTL=bad-power` ⇒ 6 通过 / 4 失败（EXIT=1）；无驱动 33→31 | `D:/Java/maven/logs/baseline-probe-2520.log`、`D:/Java/maven/logs/baseline-negctl-2520.log`、`client/build/player-baseline-verify/city-panel.png` | 其余 31 条仍无探针；本条未进批跑清单 |
