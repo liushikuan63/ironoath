@@ -6,7 +6,7 @@
 > 与 B17~B25 批次文件的七段结构一致；不新增 Bxx 编号，也不重写任何已交付系统。
 > **口径**：原始任务卡的「现状」来自 2026-09-28；后增任务卡与 §四记录各自标注取证日期，不能统一当成当前读数。
 > 引用前**先重跑那一条命令** —— 本仓最贵的教训是「文档说 A、代码是 B」。
-> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 89 份 / GameApi 155 个发送口
+> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 90 份 / GameApi 155 个发送口
 
 ---
 
@@ -335,6 +335,19 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 现跑：绿 `6 通过 / 0 失败`；负控 `WEAK_NEGCTL=fast` 只红 B、C 记 SKIP（没有慢相就没有「恢复」）。
 - 顺带更正：上线清单 §四-6 那句「恢复后提示不收回」已就地补注为「那是掐后端那一相」，不是缺陷。
 - 未做：真机 / 真 3G 未量；文案靠白名单；自动重登仍是裁决项 #139。
+
+### 0.37 当前接续（2026-11-13 · #2526）
+
+- 目标：`goal-8856426d-d416-43fb-ba85-abe72774b7be`；本会话已推 #2504–#2525 共 20 格。
+- 本格（#2526）：上线清单 §四-5「内存泄漏：GC 后回到基线」与 §四-12「对象池效果」都只有峰值读数，
+  而峰值对采样相位极敏感（同产物同后端两轮 23.2MB / 54.6MB）。要回答的是「强回收后还剩多少、是否只涨不落」。
+- 做法：`tools/verify-memory-residency-runtime.mjs` 单页面循环「点常驻页签 → 等接口画完 →
+  CDP `HeapProfiler.collectGarbage` → 读 `Runtime.getHeapUsage`」，量 驻留 = JS 堆 + backing。
+- 现跑：绿 `5 通过 / 0 失败`（基线 14.8MB → 预热 +10.6MB → 稳态 25.3MB，6 轮后 +0.6MB、单轮最大 0.3MB）。
+- 负控 `MEM_NEGCTL=retain`：`4 通过 / 2 失败`（稳态 +40.7MB 打红 B、单轮 8.3MB 打红 C）。
+- 两个坑：① 第 1 轮是预热，稳态要跳过它单独记账；② 只读 `usedSize` 漏掉 ArrayBuffer —— 第一版负控因此假绿，
+  判据必须量「JS 堆 + backingStorageSize」，并加一条「负控确实挂住 ≥16MB」的自检防假绿。
+- 未做：不是微信开发者工具里跑 10 分钟（无头 Chromium 等价物）；池化开关 A/B 对照未做；真机内存曲线未采。
 
 ---
 
@@ -8813,3 +8826,4 @@ TEST_EXIT=0
 | #2523 注释断言不存在的端点其实存在 | `004cf499` | `[comment-endpoint-claims] ✓ 320 个文件、147 条绑定路径`；四臂 `0/1/1/1`；harness 新臂 `0/0/1`、`合格 46 条 / 不合格 0 条`；`check.sh` 全绿（56 道，harness 57 = 43 + 14） | `D:/Java/maven/logs/harness-2523.log`、`D:/Java/maven/logs/check-sh-2523.log` | 只认中文「服务端没有」一族；未跑全套 `mvn test`（本轮只动注释与门） |
 | #2524 探针脚本语法门 | `450b1593` | `[tool-syntax] ✓ 189 个脚本通过 node --check`；四臂 `0/1/1/1`；harness 新臂 `0/0/1`、`合格 47 条 / 不合格 0 条`；`check.sh` 全绿（57 道，harness 58 = 44 + 14） | `D:/Java/maven/logs/harness-2524.log`、`D:/Java/maven/logs/check-sh-2524.log` | 只看语法不看行为；第三方测试桩不覆盖；未跑全套 `mvn test` |
 | #2525 弱网（接口级慢相）探针 | `6aad226e` | 绿 `6 通过 / 0 失败`；负控只红 B、C 记 SKIP；截屏横幅「网络不稳定，正在重试（第 1 次）」 | `D:/Java/maven/logs/weak-2525h.log`、`weak-negctl3-2525.log`、`client/build/weak-network-verify/notice.png` | 真机/真 3G 未量；文案白名单；未跑全套 `mvn test` |
+| #2526 驻留内存（强回收后）探针 | `SHA_PLACEHOLDER` | 绿 `5 通过 / 0 失败`（稳态 25.3MB，6 轮 +0.6MB、单轮最大 0.3MB）；负控 `4 通过 / 2 失败`（+40.7MB / 8.3MB） | `D:/Java/maven/logs/mem-2526d.log`、`mem-negctl3-2526.log`、`client/build/memory-residency-verify/memory-residency.json` | 非微信开发者工具 10 分钟；池化开关 A/B 未做；真机未采 |
