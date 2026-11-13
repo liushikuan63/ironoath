@@ -6,7 +6,7 @@
 > 与 B17~B25 批次文件的七段结构一致；不新增 Bxx 编号，也不重写任何已交付系统。
 > **口径**：原始任务卡的「现状」来自 2026-09-28；后增任务卡与 §四记录各自标注取证日期，不能统一当成当前读数。
 > 引用前**先重跑那一条命令** —— 本仓最贵的教训是「文档说 A、代码是 B」。
-> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 96 份 / GameApi 155 个发送口
+> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 97 份 / GameApi 155 个发送口
 
 ---
 
@@ -436,6 +436,14 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 读数：绿 **16 通过 / 0 失败**；负控 `MAIL_READ_NEGCTL=skip-read` ⇒ **11 通过 / 2 失败**（红在「再查列表 read=true」「未读 0」）；门现跑 `147 绑定 / 151 探针 / 133 有驱动 / 14 无驱动（上限 14）`。
 - 造信走 `/ops/mail/send`（唯一「凭空给玩家东西」的运维入口，须 `X-Ops-Token`）；`/mail/list` 的 `unreadCount` 由服务端算，探针只读它、不自己数。
 - 未做：`/mail/claimAll`（需带附件与溢出路径）、`expireAt` 与 `MAIL_RETENTION_DAYS` 的关系未断言；本格未跑全套 `mvn test`。
+### 0.46 当前接续（2026-11-13 · #2535）
+
+- 本格：把写接口的**拒绝面**变成判据。动机是覆盖面门剩下 7 条「没有任何探针碰过」的绑定路径全是写接口，而它们的 happy path 需要真前置状态（有武将、三星通关、在途行军、活跃集结），dev 新号造不出来；但「非法入参走 500」这一类事故可以就地钉住。
+- 新增 `tools/verify-write-guards-runtime.mjs`（纯 HTTP，两个真号）：7 条写路径逐条断言「指定业务码 / 不是 5xx / 说明里点到这件事（`msg` 与 `detail` 合起来找）/ 拒绝带可读文本」，另加 `/army/collectTreated` 无伤兵时幂等空操作、同一 `requestId` 重放同一答复。
+- 现跑：绿 `=== 写接口拒绝面：33 通过 / 0 失败 ===`（`D:/Java/maven/logs/write-guards-2535b.log`）；负控 `WRITE_GUARD_NEGCTL=expect-zero` ⇒ `32 通过 / 1 失败`，红在 `/world/recall`（`write-guards-negctl-2535.log`）。
+- **自伤两次**：① 首版把关键字只在 `msg` 里找 ⇒ 4 条假红，因为「哪个字段不对」那句话落在 `detail` 里（`BizException` 的 `msg` 是给玩家看的概括），改成 `msg + detail` 合起来找；② 上限先按「13 − 7 = 6」写，实测无驱动是 7（新增驱动里有一条路径本已在 driven 集合里：`/stage/sweep` 与 `/hero/equip` 各出现两次调用但只算一条路径），按现跑改成 7。
+- 覆盖面收紧：`check-probe-endpoint-coverage.sh` 默认上限 13 → **7**；现跑 `绑定 147 / 探针 153 / 有驱动 140 / 无驱动 7（上限 7）`、`GATE=0`。
+- **未做**：只覆盖拒绝面，不证明 happy path 的发放正确性；`/hero/levelUp`、`/hero/starUp`、`/pay/card`、`/pay/card/claim`、`/social/helpAll`、`/rally/squad`、`/world/exile` 仍无探针驱动（需真前置状态或产品裁决）。
 ### 0.45 当前接续（2026-11-13 · #2534）
 
 - 本格：`POST /social/report` 补进探针（`tools/verify-social-report-runtime.mjs`），覆盖面门默认上限 14 → 13。
@@ -8926,3 +8934,4 @@ TEST_EXIT=0
 | #2532 联盟成员管理面进探针（`/alliance/kick`、`/alliance/disband`） | caf34f56 | 绿 16/0；负控 skip-disband 13/2；门 147/150/132/15=15、GATE=0 | `D:/Java/maven/logs/alliance-mgmt-2532b.log`、`alliance-mgmt-negctl-2532.log` | 审核拒绝分支、联盟科技/捐赠面未进探针；未跑全套 `mvn test` |
 | #2533 邮件已读进探针（`/mail/read`） | ba599541 | 绿 16/0；负控 skip-read 11/2；门 147/151/133/14=14、GATE=0 | `D:/Java/maven/logs/mail-read-2533.log`、`mail-read-negctl-2533.log` | `/mail/claimAll` 未进探针；`expireAt` 与留存天数关系未断言；未跑全套 `mvn test` |
 | #2534 举报留痕进探针（`/social/report`） | f8960640 | 绿 7/0；负控 skip-report 3/1；门 147/152/134/13=13、GATE=0 | `D:/Java/maven/logs/social-report-2534b.log`、`social-report-negctl-2534.log` | 限频上限分支（`SOCIAL_REPORT_DUPLICATE`）未断言；`detail` 内容安全送检未单独验；未跑全套 `mvn test` |
+| #2535 写接口拒绝面 | `tools/verify-write-guards-runtime.mjs` | 绿 `33 通过 / 0 失败`；负控 `expect-zero` ⇒ `32/1`；门 `有驱动 140 / 无驱动 7（上限 7）` | `D:/Java/maven/logs/write-guards-2535b.log`、`write-guards-negctl-2535.log` | 不证明 happy path；`/hero/levelUp`、`/hero/starUp`、`/pay/card`、`/pay/card/claim`、`/social/helpAll`、`/rally/squad`、`/world/exile` 仍无驱动 |
