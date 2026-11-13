@@ -6,7 +6,7 @@
 > 与 B17~B25 批次文件的七段结构一致；不新增 Bxx 编号，也不重写任何已交付系统。
 > **口径**：原始任务卡的「现状」来自 2026-09-28；后增任务卡与 §四记录各自标注取证日期，不能统一当成当前读数。
 > 引用前**先重跑那一条命令** —— 本仓最贵的教训是「文档说 A、代码是 B」。
-> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 91 份 / GameApi 155 个发送口
+> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 92 份 / GameApi 155 个发送口
 
 ---
 
@@ -397,6 +397,19 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 现跑：绿 `20 通过 / 0 失败`；两个负控 `SOCIAL_REL_NEGCTL=no-block` / `no-follow` 各 `17 通过 / 2 失败`、`EXIT=1`。
 - 覆盖面：`有驱动 123 条；无驱动 24 条`，门上限同批 30 → 24（诚实值）。
 - 未做：没验「拉黑后私聊真的拒收、频道真的过滤」（要两边会话）；没验关注上限撞顶的拒绝文案。
+
+### 0.41 当前接续（2026-11-13 · #2530）
+
+- 目标：`goal-8856426d-d416-43fb-ba85-abe72774b7be`；本会话已推 #2504–#2529 共 24 格。
+- 本格（#2530）：`/city/pause`、`/city/resume`、`/city/speedUp` 三条写接口没有探针。
+  它们守的是**一条容易做错的语义**：`CityState.pause(instanceId, now)` 的注释写着早先那版没有 `now`，
+  于是「暂停」只是不显示倒计时 —— 时钟照走、恢复即完工，玩家以为保住的时间没保住，而屏上一切正常。
+- 手法：纯 HTTP、真 HTTP 状态机（不点界面，按钮那一层属面板探针）。先点一栋开始升级 → 暂停 → 等到期 → 恢复，
+  断言暂停期间 `PAUSED` + 剩余 0、恢复后剩余与暂停前一致（±3s）、帮助加速真扣秒数且剩余不增、同 requestId 再暂停被拒。
+- 自检口：`CITY_CLOCK_NEGCTL=clock-runs` 在暂停后立刻恢复，C 组两条必须红（否则说明它们只是在抄读数）。
+- 现跑：绿 `18 通过 / 0 失败`；负控 `12 通过 / 3 失败`（`期望 "PAUSED"，实际 "UPGRADING"`）。
+- 覆盖面：`check-probe-endpoint-coverage.sh` 上限同批 24 → 21（无驱动 21 条）。
+- 未做：没验「暂停不放产」这一维（要等产量结算窗口）；没验 `source=ITEM` / `GOLD` 两条加速路径的扣费。
 
 ---
 
@@ -8879,3 +8892,4 @@ TEST_EXIT=0
 | #2527 只读外交表的探针断言 | `093d9fa1` | 绿 `75 通过 / 0 失败`；负控 `74/1`（`期望 ALLIED，实际 HOSTILE`）；覆盖面 `无驱动 30 条（上限 30）` | `D:/Java/maven/logs/nation-live-2527-green.log`、`nation-live-2527-negctl.log` | 未断亡国剔除（需造亡国场景）；需提速档后端；未跑全套 `mvn test` |
 | #2528 收口前整线复跑 | `28cf2c37` | 全套服务端 **3772 条 0 失败**（`SUITE_EXIT=0`）；25 份运行时探针 **25/25 通过**（`BATCH_EXIT=0`，TIMEOUT/PREREQ/NO-RUN 全 0） | `D:/Java/maven/logs/full-test-2528.log`、`batch-2528.log`、`/d/tmp/runtime-probes-exitcodes.txt` | 真机/真 3G 未量；`war-real-battle` 2 条 NO-RUN 与 `world-target`/`repeat-march` 夹具前提未解决；未重跑 `build.sh`/`build-webmobile.sh` |
 | #2529 社交关系六条路径进探针 | `7a774a63` | 绿 `20 通过 / 0 失败`；两个负控各 `17/2`、`EXIT=1`；覆盖面 `无驱动 24 条（上限 24）` | `D:/Java/maven/logs/social-rel-2529.log`、`social-rel-negctl-block.log`、`social-rel-negctl-follow.log` | 未验私聊拒收与频道过滤；未验关注上限撞顶文案；未跑全套 `mvn test` |
+| #2530 城内队列时钟（暂停/恢复/加速）探针 | `SHA_PLACEHOLDER` | 绿 `18 通过 / 0 失败`；负控 `12/3`（`期望 "PAUSED"，实际 "UPGRADING"`）；覆盖面 `无驱动 21 条（上限 21）` | `D:/Java/maven/logs/cityclock-2530c.log`、`cityclock-negctl2-2530.log` | 未验暂停不放产；未验 ITEM/GOLD 加速扣费；不点界面 |
