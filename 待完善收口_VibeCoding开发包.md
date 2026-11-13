@@ -6,7 +6,7 @@
 > 与 B17~B25 批次文件的七段结构一致；不新增 Bxx 编号，也不重写任何已交付系统。
 > **口径**：原始任务卡的「现状」来自 2026-09-28；后增任务卡与 §四记录各自标注取证日期，不能统一当成当前读数。
 > 引用前**先重跑那一条命令** —— 本仓最贵的教训是「文档说 A、代码是 B」。
-> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 97 份 / GameApi 155 个发送口
+> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 98 份 / GameApi 155 个发送口
 
 ---
 
@@ -436,6 +436,14 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 读数：绿 **16 通过 / 0 失败**；负控 `MAIL_READ_NEGCTL=skip-read` ⇒ **11 通过 / 2 失败**（红在「再查列表 read=true」「未读 0」）；门现跑 `147 绑定 / 151 探针 / 133 有驱动 / 14 无驱动（上限 14）`。
 - 造信走 `/ops/mail/send`（唯一「凭空给玩家东西」的运维入口，须 `X-Ops-Token`）；`/mail/list` 的 `unreadCount` 由服务端算，探针只读它、不自己数。
 - 未做：`/mail/claimAll`（需带附件与溢出路径）、`expireAt` 与 `MAIL_RETENTION_DAYS` 的关系未断言；本格未跑全套 `mvn test`。
+### 0.47 当前接续（2026-11-13 · #2536）
+
+- 本格：把 `POST /social/helpAll` 的**整条链路**走通并钉住语义。动机是它在覆盖面门上长期「没有任何探针碰过」；而它的前置可以真造出来 —— 联盟成员发一次真的会跑一会儿的升级（`CityAppService` 只在 `finishAt > now` 时登记求助），另一个成员就能在 `/social/helpRequests` 看到并一键帮助。
+- 新增 `tools/verify-social-help-runtime.mjs`（纯 HTTP，两个真号，需提速档后端：建盟要 500 金币）。判据 23 条：求助生产者真的登记（列表里有那条、`alreadyHelped=false`、`targetDesc` 由服务端拼好）→ 一键帮助 `helped ≥ 1`、`speedupGranted > 0`、每日额度按条数扣、红点按帮助后的值下发 → 重放 `helped == 0` 且额度不再扣 → 帮过之后那条已消失或标成已帮。
+- 现跑：绿 `=== 一键帮助：23 通过 / 0 失败 ===`（`D:/Java/maven/logs/social-help-2536d.log`）；负控 `SOCIAL_HELP_NEGCTL=skip-help` ⇒ `19 通过 / 4 失败`，红在「帮到了 / 削减时长 / 红点 / 额度不再扣」（`social-help-negctl-2536.log`）。
+- **自伤三次**（都记下来防重踩）：① 帮助列表字段是 `requests` 不是 `rows`，按 `rows` 读得到空数组 ⇒ 三条假红；② `CityUpgradeResp` 只有 `finishAt`，没有 `remainingSeconds`，改成 `finishAt > serverNow` 判「会不会登记求助」；③ 重放时候选集已为空，`skipped` 是 0 而不是 1 —— 首版按「重放会把已帮过的算 skipped」断言，是我把实现读反了，改成钉「额度不再被扣」。另外盟标写死 `HPR` 第二次跑就撞「联盟标签已被占用」，已改成随机。
+- 覆盖面：`check-probe-endpoint-coverage.sh` 默认上限 7 → **6**；`GATE=0`。
+- **未做**：只覆盖「联盟成员之间」这一条路，小队互助（同一个人每天同一份额度）没有单独验；剩余 6 条无驱动路径（`/hero/levelUp`、`/hero/starUp`、`/pay/card`、`/pay/card/claim`、`/rally/squad`、`/world/exile`）需真前置状态或产品裁决。
 ### 0.46 当前接续（2026-11-13 · #2535）
 
 - 本格：把写接口的**拒绝面**变成判据。动机是覆盖面门剩下 7 条「没有任何探针碰过」的绑定路径全是写接口，而它们的 happy path 需要真前置状态（有武将、三星通关、在途行军、活跃集结），dev 新号造不出来；但「非法入参走 500」这一类事故可以就地钉住。
@@ -8935,3 +8943,4 @@ TEST_EXIT=0
 | #2533 邮件已读进探针（`/mail/read`） | ba599541 | 绿 16/0；负控 skip-read 11/2；门 147/151/133/14=14、GATE=0 | `D:/Java/maven/logs/mail-read-2533.log`、`mail-read-negctl-2533.log` | `/mail/claimAll` 未进探针；`expireAt` 与留存天数关系未断言；未跑全套 `mvn test` |
 | #2534 举报留痕进探针（`/social/report`） | f8960640 | 绿 7/0；负控 skip-report 3/1；门 147/152/134/13=13、GATE=0 | `D:/Java/maven/logs/social-report-2534b.log`、`social-report-negctl-2534.log` | 限频上限分支（`SOCIAL_REPORT_DUPLICATE`）未断言；`detail` 内容安全送检未单独验；未跑全套 `mvn test` |
 | #2535 写接口拒绝面 | `fe43b42e` | 绿 `33 通过 / 0 失败`；负控 `expect-zero` ⇒ `32/1`；门 `有驱动 140 / 无驱动 7（上限 7）` | `D:/Java/maven/logs/write-guards-2535b.log`、`write-guards-negctl-2535.log` | 不证明 happy path；`/hero/levelUp`、`/hero/starUp`、`/pay/card`、`/pay/card/claim`、`/social/helpAll`、`/rally/squad`、`/world/exile` 仍无驱动 |
+| #2536 一键帮助 | `SHA_PLACEHOLDER` | 绿 `23 通过 / 0 失败`；负控 `skip-help` ⇒ `19/4`；覆盖面 7 → 6；`GATE=0` | `D:/Java/maven/logs/social-help-2536d.log`、`social-help-negctl-2536.log` | 只覆盖联盟互助；小队互助与余 6 条无驱动路径未验 |
