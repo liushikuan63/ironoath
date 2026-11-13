@@ -6,7 +6,7 @@
 > 与 B17~B25 批次文件的七段结构一致；不新增 Bxx 编号，也不重写任何已交付系统。
 > **口径**：原始任务卡的「现状」来自 2026-09-28；后增任务卡与 §四记录各自标注取证日期，不能统一当成当前读数。
 > 引用前**先重跑那一条命令** —— 本仓最贵的教训是「文档说 A、代码是 B」。
-> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 88 份 / GameApi 155 个发送口
+> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 89 份 / GameApi 155 个发送口
 
 ---
 
@@ -321,6 +321,20 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 反证：夹具四臂 `A_GOOD=0 / B_BROKEN=1 / C_THIN=1 / D_MISSING=1`（违规态放的是一份少右括号的函数）；harness 新臂三读数 `0/0/1`，整份 `合格 47 条 / 不合格 0 条`。
 - 现跑：`[tool-syntax] ✓ 189 个脚本全部通过 node --check`；`check.sh` 全绿（57 道、harness 覆盖 58 = 44 + 14）。
 - 未做：语法通过不代表这些探针跑起来正确（那要后端+产物，见 #2514/#2517 的批跑）；`tools/lib` 里第三方注入的测试桩不在谓词覆盖内；本轮未跑全套 `mvn test`。
+
+### 0.36 当前接续（2026-11-13 · #2525）
+
+- 目标：`goal-8856426d-d416-43fb-ba85-abe72774b7be`；本会话已推 #2504–#2524 共 19 格。
+- 本格（#2525）：上线清单 §四-6「弱网」只有「掐掉后端」这一相，全仓没有量具真的把**接口链路**降过速。
+  而那一相还带出一句推断「恢复后提示也不收回」，容易被当成缺陷读 —— 实际那是「请求一条都成功不了」的相。
+- 手法：`page.route` 只对 API 前缀延迟（默认 8000ms），静态资源照常。三次返工都记在文件头注释里：
+  ① CDP 全局限速会把 3MB bundle 一起拖慢（量到「页面打不开」）② DOM 里没有字（全在 Canvas）
+  ③ 按端口过滤回包会一条都记不到。
+- 判据 A/B/C/D：慢相零 `pageerror` 且场景起来；屏上出现重试/网络类提示（命中当下截图）；
+  恢复后不重开页面点「邮件」拿到 200；提示随后自动收回（`NetworkNotice` 变回 inactive）。
+- 现跑：绿 `6 通过 / 0 失败`；负控 `WEAK_NEGCTL=fast` 只红 B、C 记 SKIP（没有慢相就没有「恢复」）。
+- 顺带更正：上线清单 §四-6 那句「恢复后提示不收回」已就地补注为「那是掐后端那一相」，不是缺陷。
+- 未做：真机 / 真 3G 未量；文案靠白名单；自动重登仍是裁决项 #139。
 
 ---
 
@@ -8798,3 +8812,4 @@ TEST_EXIT=0
 | #2522 探针覆盖面判据的注释假阳性 | `b8f38edd` | `[probe-endpoint-coverage] 有驱动 116 / 无驱动 31（上限 31）`；夹具 `D:/tmp/fixture-2522.js` 通过；harness 新臂 0/0/1，既有臂「注释版」基线退 1 后改代码字面量恢复 | `D:/Java/maven/logs/harness-2522b.log`（`合格 45 条 / 不合格 0 条`） | 无驱动 31 条多为写接口；`/nation/relations` 仍无探针真打过；本轮未跑全套 `mvn test` |
 | #2523 注释断言不存在的端点其实存在 | `004cf499` | `[comment-endpoint-claims] ✓ 320 个文件、147 条绑定路径`；四臂 `0/1/1/1`；harness 新臂 `0/0/1`、`合格 46 条 / 不合格 0 条`；`check.sh` 全绿（56 道，harness 57 = 43 + 14） | `D:/Java/maven/logs/harness-2523.log`、`D:/Java/maven/logs/check-sh-2523.log` | 只认中文「服务端没有」一族；未跑全套 `mvn test`（本轮只动注释与门） |
 | #2524 探针脚本语法门 | `450b1593` | `[tool-syntax] ✓ 189 个脚本通过 node --check`；四臂 `0/1/1/1`；harness 新臂 `0/0/1`、`合格 47 条 / 不合格 0 条`；`check.sh` 全绿（57 道，harness 58 = 44 + 14） | `D:/Java/maven/logs/harness-2524.log`、`D:/Java/maven/logs/check-sh-2524.log` | 只看语法不看行为；第三方测试桩不覆盖；未跑全套 `mvn test` |
+| #2525 弱网（接口级慢相）探针 | `SHA_PLACEHOLDER` | 绿 `6 通过 / 0 失败`；负控只红 B、C 记 SKIP；截屏横幅「网络不稳定，正在重试（第 1 次）」 | `D:/Java/maven/logs/weak-2525h.log`、`weak-negctl3-2525.log`、`client/build/weak-network-verify/notice.png` | 真机/真 3G 未量；文案白名单；未跑全套 `mvn test` |
