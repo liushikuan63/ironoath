@@ -240,6 +240,21 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
   `verify-nation-rally-runtime`、`verify-level-reward-runtime` 四份退出码 0；`verify-war-real-battle` 仍 PREREQ
   （43 通过 / 0 失败 / 2 未验证：真实进 SIEGE 后 90 分钟结算、结算后 WAR 榜个人击杀，边界见 #2499/#2500）。
 - **未做**：提速档后端跑 dialog-style（前提不允许，它会找「普通新号服务器引导帧」）；两份缺口都没在本轮解掉。
+### 0.29 当前接续（2026-11-13 · #2517）
+
+- **这一格是运行时基线，不改代码**：在 #2516 之后的新产物上再跑十份探针，看有没有被
+  探针判据改动、WS 分层门或共用件带出来的回归。
+- **8 份全绿**：`verify-ws-runtime`（11 条，含「被拒的那一发不得拿到 bound」「对照组 WS 编造路径与 /ws 不同形」）、
+  `verify-panel-paging-runtime`（6 屏全绿：走了的屏数 == 承诺页数、每屏真换屏、读不到那态 0 颗键）、
+  `verify-guide-buttons-runtime`（8 条）、`verify-offline-runtime`（11 条，全程零页面异常）、
+  `verify-season-runtime`（17 条）、`verify-battlepass-runtime`（22 条）、
+  `verify-minor-curfew-runtime`（curfew 横竖两相 15013、ordinary 相 2002，requests 只发 `/ops/app/version` 与 `/player/init`）、
+  `verify-rally-runtime`（14 条）。
+- **2 份是前提不满足，不是失败**：`world-target` 要 `WORLD_TARGET_BACKEND/DEVICE/OUT` 与自有隔离账号；
+  `repeat-march` 首行就要求 `REPEAT_OWNER` 指向自持 memory 夹具（`port/storage=newUidOnly/cityLevel=16/timeSpeed=100/threadId/pid`）
+  且必须带当前 `CODEX_THREAD_ID`，否则打印 `Missing current owned memory fixture receipt; no network action` 并退 2。
+  这两条不是覆盖缺口被掩盖 —— 夹具前提在本轮之前就一直是这样，批跑记账里也如实记 `PREREQ`/`NO-RUN`。
+- **未做**：截图的视觉复核没做（截图只作证据留存）；两份夹具没建；本轮没跑全套 `mvn test`（改动只碰 tools 与台账）。
 ---
 
 ## 一、任务装配与完成定义
@@ -8708,3 +8723,4 @@ TEST_EXIT=0
 | #2513 探针的「量到几条接口」没有判据：巡游整段失败或首屏并发读取被拆掉时，被试接口悄悄变少而体积/耗时/堆峰读数反而更漂亮（越退化越绿）；同一段文档还留着 21 条/128 条的旧现值与 #2508 的 34/115 打架 | 本笔（本地提交，待推） | `tools/verify-perf-runtime.mjs` 加 `MIN_COVERED`（`PERF_MIN_COVERED_PATHS`，默认 32）与绑定清单为空两条判红；JSON 增 `coverage.minCoveredPaths`、人读行打「最小 N 条」；文档那条现数改成 34/115 并注明旧值属哪一轮 | 现跑 `A_EXIT=0`、`34 条量到 / 147 条绑定`；负控 `=999` ⇒ `NEGCTL2_EXIT=1` 且正文点名「低于下限 999…覆盖面回退了」；改完重跑绿 `B_EXIT=0`；日志 `perf-floor-a-070822.log` / `perf-floor-negctl2.log` / `perf-floor-b.log` | 下限不代替动作驱动器（115 条多为写接口/需前置状态）；探针不进 CI，下限只在人跑时生效；第一次负控是 ReferenceError 假红，已在台账写明 |
 | #2514 本会话重建的 `client/build/web-mobile`（1:27:55）上只有 perf 与 rally 两份量具跑过，「新产物有没有把核心链路跑挂」没有读数 | 无代码提交，只落证据 | `run-batch-dual-backend.sh` + 8 份探针 ⇒ 尝试=8 通过=8 失败=0 未验证=0（TIMEOUT/PREREQ/NO-RUN/SKIP 全 0）；逐份断言 rank 58 / social-permission 69 / social-create 116 / march 138 / stage-summary 45 / hero-empty 7 / city-zoom 与 shop 全绿，约 433 条 0 失败；三台后端收尾端口复验均不监听 | `/d/tmp/probe753/batch-dual.log`、`/d/tmp/runtime-probes-exitcodes.txt`、`/d/tmp/probe-verify-*-runtime.mjs.log` | stage-summary 的「完整挑战路径 A 支八条」因 dev 号无武将未执行；nation 两份（需提速档）与真仗档那份未纳入本批；city-zoom/shop 的 SHOT 未做视觉复核；本格无待修项故不写 `收口清单.md` |
 | #2516 | 探针判据与实现漂移：卡片材质改由 `PanelSurface` 承担（本格无代码提交，只改量具） | 同一产物：修前 66/4 四相全红 `frameStyle=missing`；修后 70/0 且四相都报 `card-surface:PanelSurface`（`panel-iron-v1`） | `D:\Java\maven\logs\policy-2516d.log`、`tmp/nation-policy/layout-normal.png`（1440×1350，卡片暗铁框可见）、`D:\Java\maven\logs\dialogstyle-plain-2516.log`（425/0）、`/d/tmp/probe753/batch-dual.log`（5 份：4 通过 1 PREREQ） | 未在提速档后端验 dialog-style；`verify-war-real-battle` 的 2 NO-RUN 未解（边界见 #2499/#2500）；本轮未跑全套 `mvn test` |
+| #2517 | 第二批运行时基线：10 份探针（ws · panel-paging · guide-buttons · offline · season · battlepass · minor-curfew · rally 八份全绿，world-target 与 repeat-march 卡各自的夹具前提） | 8 份退出码 0（ws 11 条、guide-buttons 8 条、offline 11 条、season 17 条、battlepass 22 条、rally 14 条、minor-curfew 3 相、panel-paging 6 屏全绿）；批跑汇总 `尝试=10 已确认通过=8 失败=0 未验证=2（PREREQ=1 NO-RUN=1）` | `/d/tmp/probe-verify-*-runtime.mjs.log`、`D:\\Java\\maven\\logs\\batch-2517.log`、`D:/tmp/paging-probe`、`tmp/minor-curfew/*.png` | 未做截图视觉复核；`world-target` 要 `WORLD_TARGET_BACKEND/DEVICE/OUT` 与自有隔离账号、`repeat-march` 要 `REPEAT_OWNER` 指向自持 memory 夹具（否则 `Missing current owned memory fixture receipt; no network action` 退 2），两处夹具本轮都没建；未跑全套 `mvn test` |
