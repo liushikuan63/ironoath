@@ -44,7 +44,7 @@ CO_D=/d/tmp/probe753/gates-clientorphan
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep /d/tmp/probe753/gates-wsbin "$PEC_D" "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$NC_D" "$DN_D" "$SC_D" "$PC_D" "$LR_D" "$PEC2_D" "$CEC_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep /d/tmp/probe753/gates-wsbin "$PEC_D" "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$NC_D" "$DN_D" "$SC_D" "$PC_D" "$LR_D" "$PEC2_D" "$CEC_D" "$TS_D"
 }
 trap cleanup EXIT
 
@@ -453,6 +453,25 @@ mk_comment_endpoint_claims() {
 run_comment_endpoint_claims() { bash scripts/check-comment-endpoint-claims.sh; }
 three_arg check-comment-endpoint-claims.sh \
           mk_comment_endpoint_claims run_comment_endpoint_claims '注释断言不存在的端点不许真的存在（#2523）'
+
+# check-tool-syntax（#2524）：tools/ 下每个脚本都得能被 node 解析。
+# 判据设计：正常态放两份能解析的脚本（.mjs + .js）⇒ 绿；
+#          违规态放一份少右括号的 ⇒ 红（真实后果：这一份探针等于不存在，且没人会立刻发现）。
+# ⚠️ 下限压到 1：夹具只有一两个文件，真实仓库下限是 120。
+TS_D=/d/tmp/probe753/gates-toolsyntax
+mk_tool_syntax() {
+  rm -rf "$TS_D"; mkdir -p "$TS_D"
+  printf 'const ok = 1\nconsole.log(ok)\n' > "$TS_D/ok.mjs"
+  if [ "$1" = "1" ]; then
+    printf 'function broken(a {\n  return a\n}\n' > "$TS_D/broken.mjs"
+  else
+    printf 'const alsoOk = 2\nconsole.log(alsoOk)\n' > "$TS_D/ok2.js"
+  fi
+  export TOOLSYNTAX_DIRS="$TS_D" TOOLSYNTAX_MIN_FILES=1
+}
+run_tool_syntax() { bash scripts/check-tool-syntax.sh; }
+three_arg check-tool-syntax.sh \
+          mk_tool_syntax run_tool_syntax 'tools 下的脚本必须能被 node 解析（#2524）'
 
 mk_pkg_path_predicates() { # check-package-path-predicates：量具里写死的包路径谓词必须命中真实文件/目录
   # ⚠️ 走**环境变量口**（PKGPATH_SCAN_DIRS / PKGPATH_SERVER_DIR，2026-10-06 新加）⇒ **零污染**：

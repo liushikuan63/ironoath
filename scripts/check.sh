@@ -165,6 +165,10 @@ bash scripts/check-probe-endpoint-coverage.sh
 # `NationController` 上、还是外交页唯一的数据源 —— 过期注释不会让测试变红，但把人和量具
 # 都带到反方向（#2522 那格的假阳性就来自其中一句）。
 bash scripts/check-comment-endpoint-claims.sh
+# `tools/` 下的脚本都得能被 node 解析（2026-11-13 开，收口清单 #2524）：
+# 现跑 146 个探针里绝大多数只在人工跑探针时才执行，check.sh 只跑其中几份 ——
+# 一次坏合并会让整份探针静默失效，症状是"这一份今天没结果"而不是一条红。
+bash scripts/check-tool-syntax.sh
 # 文档里的门禁道数必须等于本脚本实际调用的道数（2026-10-06 开）：
 # AGENTS.md 写「32 道」而这里实际 40 道是现跑抓到的 —— 计数一漂，后面每次会话都拿旧数当
 # 「门全开」的证据。⚠️ 这道门自己也在被数之内：加/删门禁不改 AGENTS.md 的数字就会红。
