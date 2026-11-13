@@ -279,6 +279,21 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 - 自检口：`BASELINE_NEGCTL=bad-power` 把回包换成 `code:1` ⇒ `NEGCTL_EXIT=1`、`6 通过 / 4 失败`（负控证明断言真的会红）。
 - 无驱动上限由 #2519 的 33 收紧到 **31**（`scripts/check-probe-endpoint-coverage.sh`），现跑 `绑定 147 / 探针 144 / 有驱动 116 / 无驱动 31（上限 31）`。
 - 未做：另 31 条仍没有探针；本格只补了这两条「客户端真在打却没探针」的。
+### 0.32 当前接续（2026-11-13 · #2521）
+
+- 从 #2518/#2520 那条线继续查「无驱动 30 条」的名单，发现一条**判据盲区**，不是缺口也不是产品缺陷：
+  `tools/verify-gacha-history.mjs` 一直在驱动抽卡记录页（点开屏、读场景图、断言空态与关闭），
+  但它既没在源码里出现 `/gacha/history` 字面量、也从没断言过那条请求真的发出去过 ——
+  于是量具把它算成「没有任何探针驱动」，而屏上的空态文字其实也可能是本地拼的。
+- 修法（两头都补）：① 探针加 `page.on('response')` 抓 `/gacha/history`，断言至少发生一次且 `code 0`；
+  ② 源码里出现路径字面量，`scripts/lib/endpoint-probe-coverage.js` 才看得见它。
+- 现跑：`网络层：/gacha/history 共 1 次，其中 code 0 的 1 次`，`GH_EXIT=0`；日志 `D:/Java/maven/logs/gacha-hist-2521.log`。
+- 自检口：`GH_NEGCTL=no-history-request` 把这条请求掐断 ⇒ `NEGCTL_EXIT=1`、`失败 6 条`，
+  首条正是「整个流程里 /gacha/history 一次都没被请求过（屏上的空态可能是本地拼的）」；日志 `D:/Java/maven/logs/gacha-hist-negctl-2521.log`。
+- 门收紧：`PROBE_COVERAGE_MAX_UNDRIVEN` 31 → **30**；现跑 `绑定 147 / 探针 144 / 有驱动 117 / 无驱动 30（上限 30）`。
+- 门头注释写进约定：**用 UI 点击驱动接口的探针，也必须在源码里点到那条路径并把请求捞下来断言一次** ——
+  否则要么量具看不见（被算成没人驱动），要么本地拼出来的假空态也能绿。
+- 未做：另 30 条无驱动里绝大多数是写接口（要真前置状态），本轮没碰；抽卡记录的「真抽一枪再看记录」两段（`GH_DRAW=1`）本轮没跑。
 ---
 
 ## 一、任务装配与完成定义
@@ -8751,3 +8766,4 @@ TEST_EXIT=0
 | #2518 未量路径归因 | 无代码提交（只加审计工具与台账） | `[probe-coverage] 绑定=147 有探针驱动=114 无探针驱动=33 本次量到=34 未量=115（其中无驱动=31）` | `D:/tmp/cov-2518-final.txt`、`D:/Java/maven/logs/perf-2518.log` | 33 条仍无探针驱动；未给「允许无驱动」的豁免清单 |
 | #2519 无驱动路径不许变多 | `0383b1f0` | `绑定路径 147；探针 143；有驱动 114；无驱动 33（上限 33）`；四臂负控全退 1 | `D:/tmp/pc-negctl-a.log`、`check-harness-coverage` 56 = 42 + 14 | 33 条本身仍未补探针 |
 | #2520 补两条预取读接口的探针 | `提交信息含 #2520 的那一笔` | `=== 基线读接口：10 通过 / 0 失败 ===`；负控 `BASELINE_NEGCTL=bad-power` ⇒ 6 通过 / 4 失败（EXIT=1）；无驱动 33→31 | `D:/Java/maven/logs/baseline-probe-2520.log`、`D:/Java/maven/logs/baseline-negctl-2520.log`、`client/build/player-baseline-verify/city-panel.png` | 其余 31 条仍无探针；本条未进批跑清单 |
+| #2521 UI 驱动的探针也要有网络层证据 | `提交信息含 #2521 的那一笔` | `/gacha/history 共 1 次 code 0`（GH_EXIT=0）；负控 `GH_NEGCTL=no-history-request` ⇒ 失败 6 条 EXIT=1；无驱动 31→30、上限 30 | `D:/Java/maven/logs/gacha-hist-2521.log`、`D:/Java/maven/logs/gacha-hist-negctl-2521.log` | 另 30 条多为写接口；`GH_DRAW=1` 第二段未跑 |

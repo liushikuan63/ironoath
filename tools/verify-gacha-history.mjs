@@ -67,6 +67,29 @@ const context = await browser.newContext({ viewport: { width: 1280, height: 720 
 await context.addInitScript((v) => localStorage.setItem('ironoath.deviceId', v),
   `gacha-history-${Date.now()}`)
 const page = await context.newPage()
+// 网络层取证（#2521）：这一份探针一直是「点开屏、读场景图」，从没断言过 `/gacha/history`
+// 这条请求真的发生过 —— 而覆盖率高低的量具（`scripts/lib/endpoint-probe-coverage.js`）只认
+// 探针源码里的路径字面量，所以它把这条路径算成「没有任何探针驱动」。两者一起修：
+//   ① 真抓这条请求，断言至少发生一次且回 code 0（屏上有字不等于请求成功）；
+//   ② 源码里出现字面量，量具才看得见。
+const historyResponses = []
+page.on('response', async (response) => {
+  if (!response.url().includes('/gacha/history')) return
+  let body = null
+  try { body = await response.json() } catch { body = null }
+  historyResponses.push({ status: response.status(), code: body?.code })
+})
+// 自检口：GH_NEGCTL=no-history-request 时把这条请求整条掐掉，本跑应当红在「一次都没发生」。
+if (process.env.GH_NEGCTL === 'no-history-request') {
+  await context.route('**/gacha/history*', async (route) => {
+    if (route.request().method() === 'OPTIONS') {
+      await route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST,OPTIONS' } })
+      return
+    }
+    await route.abort('failed')
+  })
+  console.log('  ⚠️ 负数对照已开启：/gacha/history 被掐断，本跑应当红在「一次都没发生」')
+}
 await page.goto(`${preview.origin}/?panel=gacha`, { waitUntil: 'networkidle' })
 await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
   null, { timeout: 60_000 })
@@ -140,6 +163,16 @@ const afterClose = await page.evaluate(readHistoryPanel)
 console.log(`点关闭=${closedClick}；关闭后 active=${afterClose.active}`)
 if (closedClick !== true || afterClose.active) {
   failures.push(`「关闭」没把关掉的屏收起来（点击=${closedClick}，active=${afterClose.active}）`)
+}
+
+// 网络层断言（#2521）：屏上有没有字是一件事，那条请求有没有发出去、回没回成功是另一件事。
+// 空态文案也可能是本地拼的，所以「记录查得到」必须有网络层证据。
+const okHistory = historyResponses.filter((r) => r.status === 200 && r.code === 0)
+console.log(`网络层：/gacha/history 共 ${historyResponses.length} 次，其中 code 0 的 ${okHistory.length} 次`)
+if (historyResponses.length === 0) {
+  failures.push('整个流程里 /gacha/history 一次都没被请求过（屏上的空态可能是本地拼的）')
+} else if (okHistory.length === 0) {
+  failures.push(`/gacha/history 请求过 ${historyResponses.length} 次但一次都不是 code 0（status/code：${JSON.stringify(historyResponses)}）`)
 }
 
 await browser.close()

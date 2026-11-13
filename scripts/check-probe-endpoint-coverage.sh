@@ -9,8 +9,14 @@
 # 判据（四层，谓词失效一律判红而不是判绿）：
 #   1. 绑定路径清单读得到，且条数不低于下限（默认 100）——真源坏了不许当"没东西要测"；
 #   2. 探针目录里有 .mjs，且份数不低于下限（默认 50）；
-#   3. 无驱动条数 <= 上限（默认 31：2026-11-13 #2520 补齐 /player/power 与 /city/harvest-learning 后从 33 降到 31，可被 PROBE_COVERAGE_MAX_UNDRIVEN 覆盖）；
+#   3. 无驱动条数 <= 上限（默认 30：2026-11-13 #2520 补齐 /player/power 与 /city/harvest-learning（33→31）、
+#      #2521 让 verify-gacha-history.mjs 在源码里点出 /gacha/history 并断言请求真的发生（31→30）；
+#      可被 PROBE_COVERAGE_MAX_UNDRIVEN 覆盖）；
 #   4. 超上限时逐条打印新增的无驱动路径（要修的那一份就是从这几行里挑）。
+#
+# 约定（#2521 踩出来的）：本门只认探针**源码里的路径字面量**。用 UI 点击驱动接口的探针
+# （读场景图、不断言网络）必须**同时**在源码里出现那条路径并把请求捞下来断言一次 ——
+# 否则要么量具看不见它（被算成「没人驱动」），要么屏上文字是本地拼的也能绿。
 #
 # 输入口（自测用，零污染）：PROBE_COVERAGE_PATHS_JSON / PROBE_COVERAGE_TOOLS_DIR /
 # PROBE_COVERAGE_MAX_UNDRIVEN / PROBE_COVERAGE_MIN_PATHS / PROBE_COVERAGE_MIN_PROBES。
@@ -22,7 +28,7 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-MAX_UNDRIVEN="${PROBE_COVERAGE_MAX_UNDRIVEN:-31}"
+MAX_UNDRIVEN="${PROBE_COVERAGE_MAX_UNDRIVEN:-30}"
 MIN_PATHS="${PROBE_COVERAGE_MIN_PATHS:-100}"
 MIN_PROBES="${PROBE_COVERAGE_MIN_PROBES:-50}"
 
