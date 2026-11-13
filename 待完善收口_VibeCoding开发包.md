@@ -6,7 +6,7 @@
 > 与 B17~B25 批次文件的七段结构一致；不新增 Bxx 编号，也不重写任何已交付系统。
 > **口径**：原始任务卡的「现状」来自 2026-09-28；后增任务卡与 §四记录各自标注取证日期，不能统一当成当前读数。
 > 引用前**先重跑那一条命令** —— 本仓最贵的教训是「文档说 A、代码是 B」。
-> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 93 份 / GameApi 155 个发送口
+> **现数（本行由 `scripts/check-doc-status-counts.sh` 校验；两条口径＝`ls tools/verify-*.mjs` 与 `node tools/report-client-send-paths.mjs` 打出的那行）**：探针 94 份 / GameApi 155 个发送口
 
 ---
 
@@ -424,6 +424,12 @@ A/B在共享国家历史/保存/锁接口冻结后并行独占区；C在归属�
 
 ---
 
+### 0.43 当前接续（2026-11-13 · #2532）
+
+- 本格：把 `/alliance/kick` 与 `/alliance/disband` 补进探针（`tools/verify-alliance-membership-runtime.mjs`），覆盖面门默认上限 21 → 15。
+- 读数：绿 **16 通过 / 0 失败**；负控 `ALLIANCE_MGMT_NEGCTL=skip-disband` ⇒ **13 通过 / 2 失败**（红在「解散后盟主/成员仍有联盟」）；门现跑 `147 条绑定 / 150 份探针 / 132 有驱动 / 15 无驱动（上限 15）`。
+- 两条口径：`AllianceView` 只有 `memberCount`（成员表走 `/alliance/sync`）；建盟要 500 金币 ⇒ 必须跑提速档后端，否则「前提不足」退 2。
+- 未做：审核拒绝分支、联盟科技/捐赠面、本格未跑全套 `mvn test`；真机项与 B13-9 外部准入票仍是受阻项。
 ## 一、任务装配与完成定义
 
 ### 1.1 原始优先级与推荐顺序（2026-09-28 基线）
@@ -8905,3 +8911,4 @@ TEST_EXIT=0
 | #2529 社交关系六条路径进探针 | `7a774a63` | 绿 `20 通过 / 0 失败`；两个负控各 `17/2`、`EXIT=1`；覆盖面 `无驱动 24 条（上限 24）` | `D:/Java/maven/logs/social-rel-2529.log`、`social-rel-negctl-block.log`、`social-rel-negctl-follow.log` | 未验私聊拒收与频道过滤；未验关注上限撞顶文案；未跑全套 `mvn test` |
 | #2530 城内队列时钟（暂停/恢复/加速）探针 | `c069abdb` | 绿 `18 通过 / 0 失败`；负控 `12/3`（`期望 "PAUSED"，实际 "UPGRADING"`）；覆盖面 `无驱动 21 条（上限 21）` | `D:/Java/maven/logs/cityclock-2530c.log`、`cityclock-negctl2-2530.log` | 未验暂停不放产；未验 ITEM/GOLD 加速扣费；不点界面 |
 | #2531 转让队长后新队长读不了摘要（契约枚举缺 SQUAD_LEADER_CHANGED） | 契约补取值 + `npm run gen`；`SocialEndpointTest` 补新队长读摘要断言；新增第 58 道门 `scripts/check-social-event-literals.sh` + `scripts/lib/social-event-literals.js`；新探针 `tools/verify-squad-management-runtime.mjs` | 单测 1/0（负控 1/1，正文同线上）；探针绿 17/0、负控 11/5；新门绿「12 个取值全在枚举（19 个）」，四臂负控全退 1；`check.sh` 58 道全绿 | 无截图（纯服务端契约与序列化）；探针日志 `/d/Java/maven/logs/squad-2531-green2.log`、`squad-2531-negctl2.log` | 真机与视觉未验；其他摘要是否也序列化未读事件未逐个复核；`/squad` 其余写口边界未单列 |
+| #2532 联盟成员管理面进探针（`/alliance/kick`、`/alliance/disband`） | SHA_PLACEHOLDER | 绿 16/0；负控 skip-disband 13/2；门 147/150/132/15=15、GATE=0 | `D:/Java/maven/logs/alliance-mgmt-2532b.log`、`alliance-mgmt-negctl-2532.log` | 审核拒绝分支、联盟科技/捐赠面未进探针；未跑全套 `mvn test` |
