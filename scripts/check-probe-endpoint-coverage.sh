@@ -12,7 +12,7 @@
 #   3. 无驱动条数 <= 上限（默认 31：2026-11-13 #2520 补齐 /player/power 与 /city/harvest-learning（33→31）、
 #      #2521 让 verify-gacha-history.mjs 在源码里点出 /gacha/history 并断言请求真的发生（31→30）、
 #      #2522 把「注释也算驱动」这个假阳性修掉后**诚实地回到 31**（/nation/relations 只因一句注释被算成有驱动）；
-#      可被 PROBE_COVERAGE_MAX_UNDRIVEN 覆盖）；
+#      可被 PROBE_COVERAGE_MAX_UNDRIVEN 覆盖；#2529 补社交关系六条后上限 30 → 24）；
 #   4. 超上限时逐条打印新增的无驱动路径（要修的那一份就是从这几行里挑）。
 #
 # 约定（#2521 踩出来的）：本门只认探针**源码里的路径字面量**。用 UI 点击驱动接口的探针
@@ -32,7 +32,7 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-MAX_UNDRIVEN="${PROBE_COVERAGE_MAX_UNDRIVEN:-30}"
+MAX_UNDRIVEN="${PROBE_COVERAGE_MAX_UNDRIVEN:-24}"
 MIN_PATHS="${PROBE_COVERAGE_MIN_PATHS:-100}"
 MIN_PROBES="${PROBE_COVERAGE_MIN_PROBES:-50}"
 
