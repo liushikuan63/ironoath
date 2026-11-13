@@ -8952,4 +8952,4 @@ TEST_EXIT=0
 | #2534 举报留痕进探针（`/social/report`） | f8960640 | 绿 7/0；负控 skip-report 3/1；门 147/152/134/13=13、GATE=0 | `D:/Java/maven/logs/social-report-2534b.log`、`social-report-negctl-2534.log` | 限频上限分支（`SOCIAL_REPORT_DUPLICATE`）未断言；`detail` 内容安全送检未单独验；未跑全套 `mvn test` |
 | #2535 写接口拒绝面 | `fe43b42e` | 绿 `33 通过 / 0 失败`；负控 `expect-zero` ⇒ `32/1`；门 `有驱动 140 / 无驱动 7（上限 7）` | `D:/Java/maven/logs/write-guards-2535b.log`、`write-guards-negctl-2535.log` | 不证明 happy path；`/hero/levelUp`、`/hero/starUp`、`/pay/card`、`/pay/card/claim`、`/social/helpAll`、`/rally/squad`、`/world/exile` 仍无驱动 |
 | #2536 一键帮助 | `23ab71c8` | 绿 `23 通过 / 0 失败`；负控 `skip-help` ⇒ `19/4`；覆盖面 7 → 6；`GATE=0` | `D:/Java/maven/logs/social-help-2536d.log`、`social-help-negctl-2536.log` | 只覆盖联盟互助；小队互助与余 6 条无驱动路径未验 |
-| #2537 小队集结 | `SHA_PLACEHOLDER` | 绿 `19 通过 / 0 失败`；负控 `no-troops` ⇒ `10/9`；覆盖面 6 → 5；`GATE=0` | `D:/Java/maven/logs/rally-squad-2537g.log`、`rally-squad-negctl-2537.log` | 出发合并那一相未覆盖；副队发起档未造；真机未验 |
+| #2537 小队集结 | `ae771f8c` | 绿 `19 通过 / 0 失败`；负控 `no-troops` ⇒ `10/9`；覆盖面 6 → 5；`GATE=0` | `D:/Java/maven/logs/rally-squad-2537g.log`、`rally-squad-negctl-2537.log` | 出发合并那一相未覆盖；副队发起档未造；真机未验 |
